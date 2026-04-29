@@ -64,6 +64,8 @@ struct DictionaryCompressionStorage {
 	static void StringScan(ColumnSegment &segment, ColumnScanState &state, idx_t scan_count, Vector &result);
 	static void StringFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, Vector &result,
 	                           idx_t result_idx);
+	static void StringFetchRowInSeg(ColumnSegment &segment, ColumnFetchState &state, vector<row_t> &row_ids, Vector &result,
+                              idx_t result_idx);
 };
 
 //===--------------------------------------------------------------------===//
@@ -158,6 +160,16 @@ void DictionaryCompressionStorage::StringFetchRow(ColumnSegment &segment, Column
 	scan_state.ScanToFlatVector(result, result_idx, NumericCast<idx_t>(row_id), 1);
 }
 
+void DictionaryCompressionStorage::StringFetchRowInSeg(ColumnSegment &segment, ColumnFetchState &state, vector<row_t> &row_ids, Vector &result, idx_t result_idx) {
+	CompressedStringScanState scan_state(state.GetOrInsertHandle(segment));
+	scan_state.Initialize(segment, false);
+
+	for (auto row_id : row_ids) {
+		scan_state.ScanToFlatVector(result, result_idx, NumericCast<idx_t>(row_id) - segment.start, 1);
+		result_idx++;
+	}
+}
+
 //===--------------------------------------------------------------------===//
 // Get Function
 //===--------------------------------------------------------------------===//
@@ -168,7 +180,7 @@ CompressionFunction DictionaryCompressionFun::GetFunction(PhysicalType data_type
 	    DictionaryCompressionStorage::InitCompression, DictionaryCompressionStorage::Compress,
 	    DictionaryCompressionStorage::FinalizeCompress, DictionaryCompressionStorage::StringInitScan,
 	    DictionaryCompressionStorage::StringScan, DictionaryCompressionStorage::StringScanPartial<false>,
-	    DictionaryCompressionStorage::StringFetchRow, UncompressedFunctions::EmptySkip,
+	    DictionaryCompressionStorage::StringFetchRow, UncompressedFunctions::EmptySkip, DictionaryCompressionStorage::StringFetchRowInSeg, 
 	    UncompressedStringStorage::StringInitSegment);
 }
 

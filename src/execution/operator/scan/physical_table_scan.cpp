@@ -4,6 +4,9 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/transaction/transaction.hpp"
+#include "execution/tpch/bitmap_table_scan.hpp"
+#include "include/bmtpch_constants.hpp"
+#include "duckdb/function/table/table_scan.hpp"
 
 #include <utility>
 
@@ -98,6 +101,72 @@ SourceResultType PhysicalTableScan::GetData(ExecutionContext &context, DataChunk
 	D_ASSERT(!column_ids.empty());
 	auto &g_state = input.global_state.Cast<TableScanGlobalSourceState>();
 	auto &l_state = input.local_state.Cast<TableScanLocalSourceState>();
+	
+	if(context.client.query_source == "bm_tpch") {
+		static BMTableScan bm_table_scan;
+		
+		if(context.client.GetCurrentQuery() == (char*)BMTPCH_QUERIES_q01) {
+			bm_table_scan.BMTPCH_Q1(context, *this);
+			context.client.query_source = "tpch";
+		}
+
+		if(context.client.GetCurrentQuery() == (char*)BMTPCH_QUERIES_q03) {
+			bm_table_scan.BMTPCH_Q3(context, *this);
+			context.client.query_source = "tpch";
+		}
+
+		if(context.client.GetCurrentQuery() == (char*)BMTPCH_QUERIES_q04) {
+			bm_table_scan.BMTPCH_Q4(context, *this);
+			context.client.query_source = "tpch";
+		}
+
+		if(context.client.GetCurrentQuery() == (char*)BMTPCH_QUERIES_q05) {
+			bm_table_scan.BMTPCH_Q5(context, *this);
+			context.client.query_source = "tpch";
+		}
+
+		if(context.client.GetCurrentQuery() == (char*)BMTPCH_QUERIES_q06 && 
+			bind_data.get()->Cast<TableScanBindData>().table.name == "lineitem") {
+
+			SourceResultType res = bm_table_scan.BMTPCH_Q6(context, chunk, bind_data.get()->Cast<TableScanBindData>());
+			return res;
+		}
+
+		if(context.client.GetCurrentQuery() == (char*)BMTPCH_QUERIES_q08) {
+			bm_table_scan.BMTPCH_Q8(context, *this);
+			context.client.query_source = "tpch";
+		}
+		
+		if(context.client.GetCurrentQuery() == (char*)BMTPCH_QUERIES_q10) {
+			bm_table_scan.BMTPCH_Q10(context, *this);
+			context.client.query_source = "tpch";
+		}
+
+		if(context.client.GetCurrentQuery() == (char*)BMTPCH_QUERIES_q12) {
+			bm_table_scan.BMTPCH_Q12(context, *this);
+			context.client.query_source = "tpch";
+		}
+
+		if(context.client.GetCurrentQuery() == (char*)BMTPCH_QUERIES_q14) {
+			bm_table_scan.BMTPCH_Q14(context, *this);
+			context.client.query_source = "tpch";
+		}
+		
+		if(context.client.GetCurrentQuery() == (char*)BMTPCH_QUERIES_q15) {
+			bm_table_scan.BMTPCH_Q15(context, *this);
+			context.client.query_source = "tpch";
+		}
+
+		if(context.client.GetCurrentQuery() == (char*)BMTPCH_QUERIES_q17) {
+			bm_table_scan.BMTPCH_Q17(context, *this);
+			context.client.query_source = "tpch";
+		}
+
+		if(context.client.GetCurrentQuery() == (char*)BMTPCH_QUERIES_q19) {
+			bm_table_scan.BMTPCH_Q19(context, *this);
+			context.client.query_source = "tpch";
+		}
+	}
 
 	TableFunctionInput data(bind_data.get(), l_state.local_state.get(), g_state.global_state.get());
 

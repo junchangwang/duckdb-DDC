@@ -23,7 +23,6 @@
 #include "duckdb/planner/filter/struct_filter.hpp"
 #include "duckdb/planner/filter/optional_filter.hpp"
 #include "duckdb/execution/adaptive_filter.hpp"
-
 namespace duckdb {
 
 RowGroup::RowGroup(RowGroupCollection &collection_p, idx_t start, idx_t count)
@@ -656,6 +655,7 @@ void RowGroup::TemplatedScan(TransactionData transaction, CollectionScanState &s
 					}
 					result.data[table_filter.scan_column_index].Slice(sel, approved_tuple_count);
 				}
+
 			}
 			if (approved_tuple_count == 0) {
 				// all rows were filtered out by the table filters

@@ -163,6 +163,18 @@ void ColumnSegment::FetchRow(ColumnFetchState &state, row_t row_id, Vector &resu
 	                         result, result_idx);
 }
 
+void ColumnSegment::FetchRowsInSeg(ColumnFetchState &state, vector<row_t> &row_ids, Vector &result,
+	idx_t result_offset) {
+	if (function.get().fetch_rows_in_seg) {
+		function.get().fetch_rows_in_seg(*this, state, row_ids, result, result_offset);
+	} else {
+		// Fallback for compression types that don't implement batch fetch
+		for (idx_t i = 0; i < row_ids.size(); i++) {
+			FetchRow(state, row_ids[i], result, result_offset + i);
+		}
+	}
+}
+
 //===--------------------------------------------------------------------===//
 // Append
 //===--------------------------------------------------------------------===//

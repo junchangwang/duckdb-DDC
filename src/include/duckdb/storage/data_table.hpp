@@ -96,6 +96,9 @@ public:
 	//! Fetch data from the specific row identifiers from the base table
 	void Fetch(DuckTransaction &transaction, DataChunk &result, const vector<StorageIndex> &column_ids,
 	           const Vector &row_ids, idx_t fetch_count, ColumnFetchState &state);
+	
+	void BMFetch(DuckTransaction &transaction, DataChunk &result, const vector<StorageIndex> &column_ids,
+			const Vector &row_ids, idx_t fetch_count, ColumnFetchState &state, idx_t &num_idlist);	
 
 	//! Initializes appending to transaction-local storage
 	void InitializeLocalAppend(LocalAppendState &state, TableCatalogEntry &table, ClientContext &context,

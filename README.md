@@ -1,51 +1,79 @@
-<div align="center">
-  <picture>
-    <source media="(prefers-color-scheme: light)" srcset="logo/DuckDB_Logo-horizontal.svg">
-    <source media="(prefers-color-scheme: dark)" srcset="logo/DuckDB_Logo-horizontal-dark-mode.svg">
-    <img alt="DuckDB logo" src="logo/DuckDB_Logo-horizontal.svg" height="100">
-  </picture>
-</div>
-<br>
 
-<p align="center">
-  <a href="https://github.com/duckdb/duckdb/actions"><img src="https://github.com/duckdb/duckdb/actions/workflows/Main.yml/badge.svg?branch=main" alt="Github Actions Badge"></a>
-  <a href="https://discord.gg/tcvwpjfnZx"><img src="https://shields.io/discord/909674491309850675" alt="discord" /></a>
-  <a href="https://github.com/duckdb/duckdb/releases/"><img src="https://img.shields.io/github/v/release/duckdb/duckdb?color=brightgreen&display_name=tag&logo=duckdb&logoColor=white" alt="Latest Release"></a>
-</p>
+#### About BitEngine project
 
-## DuckDB
+The database community has long explored bitmap indexing in DBMSs, but most efforts failed to achieve widespread adoption. The main reason is that traditional bitmap indexes limit to scans on low-cardinality attributes on read-only workloads. A notable example is PostgreSQL, which introduced native bitmap indexes in version 8.3.23 but later removed them due to these limitations.
 
-DuckDB is a high-performance analytical database system. It is designed to be fast, reliable, portable, and easy to use. DuckDB provides a rich SQL dialect, with support far beyond basic SQL. DuckDB supports arbitrary and nested correlated subqueries, window functions, collations, complex types (arrays, structs, maps), and [several extensions designed to make SQL easier to use](https://duckdb.org/docs/stable/sql/dialect/friendly_sql.html).
+In recent years, researchers have proposed innovative bitmap index designs. Recent advances include update-friendly designs such as UpBit [1] and Cubit [2], with RABIT [3] extending support to high-cardinality attributes. For the first time, researchers can build bitmap indexes on attributes of any cardinality (from dozens to millions) in tables ranging from read-only to update-intensive [2,3]. These advances have sparked interest in bitmap indexing, raising an interesting question: **beyond traditionally acting as scan accelerators, to what extent can the state-of-the-art bitmap indexes be leveraged in DBMS query engines**?
 
-DuckDB is available as a [standalone CLI application](https://duckdb.org/docs/stable/clients/cli/overview) and has clients for [Python](https://duckdb.org/docs/stable/clients/python/overview), [R](https://duckdb.org/docs/stable/clients/r), [Java](https://duckdb.org/docs/stable/clients/java), [Wasm](https://duckdb.org/docs/stable/clients/wasm/overview), etc., with deep integrations with packages such as [pandas](https://duckdb.org/docs/guides/python/sql_on_pandas) and [dplyr](https://duckdb.org/docs/stable/clients/r#duckplyr-dplyr-api).
+To answer this, we develop BitEngine, a bitmap index-based query engine in DuckDB. At its core is a suite of bitmap-oriented operators, delivering benefits such as reduced I/O and intermediate data, improved SIMD utilization, and avoidance of costly materializations.
 
-For more information on using DuckDB, please refer to the [DuckDB documentation](https://duckdb.org/docs/stable/).
+[3] Junchang Wang, Fu Xiao, Manos Athanassoulis. RABIT: Efficient Range Queries with Bitmap Indexing. In SIGMOD'25.
+[2] Junchang Wang, Manos Athanassoulis. CUBIT: Concurrent Updatable Bitmap Indexing. In VLDB'24.
+[1] Manos Athanassoulis, Zheng Yan, Stratos Idreos. UpBit: Scalable In-Memory Updatable Bitmap Indexing. In SIGMOD'16.
 
-## Installation
 
-If you want to install DuckDB, please see [our installation page](https://duckdb.org/docs/installation/) for instructions.
 
-## Data Import
+#### How is this project organized?
 
-For CSV files and Parquet files, data import is as simple as referencing the file in the FROM clause:
+BitEngine is currently implemented as a DuckDB extension to ensure portability along with DuckDB's rapid evolution. Its source code is located in the `extension/debit` directory. We primarily evaluated BitEngine using the TPC-H benchmark, both in the project and in the paper. The streamlined implementation of TPCH queries using BitEngine can be found in the `extension/debit/execution/tpch` directory. For example, the details of how BitEngine transforms a join into a predicate on foreign key columns and how the predicate is evaluated by using bitmaps for Q5 can be found in `extension/debit/execution/tpch/query/q5.cpp`, which corresponds to the logic described in the paper. (For implementations of independent operators supporting arbitrary queries, see the BitQ branch.)
 
-```sql
-SELECT * FROM 'myfile.csv';
-SELECT * FROM 'myfile.parquet';
+
+
+#### How to run BitEngine?
+
+BitEngine is built on C++17, Python 3, and the liburcu development library. The testbed server must support AVX-512 instructions. Most modern processors from Intel and AMD are compatible; however, if you are using a laptop, please verify that your processor supports AVX-512.
+
+1) Please compile the bitmap index used in the project.
+
+```sh
+cd extension/debit/CUBIT-d
+./build.sh
 ```
 
-Refer to our [Data Import](https://duckdb.org/docs/stable/data/overview) section for more information.
+2) Compile DuckDB as usual. Generate a TPCH dataset with SF 10 using the following commands.
 
-## SQL Reference
+```DuckDB
+load tpch;
+CALL dbgen(sf = 10);
+```
 
-The documentation contains a [SQL introduction and reference](https://duckdb.org/docs/stable/sql/introduction).
+3) Generate bitmap instances for the TPCH dataset on your side (see CUBIT project for details). However, generating bitmap instances for the whole TPCH dataset takes hours, such that we strongly suggest downloading the required pre-generated bitmap instances from the following github repository.
 
-## Development
+```sh
+git clone --branch BITMAPS --single-branch https://github.com/junchangwang/Bitmap-dataset.git
+cd Bitmap-dataset
+python3 decompress_tpch.py
+mv BITMAPS/* /path/to/BitEngine/
+```
 
-For development, DuckDB requires [CMake](https://cmake.org), Python3 and a `C++11` compliant compiler. Run `make` in the root directory to compile the sources. For development, use `make debug` to build a non-optimized debug version. You should run `make unit` and `make allunit` to verify that your version works properly after making changes. To test performance, you can run `BUILD_BENCHMARK=1 BUILD_TPCH=1 make` and then perform several standard benchmarks from the root directory by executing `./build/release/benchmark/benchmark_runner`. The details of benchmarks are in our [Benchmark Guide](benchmark/README.md).
+4) Load the corresponding bitmap instances in DuckDB before you execute the TPCH queries. 
 
-Please also refer to our [Build Guide](https://duckdb.org/docs/stable/dev/building/overview) and [Contribution Guide](CONTRIBUTING.md).
+```DuckDB
+set threads to 1;
+pragma load_bitmap(col_name1, col_name2);
+```
 
-## Support
+Below are the required bitmap indexes for each supported TPCH query in DEBIT:
 
-See the [Support Options](https://duckdblabs.com/support/) page.
+- Q1: shipdate, linestatus, returnflag
+- Q5: orderkey, suppkey
+- Q6: shipdate_GE, discount, quantity
+
+For example, if you want to run Q1, please use the following command in DuckDB prompt:
+
+```DuckDB
+pragma load_bitmap(shipdate, linestatus, returnflag);
+pragma bm_tpch(1);
+```
+
+You can also run TPC-H queries using the standard operators in DuckDB for comparison. For example, to run Q1 using the standard operators, you can use the following command:
+
+```DuckDB
+pragma tpch(1);
+```
+
+
+
+#### Acknowledgements
+
+If you have any questions about the code, please feel free to contact us.

@@ -419,6 +419,12 @@ void DataTable::Fetch(DuckTransaction &transaction, DataChunk &result, const vec
 	row_groups->Fetch(transaction, result, column_ids, row_identifiers, fetch_count, state);
 }
 
+void DataTable::BMFetch(DuckTransaction &transaction, DataChunk &result, const vector<StorageIndex> &column_ids,
+                      const Vector &row_identifiers, idx_t fetch_count, ColumnFetchState &state , idx_t &num_idlist) {
+	auto lock = info->checkpoint_lock.GetSharedLock();
+	row_groups->BMFetch(transaction, result, column_ids, row_identifiers, fetch_count, state, num_idlist);
+}
+
 //===--------------------------------------------------------------------===//
 // Append
 //===--------------------------------------------------------------------===//

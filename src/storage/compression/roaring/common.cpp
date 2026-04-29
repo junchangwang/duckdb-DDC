@@ -263,7 +263,7 @@ CompressionFunction GetCompressionFunction(PhysicalType data_type) {
 	                           roaring::RoaringAnalyze, roaring::RoaringFinalAnalyze, roaring::RoaringInitCompression,
 	                           roaring::RoaringCompress, roaring::RoaringFinalizeCompress, roaring::RoaringInitScan,
 	                           roaring::RoaringScan, roaring::RoaringScanPartial, roaring::RoaringFetchRow,
-	                           roaring::RoaringSkip, roaring::RoaringInitSegment);
+	                           roaring::RoaringSkip, nullptr, roaring::RoaringInitSegment);
 }
 
 CompressionFunction RoaringCompressionFun::GetFunction(PhysicalType type) {

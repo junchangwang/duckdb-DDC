@@ -89,6 +89,12 @@ public:
 	//! Data for the currently running transaction
 	TransactionContext transaction;
 
+	//! Tag written by the debit extension's `PRAGMA bm_tpch(N)` handler so
+	//! that PhysicalTableScan::GetData can route recognised queries to the
+	//! BMTableScan::BMTPCH_Q<N> benchmark entry points.  Cleared back to
+	//! "tpch" after each bm_tpch dispatch completes.
+	std::string query_source = "tpch";
+
 public:
 	MetaTransaction &ActiveTransaction() {
 		return transaction.ActiveTransaction();

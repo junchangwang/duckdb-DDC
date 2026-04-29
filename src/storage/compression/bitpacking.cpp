@@ -944,6 +944,47 @@ void BitpackingFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t r
 }
 
 template <class T>
+void BitpackingFetchRowsInSeg(ColumnSegment &segment, ColumnFetchState &state, vector<row_t> &row_ids, Vector &result,
+                              idx_t result_offset) {
+	D_ASSERT(!row_ids.empty());
+
+	// We perform this only once.
+	BitpackingScanState<T> scan_state(segment);
+	T *result_data = FlatVector::GetData<T>(result);
+
+	row_t old_row = segment.start;
+	idx_t local_idx = 0;
+	for (auto &row_id : row_ids) {
+		scan_state.Skip(segment, row_id - old_row);
+
+		idx_t offset_in_compression_group =
+		    scan_state.current_group_offset % BitpackingPrimitives::BITPACKING_ALGORITHM_GROUP_SIZE;
+
+		data_ptr_t decompression_group_start_pointer =
+		    scan_state.current_group_ptr +
+		    (scan_state.current_group_offset - offset_in_compression_group) * scan_state.current_width / 8;
+
+		//! Because FOR offsets all our values to be 0 or above, we can always skip sign extension here
+		bool skip_sign_extend = true;
+
+		BitpackingPrimitives::UnPackBlock<T>(data_ptr_cast(scan_state.decompression_buffer),
+		                                     decompression_group_start_pointer, scan_state.current_width,
+		                                     skip_sign_extend);
+
+		T *current_result_ptr = result_data + result_offset + local_idx;
+		*current_result_ptr = scan_state.decompression_buffer[offset_in_compression_group];
+		*current_result_ptr += scan_state.current_frame_of_reference;
+
+		if (scan_state.current_group.mode == BitpackingMode::DELTA_FOR) {
+			*current_result_ptr += scan_state.current_delta_offset;
+		}
+
+		old_row = row_id;
+		local_idx++;
+	}
+}
+
+template <class T>
 void BitpackingSkip(ColumnSegment &segment, ColumnScanState &state, idx_t skip_count) {
 	auto &scan_state = static_cast<BitpackingScanState<T> &>(*state.scan_state);
 	scan_state.Skip(segment, skip_count);
@@ -982,7 +1023,7 @@ CompressionFunction GetBitpackingFunction(PhysicalType data_type) {
 	    CompressionType::COMPRESSION_BITPACKING, data_type, BitpackingInitAnalyze<T>, BitpackingAnalyze<T>,
 	    BitpackingFinalAnalyze<T>, BitpackingInitCompression<T, WRITE_STATISTICS>,
 	    BitpackingCompress<T, WRITE_STATISTICS>, BitpackingFinalizeCompress<T, WRITE_STATISTICS>, BitpackingInitScan<T>,
-	    BitpackingScan<T>, BitpackingScanPartial<T>, BitpackingFetchRow<T>, BitpackingSkip<T>);
+	    BitpackingScan<T>, BitpackingScanPartial<T>, BitpackingFetchRow<T>, BitpackingSkip<T>, BitpackingFetchRowsInSeg<T>);
 	bitpacking.get_segment_info = BitpackingGetSegmentInfo<T>;
 	return bitpacking;
 }

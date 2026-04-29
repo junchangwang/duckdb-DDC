@@ -777,7 +777,7 @@ CompressionFunction FSSTFun::GetFunction(PhysicalType data_type) {
 	                           FSSTStorage::InitCompression, FSSTStorage::Compress, FSSTStorage::FinalizeCompress,
 	                           FSSTStorage::StringInitScan, FSSTStorage::StringScan,
 	                           FSSTStorage::StringScanPartial<false>, FSSTStorage::StringFetchRow,
-	                           UncompressedFunctions::EmptySkip, UncompressedStringStorage::StringInitSegment, nullptr,
+	                           UncompressedFunctions::EmptySkip, nullptr, UncompressedStringStorage::StringInitSegment, nullptr,
 	                           nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, FSSTStorage::Select);
 }
 

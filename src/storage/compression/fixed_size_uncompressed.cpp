@@ -271,7 +271,7 @@ CompressionFunction FixedSizeGetFunction(PhysicalType data_type) {
 	                           FixedSizeAnalyze, FixedSizeFinalAnalyze<T>, UncompressedFunctions::InitCompression,
 	                           UncompressedFunctions::Compress, UncompressedFunctions::FinalizeCompress,
 	                           FixedSizeInitScan, FixedSizeScan<T>, FixedSizeScanPartial<T>, FixedSizeFetchRow<T>,
-	                           UncompressedFunctions::EmptySkip, nullptr, FixedSizeInitAppend,
+	                           UncompressedFunctions::EmptySkip, nullptr, nullptr, FixedSizeInitAppend,
 	                           FixedSizeAppend<T, APPENDER>, FixedSizeFinalizeAppend<T>);
 }
 

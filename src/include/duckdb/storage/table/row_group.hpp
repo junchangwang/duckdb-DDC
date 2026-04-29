@@ -185,7 +185,7 @@ public:
 	idx_t GetRowGroupSize() const;
 
 	static FilterPropagateResult CheckRowIdFilter(const TableFilter &filter, idx_t beg_row, idx_t end_row);
-
+	ColumnData &GetColumn(const StorageIndex &c);
 private:
 	optional_ptr<RowVersionManager> GetVersionInfo();
 	shared_ptr<RowVersionManager> GetOrCreateVersionInfoPtr();
@@ -193,7 +193,7 @@ private:
 	void SetVersionInfo(shared_ptr<RowVersionManager> version);
 
 	ColumnData &GetColumn(storage_t c);
-	ColumnData &GetColumn(const StorageIndex &c);
+	//ColumnData &GetColumn(const StorageIndex &c);
 	idx_t GetColumnCount() const;
 	vector<shared_ptr<ColumnData>> &GetColumns();
 

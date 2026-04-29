@@ -242,7 +242,7 @@ CompressionFunction DictFSSTCompressionFun::GetFunction(PhysicalType data_type) 
 	    dict_fsst::DictFSSTCompressionStorage::FinalizeCompress, dict_fsst::DictFSSTCompressionStorage::StringInitScan,
 	    dict_fsst::DictFSSTCompressionStorage::StringScan,
 	    dict_fsst::DictFSSTCompressionStorage::StringScanPartial<false>,
-	    dict_fsst::DictFSSTCompressionStorage::StringFetchRow, UncompressedFunctions::EmptySkip,
+	    dict_fsst::DictFSSTCompressionStorage::StringFetchRow, UncompressedFunctions::EmptySkip, nullptr,
 	    UncompressedStringStorage::StringInitSegment);
 	res.validity = CompressionValidity::NO_VALIDITY_REQUIRED;
 	res.select = dict_fsst::DictFSSTSelect;

@@ -34,7 +34,7 @@ public:
 	static CompressionFunction CreateFunction() {
 		CompressionFunction result(CompressionType::COMPRESSION_EMPTY, PhysicalType::BIT, nullptr, nullptr, nullptr,
 		                           InitCompression, Compress, FinalizeCompress, InitScan, Scan, ScanPartial, FetchRow,
-		                           Skip, InitSegment);
+		                           Skip, nullptr, InitSegment);
 		result.filter = Filter;
 		result.select = Select;
 		return result;
@@ -91,9 +91,14 @@ public:
 	                     idx_t result_idx) {
 		return;
 	}
+	// static void FetchRowsInSeg(ColumnSegment &segment, ColumnFetchState &state, vector<row_t> &row_ids,
+	// 	Vector &result, idx_t result_idx) {
+	// 	return;
+	// }
 	static void Skip(ColumnSegment &segment, ColumnScanState &state, idx_t skip_count) {
 		return;
 	}
+
 	static unique_ptr<CompressedSegmentState> InitSegment(ColumnSegment &segment, block_id_t block_id,
 	                                                      optional_ptr<ColumnSegmentState> segment_state) {
 		return nullptr;

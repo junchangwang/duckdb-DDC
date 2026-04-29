@@ -69,7 +69,8 @@ public:
 	idx_t column_index;
 	//! The type of the column
 	LogicalType type;
-
+	
+	ColumnSegmentTree data;
 public:
 	virtual FilterPropagateResult CheckZonemap(ColumnScanState &state, TableFilter &filter);
 
@@ -222,7 +223,7 @@ private:
 
 protected:
 	//! The segments holding the data of this column segment
-	ColumnSegmentTree data;
+	//ColumnSegmentTree data;
 	//! The lock for the updates
 	mutable mutex update_lock;
 	//! The updates for this column segment
