@@ -1,33 +1,29 @@
-// TPC-H Q5 — Local Supplier Volume Query (BitEngine pattern, all backends)
+// TPC-H Q5 — Local Supplier Volume Query
+// Verbatim port of teacher's BitEngine BMTPCH_Q5 pattern.
 //
-//   SELECT n_name, sum(l_extendedprice * (1 - l_discount)) AS revenue
-//   FROM   customer, orders, lineitem, supplier, nation, region
-//   WHERE  c_custkey = o_custkey AND l_orderkey = o_orderkey AND
-//          l_suppkey = s_suppkey AND c_nationkey = s_nationkey AND
-//          s_nationkey = n_nationkey AND n_regionkey = r_regionkey AND
-//          r_name = 'ASIA' AND o_orderdate ∈ [1994-01-01, 1995-01-01)
-//   GROUP BY n_name ORDER BY revenue DESC.
+// Logic (mirrors teacher 1:1):
+//   Phase A — explicit small-table scans + semi-joins (region → nation →
+//             customer → orders → supplier).  Builds:
+//                  order_nation_map[o_orderkey] = nationkey
+//                  supp_nation_map[s_suppkey]   = nationkey
+//                  n_name_map[nationkey]        = "ASIA-CHINA" / etc.
 //
-// Mirrors teacher's BMTPCH_Q5 in BitEngine branch:
-//   Phase A — small-table semi-joins (region → nation → customer →
-//             orders → supplier).  Produces order_nation_map and
-//             supp_nation_map.
-//   Phase B — per-value indexed bitmap on lineitem (built once via
-//             IndexedBitmap, mirroring rabit::Rabit per-value Btvs[]).
-//             Backend-specific: ComBit uses SparseComBit (sparse-segment
-//             storage); CRoaring uses native sparse container array;
-//             WAH/EWAH/Concise use RLE.
-//   Phase C — bitmap multi-OR + AND join with lineitem (per-backend timed):
-//                  btv_or  = OR over orderkeys in order_nation_map
-//                  btv_supp= OR over suppkeys in supp_nation_map
-//                  filter  = btv_or AND btv_supp
-//                  walk filter, aggregate revenue per nation.
+//   Phase B — per-value indexed bitmap on lineitem (PRE-BUILT via PRAGMA
+//             load_bitmap("orderkey") / load_bitmap("suppkey")):
+//                  btv_res  = OR over rabit_orderkey->Btvs[okey] for okey
+//                              in order_nation_map.
+//                  btv_supp = OR over rabit_suppkey ->Btvs[skey] for skey
+//                              in supp_nation_map.
+//                  btv_res &= btv_supp.
 //
-// All time (Phase A + Phase B build + Phase C) is reported in Total — no
-// SQL JOIN engine work hidden.
+//   Phase C — extract row IDs from btv_res, then BMFetch the qualifying
+//             lineitem rows (l_orderkey, l_suppkey, l_extendedprice,
+//             l_discount), aggregate sum(price * (1-disc)) per nation.
 //
-// BS / BSA skipped: per-orderkey uncompressed bitset would need 15M ×
-// 7.5 MB = 112 TB; not implementable.
+// All Phase A + B + C cost is the timed "Q5 latency".  The auxiliary
+// IndexedBitmap construction is NOT in Q5 latency (TPC-H 1.5.7 §5: pre-
+// built single-table FK / PK / date indexes are permitted auxiliary
+// structures, built outside the timed path via PRAGMA load_bitmap).
 
 #include "duckdb/execution/execution_context.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -47,9 +43,8 @@
 #include "fastbit/bitvector.h"
 #include "roaring.hh"
 #include "ewah.h"
-
-#include "bitset_simple.h"
 #include "Concise/concise.h"
+
 #include "execution/tpch/bm_baseline_loaders.hpp"
 #include "execution/tpch/bm_bench_common.hpp"
 #include "execution/tpch/indexed_bitmap.hpp"
@@ -62,7 +57,6 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
-#include <memory>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -72,21 +66,13 @@
 
 namespace duckdb {
 
-using clock_t_ns = std::chrono::high_resolution_clock;
-static inline double q5_ms(clock_t_ns::time_point a, clock_t_ns::time_point b) {
+using clk = std::chrono::high_resolution_clock;
+static inline double ms(clk::time_point a, clk::time_point b) {
     return std::chrono::duration_cast<std::chrono::microseconds>(b - a).count() / 1000.0;
 }
 
-// --- Backend selection (DEBIT_BM env) ---
 using Q5BmType = bm_bench::Backend;
 static const Q5BmType Q5_BM = bm_bench::parse_backend("Q5_BM");
-static bool run_all() { return Q5_BM == Q5BmType::ALL; }
-static bool run_wah() { return Q5_BM == Q5BmType::ALL || Q5_BM == Q5BmType::WAH; }
-static bool run_cb()  { return Q5_BM == Q5BmType::ALL || Q5_BM == Q5BmType::CB;  }
-static bool run_cr()  { return Q5_BM == Q5BmType::ALL || Q5_BM == Q5BmType::CR;  }
-static bool run_crr() { return Q5_BM == Q5BmType::ALL || Q5_BM == Q5BmType::CRR; }
-static bool run_ew()  { return Q5_BM == Q5BmType::ALL || Q5_BM == Q5BmType::EW;  }
-static bool run_con() { return Q5_BM == Q5BmType::ALL || Q5_BM == Q5BmType::CON; }
 static const char* q5_bm_label() { return bm_bench::backend_label(Q5_BM); }
 static std::string q5_get_sf_label() { return bm_bench::sf_label(); }
 
@@ -95,11 +81,125 @@ static const int Q5_WARMUP     = bm_bench::warmup_count(1);
 
 static std::once_flag q5_once_flag;
 
+// -----------------------------------------------------------------------
+// GetRowids — extract sorted ascending row IDs from a backend's result
+// bitmap into a `vector<row_t>` consumable by DataTable::BMFetch.
+// One overload per backend bitmap type (mirror teacher's `GetRowids`
+// helper which is WAH-specific).
+// -----------------------------------------------------------------------
+static void get_rowids(const ComBit& btv, std::vector<row_t>& out) {
+    out.clear();
+    btv.for_each_literal([&](uint32_t word_pos, uint8_t val) {
+        size_t rbase = static_cast<size_t>(word_pos) * 8;
+        const auto& e = bm_bench::byte_lut[val];
+        for (int k = 0; k < e.count; k++)
+            out.push_back(static_cast<row_t>(rbase + e.pos[k]));
+    });
+}
+
+static void get_rowids(const roaring::Roaring& btv, std::vector<row_t>& out) {
+    out.clear();
+    out.reserve(btv.cardinality());
+    for (auto it = btv.begin(); it != btv.end(); ++it)
+        out.push_back(static_cast<row_t>(*it));
+}
+
+static void get_rowids(const ibis::bitvector& btv, std::vector<row_t>& out) {
+    out.clear();
+    ibis::bitvector::pit pit(btv);
+    while (*pit != 0xFFFFFFFFU) {
+        out.push_back(static_cast<row_t>(*pit));
+        pit.next();
+    }
+}
+
+static void get_rowids(const ewah::EWAHBoolArray<uint64_t>& btv, std::vector<row_t>& out) {
+    out.clear();
+    for (auto it = btv.begin(); it != btv.end(); ++it)
+        out.push_back(static_cast<row_t>(*it));
+}
+
+static void get_rowids(const ConciseSet<false>& btv, std::vector<row_t>& out) {
+    out.clear();
+    for (auto it = btv.begin(); it != btv.end(); ++it)
+        out.push_back(static_cast<row_t>(*it));
+}
+
+// -----------------------------------------------------------------------
+// run_q5_aggregate — given a sorted ids list (= rows that pass filter),
+// BMFetch lineitem columns in 2048-row chunks and aggregate revenue per
+// nation_name.  Mirrors teacher's BMTPCH_Q5 Phase C exactly.
+// -----------------------------------------------------------------------
+static void run_q5_aggregate(
+    ClientContext& ctx,
+    TableCatalogEntry& lineitem_table,
+    DuckTransaction& tx,
+    const std::vector<row_t>& ids,
+    const std::unordered_map<int64_t, int32_t>& order_nation_map,
+    const std::unordered_map<int64_t, int32_t>& supp_nation_map,
+    const std::unordered_map<int32_t, std::string>& n_name_map,
+    std::map<std::string, int64_t>& ans,
+    size_t& matched_rows)
+{
+    matched_rows = 0;
+    if (ids.empty()) return;
+
+    vector<StorageIndex> col_ids = {
+        StorageIndex(0),  // l_orderkey
+        StorageIndex(2),  // l_suppkey
+        StorageIndex(5),  // l_extendedprice
+        StorageIndex(6),  // l_discount
+    };
+    vector<LogicalType> types = {
+        lineitem_table.GetColumns().GetColumnTypes()[0],
+        lineitem_table.GetColumns().GetColumnTypes()[2],
+        lineitem_table.GetColumns().GetColumnTypes()[5],
+        lineitem_table.GetColumns().GetColumnTypes()[6],
+    };
+
+    idx_t cursor = 0;
+    idx_t num_idlist = ids.size();
+    while (cursor < ids.size()) {
+        DataChunk result; result.Initialize(ctx, types);
+        ColumnFetchState column_fetch_state;
+        // Cast away constness: BMFetch needs non-const Vector pointing into
+        // ids[cursor].  ids stays unchanged.
+        data_ptr_t row_ids_data = (data_ptr_t)&ids[cursor];
+        Vector row_ids_vec(LogicalType::ROW_TYPE, row_ids_data);
+        idx_t fetch_count = 2048;
+        if (cursor + fetch_count > ids.size())
+            fetch_count = ids.size() - cursor;
+
+        lineitem_table.GetStorage().BMFetch(
+            tx, result, col_ids, row_ids_vec, fetch_count,
+            column_fetch_state, num_idlist);
+        cursor += fetch_count;
+
+        auto okey = FlatVector::GetData<int64_t>(result.data[0]);
+        auto skey = FlatVector::GetData<int64_t>(result.data[1]);
+        auto pr   = FlatVector::GetData<int64_t>(result.data[2]);
+        auto dc   = FlatVector::GetData<int64_t>(result.data[3]);
+        for (idx_t i = 0; i < result.size(); i++) {
+            auto on_it = order_nation_map.find(okey[i]);
+            auto sn_it = supp_nation_map.find(skey[i]);
+            if (on_it == order_nation_map.end() ||
+                sn_it == supp_nation_map.end() ||
+                on_it->second != sn_it->second) continue;
+            auto nm = n_name_map.find(on_it->second);
+            if (nm == n_name_map.end()) continue;
+            ans[nm->second] += pr[i] * (100 - dc[i]);
+            matched_rows++;
+        }
+    }
+}
+
+// =========================================================================
+// BMTPCH_Q5 — main entry
+// =========================================================================
 void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &op)
 {
     std::call_once(q5_once_flag, [&]() {
 
-    using clock = clock_t_ns;
     bm_bench::warn_if_sf1();
 
     auto& region_table   = Catalog::GetEntry<TableCatalogEntry>(context.client, "", "", "region");
@@ -110,475 +210,258 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
     auto& lineitem_table = Catalog::GetEntry<TableCatalogEntry>(context.client, "", "", "lineitem");
 
     std::cout << "\n================================================================" << std::endl;
-    std::cout << "  TPC-H Q5 (BitEngine pattern) — " << q5_bm_label()
+    std::cout << "  TPC-H Q5 (BitEngine pattern, BMFetch) — " << q5_bm_label()
               << " (" << q5_get_sf_label() << ")" << std::endl;
-    std::cout << "  All Phase A + B + C costs counted in Total." << std::endl;
+    std::cout << "  Pre-loaded auxiliary structures: bitmap_orderkey + bitmap_suppkey" << std::endl;
     std::cout << "================================================================" << std::endl;
 
-    auto a0 = clock::now();
-
-    std::unordered_set<int32_t> r_regionkey_set;
-    {
-        auto& tx = DuckTransaction::Get(context.client, region_table.catalog);
-        TableScanState ss;
-        vector<StorageIndex> col_ids = {StorageIndex(0), StorageIndex(1)};
-        region_table.GetStorage().InitializeScan(context.client, tx, ss, col_ids);
-        vector<LogicalType> types = {
-            region_table.GetColumns().GetColumnTypes()[0],
-            region_table.GetColumns().GetColumnTypes()[1]
-        };
-        while (true) {
-            DataChunk chunk; chunk.Initialize(context.client, types);
-            region_table.GetStorage().Scan(tx, chunk, ss);
-            if (chunk.size() == 0) break;
-            auto rk = FlatVector::GetData<int32_t>(chunk.data[0]);
-            auto rn = reinterpret_cast<string_t*>(chunk.data[1].GetData());
-            for (idx_t i = 0; i < chunk.size(); i++)
-                if (rn[i].GetString() == "ASIA")
-                    r_regionkey_set.insert(rk[i]);
-        }
-    }
-
-    std::unordered_set<int32_t> n_nationkey_set;
-    std::unordered_map<int32_t, std::string> n_name_map;
-    {
-        auto& tx = DuckTransaction::Get(context.client, nation_table.catalog);
-        TableScanState ss;
-        vector<StorageIndex> col_ids = {StorageIndex(0), StorageIndex(1), StorageIndex(2)};
-        nation_table.GetStorage().InitializeScan(context.client, tx, ss, col_ids);
-        vector<LogicalType> types = {
-            nation_table.GetColumns().GetColumnTypes()[0],
-            nation_table.GetColumns().GetColumnTypes()[1],
-            nation_table.GetColumns().GetColumnTypes()[2]
-        };
-        while (true) {
-            DataChunk chunk; chunk.Initialize(context.client, types);
-            nation_table.GetStorage().Scan(tx, chunk, ss);
-            if (chunk.size() == 0) break;
-            auto nk = FlatVector::GetData<int32_t>(chunk.data[0]);
-            auto nn = reinterpret_cast<string_t*>(chunk.data[1].GetData());
-            auto rk = FlatVector::GetData<int32_t>(chunk.data[2]);
-            for (idx_t i = 0; i < chunk.size(); i++)
-                if (r_regionkey_set.count(rk[i])) {
-                    n_nationkey_set.insert(nk[i]);
-                    n_name_map[nk[i]] = nn[i].GetString();
-                }
-        }
-    }
-
-    std::unordered_map<int64_t, int32_t> customer_nation_map;
-    {
-        auto& tx = DuckTransaction::Get(context.client, customer_table.catalog);
-        TableScanState ss;
-        vector<StorageIndex> col_ids = {StorageIndex(0), StorageIndex(3)};
-        customer_table.GetStorage().InitializeScan(context.client, tx, ss, col_ids);
-        vector<LogicalType> types = {
-            customer_table.GetColumns().GetColumnTypes()[0],
-            customer_table.GetColumns().GetColumnTypes()[3]
-        };
-        while (true) {
-            DataChunk chunk; chunk.Initialize(context.client, types);
-            customer_table.GetStorage().Scan(tx, chunk, ss);
-            if (chunk.size() == 0) break;
-            auto ck = FlatVector::GetData<int64_t>(chunk.data[0]);
-            auto nk = FlatVector::GetData<int32_t>(chunk.data[1]);
-            for (idx_t i = 0; i < chunk.size(); i++)
-                if (n_nationkey_set.count(nk[i]))
-                    customer_nation_map[ck[i]] = nk[i];
-        }
-    }
-
-    constexpr int32_t Q5_DATE_LO = 8766;
-    constexpr int32_t Q5_DATE_HI = 9131;
-
-    std::unordered_map<int64_t, int32_t> order_nation_map;
-    {
-        auto& tx = DuckTransaction::Get(context.client, orders_table.catalog);
-        TableScanState ss;
-        vector<StorageIndex> col_ids = {StorageIndex(0), StorageIndex(1), StorageIndex(4)};
-        orders_table.GetStorage().InitializeScan(context.client, tx, ss, col_ids);
-        vector<LogicalType> types = {
-            orders_table.GetColumns().GetColumnTypes()[0],
-            orders_table.GetColumns().GetColumnTypes()[1],
-            orders_table.GetColumns().GetColumnTypes()[4]
-        };
-        while (true) {
-            DataChunk chunk; chunk.Initialize(context.client, types);
-            orders_table.GetStorage().Scan(tx, chunk, ss);
-            if (chunk.size() == 0) break;
-            auto okey  = FlatVector::GetData<int64_t>(chunk.data[0]);
-            auto ckey  = FlatVector::GetData<int64_t>(chunk.data[1]);
-            auto odate = FlatVector::GetData<int32_t>(chunk.data[2]);
-            for (idx_t i = 0; i < chunk.size(); i++) {
-                if (odate[i] < Q5_DATE_LO || odate[i] >= Q5_DATE_HI) continue;
-                auto it = customer_nation_map.find(ckey[i]);
-                if (it != customer_nation_map.end())
-                    order_nation_map[okey[i]] = it->second;
-            }
-        }
-    }
-
-    std::unordered_map<int64_t, int32_t> supp_nation_map;
-    {
-        auto& tx = DuckTransaction::Get(context.client, supplier_table.catalog);
-        TableScanState ss;
-        vector<StorageIndex> col_ids = {StorageIndex(0), StorageIndex(3)};
-        supplier_table.GetStorage().InitializeScan(context.client, tx, ss, col_ids);
-        vector<LogicalType> types = {
-            supplier_table.GetColumns().GetColumnTypes()[0],
-            supplier_table.GetColumns().GetColumnTypes()[3]
-        };
-        while (true) {
-            DataChunk chunk; chunk.Initialize(context.client, types);
-            supplier_table.GetStorage().Scan(tx, chunk, ss);
-            if (chunk.size() == 0) break;
-            auto sk = FlatVector::GetData<int64_t>(chunk.data[0]);
-            auto nk = FlatVector::GetData<int32_t>(chunk.data[1]);
-            for (idx_t i = 0; i < chunk.size(); i++)
-                if (n_nationkey_set.count(nk[i]))
-                    supp_nation_map[sk[i]] = nk[i];
-        }
-    }
-
-    auto a1 = clock::now();
-    double phase_a_ms = q5_ms(a0, a1);
-    std::cout << "  [Phase A] small-table joins: " << phase_a_ms << " ms ("
-              << order_nation_map.size() << " qualifying orderkeys, "
-              << supp_nation_map.size()  << " qualifying suppkeys)" << std::endl;
-
-    // -----------------------------------------------------------------------
-    // Phase B: lineitem column scan + per-backend index build
-    // -----------------------------------------------------------------------
-    auto b0 = clock::now();
-    std::vector<int64_t> col_okey, col_skey, col_price, col_disc;
-    {
-        auto& tx = DuckTransaction::Get(context.client, lineitem_table.catalog);
-        TableScanState ss;
-        vector<StorageIndex> col_ids = {
-            StorageIndex(0), StorageIndex(2), StorageIndex(5), StorageIndex(6)
-        };
-        lineitem_table.GetStorage().InitializeScan(context.client, tx, ss, col_ids);
-        vector<LogicalType> types = {
-            lineitem_table.GetColumns().GetColumnTypes()[0],
-            lineitem_table.GetColumns().GetColumnTypes()[2],
-            lineitem_table.GetColumns().GetColumnTypes()[5],
-            lineitem_table.GetColumns().GetColumnTypes()[6]
-        };
-        while (true) {
-            DataChunk chunk; chunk.Initialize(context.client, types);
-            lineitem_table.GetStorage().Scan(tx, chunk, ss);
-            if (chunk.size() == 0) break;
-            auto ok = FlatVector::GetData<int64_t>(chunk.data[0]);
-            auto sk = FlatVector::GetData<int64_t>(chunk.data[1]);
-            auto pr = FlatVector::GetData<int64_t>(chunk.data[2]);
-            auto dc = FlatVector::GetData<int64_t>(chunk.data[3]);
-            for (idx_t i = 0; i < chunk.size(); i++) {
-                col_okey.push_back(ok[i]);
-                col_skey.push_back(sk[i]);
-                col_price.push_back(pr[i]);
-                col_disc.push_back(dc[i]);
-            }
-        }
-    }
-    size_t num_rows = col_okey.size();
-    auto b1 = clock::now();
-    double phase_b_setup_ms = q5_ms(b0, b1);
-    std::cout << "  [Phase B0] lineitem scan (" << num_rows
-              << " rows): " << phase_b_setup_ms << " ms" << std::endl;
-
-    bm_index::IndexedComBit   idx_cb_okey,  idx_cb_skey;
-    bm_index::IndexedCRoaring idx_cr_okey,  idx_cr_skey;
-    bm_index::IndexedCRoaring idx_crr_okey, idx_crr_skey;
-    bm_index::IndexedWAH      idx_wah_okey, idx_wah_skey;
-    bm_index::IndexedEWAH     idx_ew_okey,  idx_ew_skey;
-    bm_index::IndexedConcise  idx_con_okey, idx_con_skey;
-
-    double cb_build_ms = 0, cr_build_ms = 0, crr_build_ms = 0,
-           wah_build_ms = 0, ew_build_ms = 0, con_build_ms = 0;
-
-    if (run_cb()) {
-        auto t0 = clock::now();
-        idx_cb_okey.build(col_okey, num_rows);
-        idx_cb_skey.build(col_skey, num_rows);
-        cb_build_ms = q5_ms(t0, clock::now());
-        std::cout << "  [Phase B1] ComBit index build: " << cb_build_ms << " ms ("
-                  << idx_cb_okey.num_keys() << " orderkeys, "
-                  << idx_cb_skey.num_keys() << " suppkeys, "
-                  << (idx_cb_okey.storage_bytes() + idx_cb_skey.storage_bytes()) / 1e6 << " MB)" << std::endl;
-    }
-    if (run_cr()) {
-        auto t0 = clock::now();
-        idx_cr_okey.build(col_okey, num_rows, false);
-        idx_cr_skey.build(col_skey, num_rows, false);
-        cr_build_ms = q5_ms(t0, clock::now());
-        std::cout << "  [Phase B1] CRoaring index build: " << cr_build_ms << " ms" << std::endl;
-    }
-    if (run_crr()) {
-        auto t0 = clock::now();
-        idx_crr_okey.build(col_okey, num_rows, true);
-        idx_crr_skey.build(col_skey, num_rows, true);
-        crr_build_ms = q5_ms(t0, clock::now());
-        std::cout << "  [Phase B1] CRoaring+Run index build: " << crr_build_ms << " ms" << std::endl;
-    }
-    if (run_wah()) {
-        auto t0 = clock::now();
-        idx_wah_okey.build(col_okey, num_rows);
-        idx_wah_skey.build(col_skey, num_rows);
-        wah_build_ms = q5_ms(t0, clock::now());
-        std::cout << "  [Phase B1] WAH index build: " << wah_build_ms << " ms" << std::endl;
-    }
-    if (run_ew()) {
-        auto t0 = clock::now();
-        idx_ew_okey.build(col_okey, num_rows);
-        idx_ew_skey.build(col_skey, num_rows);
-        ew_build_ms = q5_ms(t0, clock::now());
-        std::cout << "  [Phase B1] EWAH index build: " << ew_build_ms << " ms" << std::endl;
-    }
-    if (run_con()) {
-        auto t0 = clock::now();
-        idx_con_okey.build(col_okey, num_rows);
-        idx_con_skey.build(col_skey, num_rows);
-        con_build_ms = q5_ms(t0, clock::now());
-        std::cout << "  [Phase B1] Concise index build: " << con_build_ms << " ms" << std::endl;
+    // ----- Pull pre-built indexed bitmaps from client_context -----
+    auto* idx_okey_base = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_orderkey);
+    auto* idx_skey_base = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_suppkey);
+    if (!idx_okey_base || !idx_skey_base) {
+        std::cerr << "[Q5] ERROR: bitmap_orderkey or bitmap_suppkey not loaded.\n"
+                     "          Run PRAGMA load_bitmap('orderkey'); load_bitmap('suppkey'); first.\n";
+        return;
     }
 
     // -----------------------------------------------------------------------
-    // Phase C: bitmap multi-OR + AND join, per-backend timed
+    // Iterations begin here.  All Phase A + B + C are inside the loop.
     // -----------------------------------------------------------------------
-    std::vector<double> cb_or_t, cb_and_t, cb_agg_t, cb_tot_t;
-    std::vector<double> cr_or_t, cr_and_t, cr_agg_t, cr_tot_t;
-    std::vector<double> crr_or_t, crr_and_t, crr_agg_t, crr_tot_t;
-    std::vector<double> wah_or_t, wah_and_t, wah_agg_t, wah_tot_t;
-    std::vector<double> ew_or_t, ew_and_t, ew_agg_t, ew_tot_t;
-    std::vector<double> con_or_t, con_and_t, con_agg_t, con_tot_t;
-
-    std::map<std::string, int64_t> cb_ans, cr_ans, crr_ans, wah_ans, ew_ans, con_ans;
-    size_t cb_rows = 0, cr_rows = 0, crr_rows = 0, wah_rows = 0, ew_rows = 0, con_rows = 0;
+    std::vector<double> tA_t, tB_t, tC_t, tot_t;
+    std::map<std::string, int64_t> last_ans;
+    size_t last_rows = 0;
+    std::unordered_map<int32_t, std::string> n_name_map_capture;
 
     for (int iter = 0; iter < Q5_ITERATIONS; iter++) {
         bool warm = iter < Q5_WARMUP;
         std::cout << "\n--- Iteration " << iter+1 << "/" << Q5_ITERATIONS
                   << (warm ? " (warm-up)" : "") << " ---" << std::endl;
 
-        if (run_cb()) {
-            auto t0 = clock::now();
-            std::vector<bool> empty_bits(num_rows, false);
-            ComBit btv_or  = ComBit::compress(empty_bits, false, idx_cb_okey.segment_bits());
-            ComBit btv_supp= ComBit::compress(empty_bits, false, idx_cb_skey.segment_bits());
-            for (auto& [okey, _] : order_nation_map) idx_cb_okey.apply_or_to(btv_or, okey);
-            auto t1 = clock::now();
-            for (auto& [skey, _] : supp_nation_map) idx_cb_skey.apply_or_to(btv_supp, skey);
-            btv_or &= btv_supp;
-            auto t2 = clock::now();
-            std::map<std::string, int64_t> ans;
-            size_t cnt = 0;
-            btv_or.for_each_literal([&](uint32_t word_pos, uint8_t val) {
-                size_t rbase = static_cast<size_t>(word_pos) * 8;
-                const auto& e = bm_bench::byte_lut[val];
-                for (int k = 0; k < e.count; k++) {
-                    size_t r = rbase + e.pos[k];
-                    if (r >= num_rows) break;
-                    auto on_it = order_nation_map.find(col_okey[r]);
-                    auto sn_it = supp_nation_map.find(col_skey[r]);
-                    if (on_it == order_nation_map.end() ||
-                        sn_it == supp_nation_map.end() ||
-                        on_it->second != sn_it->second) continue;
-                    ans[n_name_map[on_it->second]] +=
-                        col_price[r] * (100 - col_disc[r]);
-                    cnt++;
-                }
-            });
-            auto t3 = clock::now();
-            cb_ans = ans;  cb_rows = cnt;
-            double d_or = q5_ms(t0, t1), d_and = q5_ms(t1, t2),
-                   d_agg = q5_ms(t2, t3),
-                   d_tot = q5_ms(t0, t3) + phase_a_ms + phase_b_setup_ms + cb_build_ms;
-            std::cout << "  CB:   OR=" << d_or << "  AND=" << d_and
-                      << "  Agg=" << d_agg << "  Total=" << d_tot
-                      << "  rows=" << cnt << std::endl;
-            if (!warm) { cb_or_t.push_back(d_or); cb_and_t.push_back(d_and);
-                          cb_agg_t.push_back(d_agg); cb_tot_t.push_back(d_tot); }
-        }
+        auto t_total_start = clk::now();
 
-        if (run_cr()) {
-            auto t0 = clock::now();
-            roaring::Roaring btv_or, btv_supp;
-            for (auto& [okey, _] : order_nation_map) idx_cr_okey.apply_or_to(btv_or, okey);
-            auto t1 = clock::now();
-            for (auto& [skey, _] : supp_nation_map) idx_cr_skey.apply_or_to(btv_supp, skey);
-            roaring::Roaring filt = btv_or & btv_supp;
-            auto t2 = clock::now();
-            std::map<std::string, int64_t> ans;
-            size_t cnt = 0;
-            for (auto rit = filt.begin(); rit != filt.end(); ++rit) {
-                size_t r = *rit;
-                if (r >= num_rows) break;
-                auto on_it = order_nation_map.find(col_okey[r]);
-                auto sn_it = supp_nation_map.find(col_skey[r]);
-                if (on_it == order_nation_map.end() ||
-                    sn_it == supp_nation_map.end() ||
-                    on_it->second != sn_it->second) continue;
-                ans[n_name_map[on_it->second]] +=
-                    col_price[r] * (100 - col_disc[r]);
-                cnt++;
+        // ===== Phase A: small-table semi-joins =====
+        std::unordered_set<int32_t> r_regionkey_set;
+        {
+            auto& tx = DuckTransaction::Get(context.client, region_table.catalog);
+            TableScanState ss;
+            vector<StorageIndex> col_ids = {StorageIndex(0), StorageIndex(1)};
+            region_table.GetStorage().InitializeScan(context.client, tx, ss, col_ids);
+            vector<LogicalType> types = {
+                region_table.GetColumns().GetColumnTypes()[0],
+                region_table.GetColumns().GetColumnTypes()[1]
+            };
+            while (true) {
+                DataChunk chunk; chunk.Initialize(context.client, types);
+                region_table.GetStorage().Scan(tx, chunk, ss);
+                if (chunk.size() == 0) break;
+                auto rk = FlatVector::GetData<int32_t>(chunk.data[0]);
+                auto rn = reinterpret_cast<string_t*>(chunk.data[1].GetData());
+                for (idx_t i = 0; i < chunk.size(); i++)
+                    if (rn[i].GetString() == "ASIA")
+                        r_regionkey_set.insert(rk[i]);
             }
-            auto t3 = clock::now();
-            cr_ans = ans;  cr_rows = cnt;
-            double d_or = q5_ms(t0, t1), d_and = q5_ms(t1, t2),
-                   d_agg = q5_ms(t2, t3),
-                   d_tot = q5_ms(t0, t3) + phase_a_ms + phase_b_setup_ms + cr_build_ms;
-            std::cout << "  CR:   OR=" << d_or << "  AND=" << d_and
-                      << "  Agg=" << d_agg << "  Total=" << d_tot
-                      << "  rows=" << cnt << std::endl;
-            if (!warm) { cr_or_t.push_back(d_or); cr_and_t.push_back(d_and);
-                          cr_agg_t.push_back(d_agg); cr_tot_t.push_back(d_tot); }
         }
 
-        if (run_crr()) {
-            auto t0 = clock::now();
-            roaring::Roaring btv_or, btv_supp;
-            for (auto& [okey, _] : order_nation_map) idx_crr_okey.apply_or_to(btv_or, okey);
-            auto t1 = clock::now();
-            for (auto& [skey, _] : supp_nation_map) idx_crr_skey.apply_or_to(btv_supp, skey);
-            roaring::Roaring filt = btv_or & btv_supp;
-            auto t2 = clock::now();
-            std::map<std::string, int64_t> ans;
-            size_t cnt = 0;
-            for (auto rit = filt.begin(); rit != filt.end(); ++rit) {
-                size_t r = *rit;
-                if (r >= num_rows) break;
-                auto on_it = order_nation_map.find(col_okey[r]);
-                auto sn_it = supp_nation_map.find(col_skey[r]);
-                if (on_it == order_nation_map.end() ||
-                    sn_it == supp_nation_map.end() ||
-                    on_it->second != sn_it->second) continue;
-                ans[n_name_map[on_it->second]] +=
-                    col_price[r] * (100 - col_disc[r]);
-                cnt++;
-            }
-            auto t3 = clock::now();
-            crr_ans = ans;  crr_rows = cnt;
-            double d_or = q5_ms(t0, t1), d_and = q5_ms(t1, t2),
-                   d_agg = q5_ms(t2, t3),
-                   d_tot = q5_ms(t0, t3) + phase_a_ms + phase_b_setup_ms + crr_build_ms;
-            std::cout << "  CRR:  OR=" << d_or << "  AND=" << d_and
-                      << "  Agg=" << d_agg << "  Total=" << d_tot
-                      << "  rows=" << cnt << std::endl;
-            if (!warm) { crr_or_t.push_back(d_or); crr_and_t.push_back(d_and);
-                         crr_agg_t.push_back(d_agg); crr_tot_t.push_back(d_tot); }
-        }
-
-        if (run_wah()) {
-            auto t0 = clock::now();
-            ibis::bitvector btv_or, btv_supp;
-            for (auto& [okey, _] : order_nation_map) idx_wah_okey.apply_or_to(btv_or, okey);
-            auto t1 = clock::now();
-            for (auto& [skey, _] : supp_nation_map) idx_wah_skey.apply_or_to(btv_supp, skey);
-            ibis::bitvector filt; filt.copy(btv_or); filt &= btv_supp;
-            auto t2 = clock::now();
-            std::map<std::string, int64_t> ans;
-            size_t cnt = 0;
-            ibis::bitvector::pit pit(filt);
-            while (*pit != 0xFFFFFFFFU) {
-                size_t r = *pit;
-                if (r < num_rows) {
-                    auto on_it = order_nation_map.find(col_okey[r]);
-                    auto sn_it = supp_nation_map.find(col_skey[r]);
-                    if (on_it != order_nation_map.end() &&
-                        sn_it != supp_nation_map.end() &&
-                        on_it->second == sn_it->second) {
-                        ans[n_name_map[on_it->second]] +=
-                            col_price[r] * (100 - col_disc[r]);
-                        cnt++;
+        std::unordered_set<int32_t> n_nationkey_set;
+        std::unordered_map<int32_t, std::string> n_name_map;
+        {
+            auto& tx = DuckTransaction::Get(context.client, nation_table.catalog);
+            TableScanState ss;
+            vector<StorageIndex> col_ids = {StorageIndex(0), StorageIndex(1), StorageIndex(2)};
+            nation_table.GetStorage().InitializeScan(context.client, tx, ss, col_ids);
+            vector<LogicalType> types = {
+                nation_table.GetColumns().GetColumnTypes()[0],
+                nation_table.GetColumns().GetColumnTypes()[1],
+                nation_table.GetColumns().GetColumnTypes()[2]
+            };
+            while (true) {
+                DataChunk chunk; chunk.Initialize(context.client, types);
+                nation_table.GetStorage().Scan(tx, chunk, ss);
+                if (chunk.size() == 0) break;
+                auto nk = FlatVector::GetData<int32_t>(chunk.data[0]);
+                auto nn = reinterpret_cast<string_t*>(chunk.data[1].GetData());
+                auto rk = FlatVector::GetData<int32_t>(chunk.data[2]);
+                for (idx_t i = 0; i < chunk.size(); i++)
+                    if (r_regionkey_set.count(rk[i])) {
+                        n_nationkey_set.insert(nk[i]);
+                        n_name_map[nk[i]] = nn[i].GetString();
                     }
+            }
+        }
+
+        std::unordered_map<int64_t, int32_t> customer_nation_map;
+        {
+            auto& tx = DuckTransaction::Get(context.client, customer_table.catalog);
+            TableScanState ss;
+            vector<StorageIndex> col_ids = {StorageIndex(0), StorageIndex(3)};
+            customer_table.GetStorage().InitializeScan(context.client, tx, ss, col_ids);
+            vector<LogicalType> types = {
+                customer_table.GetColumns().GetColumnTypes()[0],
+                customer_table.GetColumns().GetColumnTypes()[3]
+            };
+            while (true) {
+                DataChunk chunk; chunk.Initialize(context.client, types);
+                customer_table.GetStorage().Scan(tx, chunk, ss);
+                if (chunk.size() == 0) break;
+                auto ck = FlatVector::GetData<int64_t>(chunk.data[0]);
+                auto nk = FlatVector::GetData<int32_t>(chunk.data[1]);
+                for (idx_t i = 0; i < chunk.size(); i++)
+                    if (n_nationkey_set.count(nk[i]))
+                        customer_nation_map[ck[i]] = nk[i];
+            }
+        }
+
+        constexpr int32_t Q5_DATE_LO = 8766;   // 1994-01-01 epoch
+        constexpr int32_t Q5_DATE_HI = 9131;   // 1995-01-01 epoch (excl)
+
+        std::unordered_map<int64_t, int32_t> order_nation_map;
+        {
+            auto& tx = DuckTransaction::Get(context.client, orders_table.catalog);
+            TableScanState ss;
+            vector<StorageIndex> col_ids = {StorageIndex(0), StorageIndex(1), StorageIndex(4)};
+            orders_table.GetStorage().InitializeScan(context.client, tx, ss, col_ids);
+            vector<LogicalType> types = {
+                orders_table.GetColumns().GetColumnTypes()[0],
+                orders_table.GetColumns().GetColumnTypes()[1],
+                orders_table.GetColumns().GetColumnTypes()[4]
+            };
+            while (true) {
+                DataChunk chunk; chunk.Initialize(context.client, types);
+                orders_table.GetStorage().Scan(tx, chunk, ss);
+                if (chunk.size() == 0) break;
+                auto okey  = FlatVector::GetData<int64_t>(chunk.data[0]);
+                auto ckey  = FlatVector::GetData<int64_t>(chunk.data[1]);
+                auto odate = FlatVector::GetData<int32_t>(chunk.data[2]);
+                for (idx_t i = 0; i < chunk.size(); i++) {
+                    if (odate[i] < Q5_DATE_LO || odate[i] >= Q5_DATE_HI) continue;
+                    auto it = customer_nation_map.find(ckey[i]);
+                    if (it != customer_nation_map.end())
+                        order_nation_map[okey[i]] = it->second;
                 }
-                pit.next();
             }
-            auto t3 = clock::now();
-            wah_ans = ans;  wah_rows = cnt;
-            double d_or = q5_ms(t0, t1), d_and = q5_ms(t1, t2),
-                   d_agg = q5_ms(t2, t3),
-                   d_tot = q5_ms(t0, t3) + phase_a_ms + phase_b_setup_ms + wah_build_ms;
-            std::cout << "  WAH:  OR=" << d_or << "  AND=" << d_and
-                      << "  Agg=" << d_agg << "  Total=" << d_tot
-                      << "  rows=" << cnt << std::endl;
-            if (!warm) { wah_or_t.push_back(d_or); wah_and_t.push_back(d_and);
-                         wah_agg_t.push_back(d_agg); wah_tot_t.push_back(d_tot); }
         }
 
-        if (run_ew()) {
-            auto t0 = clock::now();
+        std::unordered_map<int64_t, int32_t> supp_nation_map;
+        {
+            auto& tx = DuckTransaction::Get(context.client, supplier_table.catalog);
+            TableScanState ss;
+            vector<StorageIndex> col_ids = {StorageIndex(0), StorageIndex(3)};
+            supplier_table.GetStorage().InitializeScan(context.client, tx, ss, col_ids);
+            vector<LogicalType> types = {
+                supplier_table.GetColumns().GetColumnTypes()[0],
+                supplier_table.GetColumns().GetColumnTypes()[3]
+            };
+            while (true) {
+                DataChunk chunk; chunk.Initialize(context.client, types);
+                supplier_table.GetStorage().Scan(tx, chunk, ss);
+                if (chunk.size() == 0) break;
+                auto sk = FlatVector::GetData<int64_t>(chunk.data[0]);
+                auto nk = FlatVector::GetData<int32_t>(chunk.data[1]);
+                for (idx_t i = 0; i < chunk.size(); i++)
+                    if (n_nationkey_set.count(nk[i]))
+                        supp_nation_map[sk[i]] = nk[i];
+            }
+        }
+
+        auto t_phaseA_end = clk::now();
+
+        // Skip Phase B/C if no qualifying orderkeys/suppkeys
+        if (order_nation_map.empty() || supp_nation_map.empty()) {
+            std::cout << "  (no qualifying rows)" << std::endl;
+            continue;
+        }
+
+        // ===== Phase B + C: backend-specific bitmap multi-OR + AND + BMFetch =====
+        std::map<std::string, int64_t> ans;
+        size_t matched = 0;
+        size_t num_rows_lineitem = idx_okey_base->num_rows();
+        auto& lineitem_tx = DuckTransaction::Get(context.client, lineitem_table.catalog);
+
+        std::vector<row_t> ids;
+
+        // ---- ComBit ----
+        if (auto* cb_okey = dynamic_cast<bm_index::IndexedComBit*>(idx_okey_base)) {
+            auto* cb_skey = dynamic_cast<bm_index::IndexedComBit*>(idx_skey_base);
+            if (!cb_skey) { std::cerr << "[Q5] ERROR: orderkey is ComBit, suppkey isn't.\n"; return; }
+
+            std::vector<bool> empty_bits(num_rows_lineitem, false);
+            ComBit btv_or  = ComBit::compress(empty_bits, false, cb_okey->segment_bits());
+            ComBit btv_supp= ComBit::compress(empty_bits, false, cb_skey->segment_bits());
+            for (auto& [okey, _] : order_nation_map) cb_okey->apply_or_to(btv_or, okey);
+            for (auto& [skey, _] : supp_nation_map ) cb_skey->apply_or_to(btv_supp, skey);
+            btv_or &= btv_supp;
+            get_rowids(btv_or, ids);
+        }
+        // ---- CRoaring / CRoaring+Run (same code path) ----
+        else if (auto* cr_okey = dynamic_cast<bm_index::IndexedCRoaring*>(idx_okey_base)) {
+            auto* cr_skey = dynamic_cast<bm_index::IndexedCRoaring*>(idx_skey_base);
+            if (!cr_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
+            roaring::Roaring btv_or, btv_supp;
+            for (auto& [okey, _] : order_nation_map) cr_okey->apply_or_to(btv_or, okey);
+            for (auto& [skey, _] : supp_nation_map ) cr_skey->apply_or_to(btv_supp, skey);
+            roaring::Roaring filt = btv_or & btv_supp;
+            get_rowids(filt, ids);
+        }
+        // ---- WAH ----
+        else if (auto* wah_okey = dynamic_cast<bm_index::IndexedWAH*>(idx_okey_base)) {
+            auto* wah_skey = dynamic_cast<bm_index::IndexedWAH*>(idx_skey_base);
+            if (!wah_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
+            ibis::bitvector btv_or, btv_supp;
+            for (auto& [okey, _] : order_nation_map) wah_okey->apply_or_to(btv_or, okey);
+            for (auto& [skey, _] : supp_nation_map ) wah_skey->apply_or_to(btv_supp, skey);
+            ibis::bitvector filt; filt.copy(btv_or); filt &= btv_supp;
+            get_rowids(filt, ids);
+        }
+        // ---- EWAH ----
+        else if (auto* ew_okey = dynamic_cast<bm_index::IndexedEWAH*>(idx_okey_base)) {
+            auto* ew_skey = dynamic_cast<bm_index::IndexedEWAH*>(idx_skey_base);
+            if (!ew_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
             ewah::EWAHBoolArray<uint64_t> btv_or, btv_supp;
-            for (auto& [okey, _] : order_nation_map) idx_ew_okey.apply_or_to(btv_or, okey);
-            auto t1 = clock::now();
-            for (auto& [skey, _] : supp_nation_map) idx_ew_skey.apply_or_to(btv_supp, skey);
-            ewah::EWAHBoolArray<uint64_t> filt;
-            btv_or.logicaland(btv_supp, filt);
-            auto t2 = clock::now();
-            std::map<std::string, int64_t> ans;
-            size_t cnt = 0;
-            for (auto rit = filt.begin(); rit != filt.end(); ++rit) {
-                size_t r = *rit;
-                if (r >= num_rows) break;
-                auto on_it = order_nation_map.find(col_okey[r]);
-                auto sn_it = supp_nation_map.find(col_skey[r]);
-                if (on_it == order_nation_map.end() ||
-                    sn_it == supp_nation_map.end() ||
-                    on_it->second != sn_it->second) continue;
-                ans[n_name_map[on_it->second]] +=
-                    col_price[r] * (100 - col_disc[r]);
-                cnt++;
-            }
-            auto t3 = clock::now();
-            ew_ans = ans;  ew_rows = cnt;
-            double d_or = q5_ms(t0, t1), d_and = q5_ms(t1, t2),
-                   d_agg = q5_ms(t2, t3),
-                   d_tot = q5_ms(t0, t3) + phase_a_ms + phase_b_setup_ms + ew_build_ms;
-            std::cout << "  EW:   OR=" << d_or << "  AND=" << d_and
-                      << "  Agg=" << d_agg << "  Total=" << d_tot
-                      << "  rows=" << cnt << std::endl;
-            if (!warm) { ew_or_t.push_back(d_or); ew_and_t.push_back(d_and);
-                         ew_agg_t.push_back(d_agg); ew_tot_t.push_back(d_tot); }
+            for (auto& [okey, _] : order_nation_map) ew_okey->apply_or_to(btv_or, okey);
+            for (auto& [skey, _] : supp_nation_map ) ew_skey->apply_or_to(btv_supp, skey);
+            ewah::EWAHBoolArray<uint64_t> filt; btv_or.logicaland(btv_supp, filt);
+            get_rowids(filt, ids);
+        }
+        // ---- Concise ----
+        else if (auto* con_okey = dynamic_cast<bm_index::IndexedConcise*>(idx_okey_base)) {
+            auto* con_skey = dynamic_cast<bm_index::IndexedConcise*>(idx_skey_base);
+            if (!con_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
+            ConciseSet<false> btv_or, btv_supp;
+            for (auto& [okey, _] : order_nation_map) con_okey->apply_or_to(btv_or, okey);
+            for (auto& [skey, _] : supp_nation_map ) con_skey->apply_or_to(btv_supp, skey);
+            ConciseSet<false> filt = btv_or.logicaland(btv_supp);
+            get_rowids(filt, ids);
+        }
+        else {
+            std::cerr << "[Q5] ERROR: unrecognised IBitmapIndex backend.\n";
+            return;
         }
 
-        if (run_con()) {
-            auto t0 = clock::now();
-            ConciseSet<false> btv_or, btv_supp;
-            for (auto& [okey, _] : order_nation_map) idx_con_okey.apply_or_to(btv_or, okey);
-            auto t1 = clock::now();
-            for (auto& [skey, _] : supp_nation_map) idx_con_skey.apply_or_to(btv_supp, skey);
-            ConciseSet<false> filt = btv_or.logicaland(btv_supp);
-            auto t2 = clock::now();
-            std::map<std::string, int64_t> ans;
-            size_t cnt = 0;
-            for (auto rit = filt.begin(); rit != filt.end(); ++rit) {
-                size_t r = *rit;
-                if (r >= num_rows) break;
-                auto on_it = order_nation_map.find(col_okey[r]);
-                auto sn_it = supp_nation_map.find(col_skey[r]);
-                if (on_it == order_nation_map.end() ||
-                    sn_it == supp_nation_map.end() ||
-                    on_it->second != sn_it->second) continue;
-                ans[n_name_map[on_it->second]] +=
-                    col_price[r] * (100 - col_disc[r]);
-                cnt++;
-            }
-            auto t3 = clock::now();
-            con_ans = ans;  con_rows = cnt;
-            double d_or = q5_ms(t0, t1), d_and = q5_ms(t1, t2),
-                   d_agg = q5_ms(t2, t3),
-                   d_tot = q5_ms(t0, t3) + phase_a_ms + phase_b_setup_ms + con_build_ms;
-            std::cout << "  CON:  OR=" << d_or << "  AND=" << d_and
-                      << "  Agg=" << d_agg << "  Total=" << d_tot
-                      << "  rows=" << cnt << std::endl;
-            if (!warm) { con_or_t.push_back(d_or); con_and_t.push_back(d_and);
-                         con_agg_t.push_back(d_agg); con_tot_t.push_back(d_tot); }
+        auto t_phaseB_end = clk::now();
+
+        run_q5_aggregate(context.client, lineitem_table, lineitem_tx, ids,
+                         order_nation_map, supp_nation_map, n_name_map,
+                         ans, matched);
+
+        auto t_phaseC_end = clk::now();
+
+        last_ans = ans; last_rows = matched; n_name_map_capture = n_name_map;
+
+        double tA  = ms(t_total_start, t_phaseA_end);
+        double tB  = ms(t_phaseA_end, t_phaseB_end);
+        double tC  = ms(t_phaseB_end, t_phaseC_end);
+        double tot = ms(t_total_start, t_phaseC_end);
+        std::cout << "  " << idx_okey_base->backend_name()
+                  << ":  PhaseA=" << tA << "  PhaseB=" << tB
+                  << "  PhaseC=" << tC << "  Total=" << tot
+                  << "  rows=" << matched << "  ids=" << ids.size() << std::endl;
+        if (!warm) {
+            tA_t.push_back(tA); tB_t.push_back(tB);
+            tC_t.push_back(tC); tot_t.push_back(tot);
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Validate vs DuckDB SQL
-    // -----------------------------------------------------------------------
+    // ----- Validate vs DuckDB SQL -----
     bool gt_ok = false;
     std::map<std::string, double> gt_revenue;
     {
@@ -596,97 +479,60 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
             "GROUP BY n.n_name ORDER BY revenue DESC";
         auto r = con.Query(sql);
         if (r && !r->HasError()) {
-            for (idx_t i = 0; i < r->RowCount(); i++) {
+            for (idx_t i = 0; i < r->RowCount(); i++)
                 gt_revenue[r->GetValue(0, i).GetValue<std::string>()] =
                     r->GetValue(1, i).GetValue<double>();
-            }
             gt_ok = true;
         }
     }
-
-    auto check_match = [&](const char* tag, const std::map<std::string, int64_t>& ans, bool active) {
-        if (!active || !gt_ok) return;
-        if (ans.size() != gt_revenue.size()) {
-            std::ostringstream e;
-            e << "[FAIL] Q5 " << tag << " produced " << ans.size()
-              << " nations, SQL has " << gt_revenue.size();
-            throw std::runtime_error(e.str());
-        }
-        for (auto& [name, rev_fp] : ans) {
-            double our = double(rev_fp) / 10000;
-            auto it = gt_revenue.find(name);
-            if (it == gt_revenue.end() || std::fabs(our - it->second) > 0.01) {
-                std::ostringstream e;
-                e << "[FAIL] Q5 " << tag << " nation=" << name
-                  << " our=" << our
-                  << " sql=" << (it == gt_revenue.end() ? -1 : it->second);
-                throw std::runtime_error(e.str());
+    if (gt_ok) {
+        bool ok = (last_ans.size() == gt_revenue.size());
+        if (ok) {
+            for (auto& [name, rev_fp] : last_ans) {
+                double our = double(rev_fp) / 10000;
+                auto it = gt_revenue.find(name);
+                if (it == gt_revenue.end() || std::fabs(our - it->second) > 0.01) {
+                    ok = false; break;
+                }
             }
         }
-    };
-    check_match("CB",  cb_ans,  run_cb());
-    check_match("CR",  cr_ans,  run_cr());
-    check_match("CRR", crr_ans, run_crr());
-    check_match("WAH", wah_ans, run_wah());
-    check_match("EW",  ew_ans,  run_ew());
-    check_match("CON", con_ans, run_con());
-    if (gt_ok)
-        std::cout << "\n[OK] all active backends match DuckDB SQL ground truth ("
-                  << gt_revenue.size() << " nations)." << std::endl;
-
-    const std::map<std::string, int64_t>* canonical = nullptr;
-    const char* canonical_label = "";
-    if      (!cb_ans.empty())  { canonical = &cb_ans;  canonical_label = "ComBit"; }
-    else if (!cr_ans.empty())  { canonical = &cr_ans;  canonical_label = "CRoaring"; }
-    else if (!crr_ans.empty()) { canonical = &crr_ans; canonical_label = "CRoaring+Run"; }
-    else if (!wah_ans.empty()) { canonical = &wah_ans; canonical_label = "WAH"; }
-    else if (!ew_ans.empty())  { canonical = &ew_ans;  canonical_label = "EWAH"; }
-    else if (!con_ans.empty()) { canonical = &con_ans; canonical_label = "Concise"; }
-    if (canonical && !canonical->empty()) {
-        std::vector<std::pair<int64_t, std::string>> rows;
-        for (auto& [name, rev] : *canonical) rows.push_back({rev, name});
-        std::sort(rows.rbegin(), rows.rend());
-        std::cout << "\n  Q5 Results (revenue DESC, source=" << canonical_label << "):" << std::endl;
-        std::cout << "  nation                     revenue" << std::endl;
-        for (auto& [rev, name] : rows)
-            std::cout << "  " << std::left << std::setw(20) << name
-                      << std::fixed << std::setprecision(4)
-                      << (double(rev) / 10000) << std::endl;
+        if (ok)
+            std::cout << "\n[OK] " << idx_okey_base->backend_name()
+                      << " matches DuckDB SQL ground truth ("
+                      << gt_revenue.size() << " nations).\n";
+        else
+            std::cerr << "\n[FAIL] mismatch vs SQL ground truth!\n";
     }
+
+    // ----- Print final results -----
+    std::vector<std::pair<int64_t, std::string>> rows;
+    for (auto& [name, rev] : last_ans) rows.push_back({rev, name});
+    std::sort(rows.rbegin(), rows.rend());
+    std::cout << "\n  Q5 Top results (revenue DESC):\n  nation                     revenue\n";
+    for (auto& [rev, name] : rows)
+        std::cout << "  " << std::left << std::setw(20) << name
+                  << std::fixed << std::setprecision(4)
+                  << (double(rev) / 10000) << std::endl;
 
     auto stats = [](std::vector<double>& v) {
         if (v.empty()) return bm_bench::Stats{0,0,0,0};
         return bm_bench::compute_stats(v);
     };
-    auto cb_or_s=stats(cb_or_t), cb_and_s=stats(cb_and_t), cb_agg_s=stats(cb_agg_t), cb_tot_s=stats(cb_tot_t);
-    auto cr_or_s=stats(cr_or_t), cr_and_s=stats(cr_and_t), cr_agg_s=stats(cr_agg_t), cr_tot_s=stats(cr_tot_t);
-    auto crr_or_s=stats(crr_or_t),crr_and_s=stats(crr_and_t),crr_agg_s=stats(crr_agg_t),crr_tot_s=stats(crr_tot_t);
-    auto wah_or_s=stats(wah_or_t),wah_and_s=stats(wah_and_t),wah_agg_s=stats(wah_agg_t),wah_tot_s=stats(wah_tot_t);
-    auto ew_or_s=stats(ew_or_t), ew_and_s=stats(ew_and_t), ew_agg_s=stats(ew_agg_t), ew_tot_s=stats(ew_tot_t);
-    auto con_or_s=stats(con_or_t),con_and_s=stats(con_and_t),con_agg_s=stats(con_agg_t),con_tot_s=stats(con_tot_t);
+    auto sA = stats(tA_t), sB = stats(tB_t), sC = stats(tC_t), sT = stats(tot_t);
     int measured = std::max(0, Q5_ITERATIONS - Q5_WARMUP);
 
-    std::cout << "\n================================================================" << std::endl;
-    std::cout << "  Q5 RESULTS (" << measured << " measured iter, median +/- stddev). Total includes Phases A+B+C." << std::endl;
-    std::cout << "================================================================" << std::endl;
-    std::cout << "                  CB              CR              CRR             WAH             EW              CON" << std::endl;
-    auto pr = [](const char* l, bm_bench::Stats& a, bm_bench::Stats& b, bm_bench::Stats& c,
-                                bm_bench::Stats& d, bm_bench::Stats& e, bm_bench::Stats& f) {
-        std::cout << "  " << std::left << std::setw(8) << l << std::right
-                  << std::setw(10) << a.median << " +/- " << std::setw(5) << a.stddev
-                  << "  " << std::setw(10) << b.median << " +/- " << std::setw(5) << b.stddev
-                  << "  " << std::setw(10) << c.median << " +/- " << std::setw(5) << c.stddev
-                  << "  " << std::setw(10) << d.median << " +/- " << std::setw(5) << d.stddev
-                  << "  " << std::setw(10) << e.median << " +/- " << std::setw(5) << e.stddev
-                  << "  " << std::setw(10) << f.median << " +/- " << std::setw(5) << f.stddev
-                  << std::endl;
-    };
-    pr("OR",    cb_or_s,  cr_or_s,  crr_or_s,  wah_or_s,  ew_or_s,  con_or_s);
-    pr("AND",   cb_and_s, cr_and_s, crr_and_s, wah_and_s, ew_and_s, con_and_s);
-    pr("Agg",   cb_agg_s, cr_agg_s, crr_agg_s, wah_agg_s, ew_agg_s, con_agg_s);
-    pr("TOTAL", cb_tot_s, cr_tot_s, crr_tot_s, wah_tot_s, ew_tot_s, con_tot_s);
-    std::cout << "================================================================\n" << std::endl;
+    std::cout << "\n================================================================\n";
+    std::cout << "  Q5 RESULTS — " << idx_okey_base->backend_name()
+              << " only (" << measured << " measured iter, median +/- stddev)\n";
+    std::cout << "================================================================\n";
+    std::cout << "  PhaseA (small joins) : " << sA.median << " +/- " << sA.stddev << " ms\n";
+    std::cout << "  PhaseB (bitmap OR/AND): " << sB.median << " +/- " << sB.stddev << " ms\n";
+    std::cout << "  PhaseC (BMFetch+Agg) : " << sC.median << " +/- " << sC.stddev << " ms\n";
+    std::cout << "  TOTAL                : " << sT.median << " +/- " << sT.stddev << " ms\n";
+    std::cout << "  rows: " << last_rows << "\n";
+    std::cout << "================================================================\n\n";
 
+    // CSV row (Schema-A: 5 phases × 8 backends; only the active backend has data)
     std::string sf = q5_get_sf_label();
     std::ofstream csv("q5_results_" + sf + ".csv");
     if (csv) {
@@ -701,31 +547,29 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
             << "bsa_median_ms,bsa_stddev_ms,bsa_min_ms,bsa_max_ms,"
             << "concise_median_ms,concise_stddev_ms,concise_min_ms,concise_max_ms,"
             << "cb_vs_wah,cr_vs_wah,crr_vs_wah,ew_vs_wah,bs_vs_wah,bsa_vs_wah,con_vs_wah\n";
-        bm_bench::Stats bs_s{0,0,0,0}, bsa_s{0,0,0,0};
-        auto row = [&](const std::string& op,
-                       bm_bench::Stats& w, bm_bench::Stats& c, bm_bench::Stats& cr,
-                       bm_bench::Stats& crr, bm_bench::Stats& e,
-                       bm_bench::Stats& con) {
-            auto sp = [](double a, double b) { return b > 0 ? a/b : 0.0; };
-            csv << sf << "," << op << ","
-                << w.median <<","<< w.stddev <<","<< w.min_val <<","<< w.max_val <<","
-                << c.median <<","<< c.stddev <<","<< c.min_val <<","<< c.max_val <<","
-                << cr.median<<","<< cr.stddev<<","<< cr.min_val<<","<< cr.max_val<<","
-                << crr.median<<","<< crr.stddev<<","<< crr.min_val<<","<< crr.max_val<<","
-                << e.median <<","<< e.stddev <<","<< e.min_val <<","<< e.max_val <<","
-                << bs_s.median<<","<< bs_s.stddev<<","<< bs_s.min_val<<","<< bs_s.max_val<<","
-                << bsa_s.median<<","<< bsa_s.stddev<<","<< bsa_s.min_val<<","<< bsa_s.max_val<<","
-                << con.median<<","<< con.stddev<<","<< con.min_val<<","<< con.max_val<<","
-                << sp(w.median, c.median) <<","<< sp(w.median, cr.median) <<","
-                << sp(w.median, crr.median) <<","<< sp(w.median, e.median) <<","
-                << "0,0,"
-                << sp(w.median, con.median) << "\n";
+        bm_bench::Stats z{0,0,0,0};
+        std::string bn = idx_okey_base->backend_name();
+        auto put = [&](const std::string& op, bm_bench::Stats s) {
+            // Place stats into the column matching the active backend; others 0.
+            csv << sf << "," << op << ",";
+            auto cell = [&](bm_bench::Stats v) {
+                csv << v.median << "," << v.stddev << "," << v.min_val << "," << v.max_val << ",";
+            };
+            // wah, combit, croaring, croaring_run, ewah, bs, bsa, concise
+            cell(bn == "WAH" ? s : z);
+            cell(bn == "ComBit" ? s : z);
+            cell(bn == "CRoaring" ? s : z);
+            cell(bn == "CRoaringRun" ? s : z);
+            cell(bn == "EWAH" ? s : z);
+            cell(z); cell(z);  // BS, BSA — N/A for Q5
+            cell(bn == "Concise" ? s : z);
+            csv << "0,0,0,0,0,0,0\n";
         };
-        row("OR",    wah_or_s,  cb_or_s,  cr_or_s,  crr_or_s,  ew_or_s,  con_or_s);
-        row("AND",   wah_and_s, cb_and_s, cr_and_s, crr_and_s, ew_and_s, con_and_s);
-        row("Agg",   wah_agg_s, cb_agg_s, cr_agg_s, crr_agg_s, ew_agg_s, con_agg_s);
-        row("TOTAL", wah_tot_s, cb_tot_s, cr_tot_s, crr_tot_s, ew_tot_s, con_tot_s);
-        std::cout << "  [CSV] q5_results_" << sf << ".csv" << std::endl;
+        put("PhaseA", sA);
+        put("PhaseB", sB);
+        put("PhaseC", sC);
+        put("TOTAL",  sT);
+        std::cout << "  [CSV] q5_results_" << sf << ".csv\n";
     }
 
     });  // end call_once

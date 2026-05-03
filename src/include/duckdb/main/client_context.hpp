@@ -95,6 +95,30 @@ public:
 	//! "tpch" after each bm_tpch dispatch completes.
 	std::string query_source = "tpch";
 
+	//! Pre-loaded value-indexed bitmap auxiliary structures, populated by
+	//! the debit extension's `PRAGMA load_bitmap("col")` handler.  Each
+	//! pointer holds an `bm_index::IBitmapIndex*` (forward-declared as
+	//! void* here to avoid include cycles); the BMTPCH_Q<N> functions
+	//! `dynamic_cast` to the concrete backend variant (mirrors teacher's
+	//! `dynamic_cast<rabit::Rabit*>(context.client.bitmap_orderkey)`
+	//! pattern in the BitEngine branch).  TPC-H 1.5.7-compliant: each
+	//! bitmap references exactly one base-table column (PK / FK / date).
+	void* bitmap_orderkey   = nullptr;   // lineitem.l_orderkey
+	void* bitmap_suppkey    = nullptr;   // lineitem.l_suppkey
+	void* bitmap_partkey    = nullptr;   // lineitem.l_partkey
+	void* bitmap_shipdate   = nullptr;   // lineitem.l_shipdate
+	void* bitmap_orderdate  = nullptr;   // orders.o_orderdate
+	void* bitmap_linestatus = nullptr;   // lineitem.l_linestatus
+	void* bitmap_returnflag = nullptr;   // lineitem.l_returnflag
+	void* bitmap_discount   = nullptr;   // lineitem.l_discount
+	void* bitmap_quantity   = nullptr;   // lineitem.l_quantity
+	void* bitmap_shipmode   = nullptr;   // lineitem.l_shipmode
+	void* bitmap_shipinstr  = nullptr;   // lineitem.l_shipinstruct
+	// Group-Encoded variants (per teacher Q6): one bitmap per group
+	// instead of per-value.  E.g. `bitmap_shipdate_GE` = 1 bitmap per
+	// 3-month / per-year group.
+	void* bitmap_shipdate_GE = nullptr;
+
 public:
 	MetaTransaction &ActiveTransaction() {
 		return transaction.ActiveTransaction();

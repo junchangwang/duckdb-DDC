@@ -43,9 +43,24 @@
 namespace bm_index {
 
 // -----------------------------------------------------------------------
+// IBitmapIndex — abstract base (mirror of teacher's BaseTable from CUBIT).
+// All per-backend variants inherit from this so context.client.bitmap_*
+// can hold any backend's index uniformly.  BMTPCH functions dispatch via
+// dynamic_cast (mirror teacher's `dynamic_cast<rabit::Rabit*>` pattern).
+// -----------------------------------------------------------------------
+class IBitmapIndex {
+public:
+    virtual ~IBitmapIndex() = default;
+    virtual size_t num_rows() const = 0;
+    virtual size_t num_keys() const = 0;
+    virtual size_t storage_bytes() const = 0;
+    virtual const char* backend_name() const = 0;
+};
+
+// -----------------------------------------------------------------------
 // IndexedComBit — uses SparseComBit per value.
 // -----------------------------------------------------------------------
-class IndexedComBit {
+class IndexedComBit : public IBitmapIndex {
 public:
     IndexedComBit() = default;
 
@@ -75,14 +90,15 @@ public:
         if (it != index_.end()) it->second.apply_or_to(dst);
     }
 
-    size_t num_keys() const { return index_.size(); }
-    size_t storage_bytes() const {
+    size_t num_keys() const override { return index_.size(); }
+    size_t storage_bytes() const override {
         size_t t = 0;
         for (auto& [_, s] : index_) t += s.storage_bytes();
         return t;
     }
-    size_t num_rows() const { return num_rows_; }
+    size_t num_rows() const override { return num_rows_; }
     size_t segment_bits() const { return segment_bits_; }
+    const char* backend_name() const override { return "ComBit"; }
 
 private:
     size_t num_rows_ = 0;
@@ -93,13 +109,14 @@ private:
 // -----------------------------------------------------------------------
 // IndexedCRoaring — uses roaring::Roaring per value.
 // -----------------------------------------------------------------------
-class IndexedCRoaring {
+class IndexedCRoaring : public IBitmapIndex {
 public:
     IndexedCRoaring() = default;
 
     void build(const std::vector<int64_t>& keys, size_t num_rows,
                bool run_optimize = false) {
         num_rows_ = num_rows;
+        run_optimized_ = run_optimize;
         std::unordered_map<int64_t, std::vector<uint32_t>> by_key;
         by_key.reserve(num_rows / 4);
         for (size_t i = 0; i < num_rows; i++)
@@ -118,18 +135,28 @@ public:
         auto it = index_.find(key);
         if (it != index_.end()) dst |= it->second;
     }
-    size_t num_keys() const { return index_.size(); }
-    size_t num_rows() const { return num_rows_; }
+    size_t num_keys() const override { return index_.size(); }
+    size_t num_rows() const override { return num_rows_; }
+    size_t storage_bytes() const override {
+        size_t t = 0;
+        for (auto& [_, r] : index_) t += r.getSizeInBytes();
+        return t;
+    }
+    const char* backend_name() const override { return run_optimized_ ? "CRoaringRun" : "CRoaring"; }
+    bool run_optimized() const { return run_optimized_; }
 
 private:
     size_t num_rows_ = 0;
+    bool   run_optimized_ = false;
     std::unordered_map<int64_t, roaring::Roaring> index_;
+public:
+    void mark_run_optimized() { run_optimized_ = true; }
 };
 
 // -----------------------------------------------------------------------
 // IndexedWAH — uses ibis::bitvector per value (FastBit WAH).
 // -----------------------------------------------------------------------
-class IndexedWAH {
+class IndexedWAH : public IBitmapIndex {
 public:
     IndexedWAH() = default;
 
@@ -163,8 +190,14 @@ public:
         auto it = index_.find(key);
         if (it != index_.end()) dst |= it->second;
     }
-    size_t num_keys() const { return index_.size(); }
-    size_t num_rows() const { return num_rows_; }
+    size_t num_keys() const override { return index_.size(); }
+    size_t num_rows() const override { return num_rows_; }
+    size_t storage_bytes() const override {
+        size_t t = 0;
+        for (auto& [_, b] : index_) t += b.bytes();
+        return t;
+    }
+    const char* backend_name() const override { return "WAH"; }
 
 private:
     size_t num_rows_ = 0;
@@ -174,7 +207,7 @@ private:
 // -----------------------------------------------------------------------
 // IndexedEWAH — uses ewah::EWAHBoolArray per value.
 // -----------------------------------------------------------------------
-class IndexedEWAH {
+class IndexedEWAH : public IBitmapIndex {
 public:
     using EWBA = ewah::EWAHBoolArray<uint64_t>;
     IndexedEWAH() = default;
@@ -205,8 +238,14 @@ public:
             dst = std::move(tmp);
         }
     }
-    size_t num_keys() const { return index_.size(); }
-    size_t num_rows() const { return num_rows_; }
+    size_t num_keys() const override { return index_.size(); }
+    size_t num_rows() const override { return num_rows_; }
+    size_t storage_bytes() const override {
+        size_t t = 0;
+        for (auto& [_, e] : index_) t += e.sizeInBytes();
+        return t;
+    }
+    const char* backend_name() const override { return "EWAH"; }
 
 private:
     size_t num_rows_ = 0;
@@ -216,7 +255,7 @@ private:
 // -----------------------------------------------------------------------
 // IndexedConcise — uses ConciseSet<false> per value.
 // -----------------------------------------------------------------------
-class IndexedConcise {
+class IndexedConcise : public IBitmapIndex {
 public:
     using CS = ConciseSet<false>;
     IndexedConcise() = default;
@@ -241,8 +280,15 @@ public:
         auto it = index_.find(key);
         if (it != index_.end()) dst = dst | it->second;
     }
-    size_t num_keys() const { return index_.size(); }
-    size_t num_rows() const { return num_rows_; }
+    size_t num_keys() const override { return index_.size(); }
+    size_t num_rows() const override { return num_rows_; }
+    size_t storage_bytes() const override {
+        // Concise doesn't expose a sizeof — approximate via wpc set size.
+        size_t t = 0;
+        for (auto& [_, c] : index_) t += c.size() * 4;  // rough
+        return t;
+    }
+    const char* backend_name() const override { return "Concise"; }
 
 private:
     size_t num_rows_ = 0;
