@@ -514,9 +514,14 @@ def parse_stdout_log(log_text: str, *, q: Optional[int] = None,
 # per backend, with the appropriate load_bitmap PRAGMAs.  The mapping
 # below records which columns each Q needs pre-loaded.
 PATTERN_QS_LOAD_BITMAPS: Dict[int, List[str]] = {
-    1: ["shipdate", "linestatus", "returnflag"],
-    5: ["orderkey", "suppkey"],
-    6: ["shipdate_GE", "discount", "quantity"],
+    1:  ["shipdate", "linestatus", "returnflag"],
+    3:  ["orderkey", "shipdate"],
+    4:  ["orderkey"],
+    5:  ["orderkey", "suppkey"],
+    6:  ["shipdate_GE", "discount", "quantity", "discount_BPE", "quantity_BPE"],
+    14: ["shipdate"],
+    17: ["partkey"],
+    19: ["shipmode", "shipinstruct"],
 }
 
 # Per-backend env values that map to our BitmapBackend enum.
@@ -535,12 +540,25 @@ PATTERN_BACKENDS_FULL: List[Tuple[str, str]] = [
 # a sweep.  Skip them and report N/A; CB / CR / CRR are the meaningful
 # comparison for Q5's per-value FK index pattern.
 PATTERN_BACKENDS_PER_Q: Dict[int, List[Tuple[str, str]]] = {
-    # Q1's shipdate range is 2437 days; WAH/EWAH/Concise pay O(num_words)
-    # per OR which makes Phase A take 5–10 minutes each.  Limit to the
-    # backends that have efficient many-OR fast paths.
-    1: [("CB", "cb"), ("CR", "cr"), ("CRR", "crr")],
-    5: [("CB", "cb"), ("CR", "cr"), ("CRR", "crr")],
-    6: PATTERN_BACKENDS_FULL,
+    # Q1's complement OR is small (~90 keys after rewrite) so all
+    # backends run cheaply.
+    1:  PATTERN_BACKENDS_FULL,
+    # Q3's PhaseB ORs ~590k orderkeys, PhaseC ORs 1356 days — WAH/EW/CON
+    # would take 5–10 minutes each.  Limit to backends with efficient
+    # many-OR fast paths.
+    3:  [("CB", "cb"), ("CR", "cr"), ("CRR", "crr")],
+    # Q4 has ~590k orderkey OR — same constraint as Q3.
+    4:  [("CB", "cb"), ("CR", "cr"), ("CRR", "crr")],
+    # Q5 has ~28k orderkey OR (small) but each is sparse — still faster
+    # to limit to the backends with k-way merge.
+    5:  [("CB", "cb"), ("CR", "cr"), ("CRR", "crr")],
+    6:  PATTERN_BACKENDS_FULL,
+    # Q14: small (~30 day shipdate range) — all backends.
+    14: PATTERN_BACKENDS_FULL,
+    # Q17: ~6 partkey OR — small, all backends.
+    17: PATTERN_BACKENDS_FULL,
+    # Q19: 2 single-key ANDs — small, all backends.
+    19: PATTERN_BACKENDS_FULL,
 }
 
 # Maps the active backend short tag to its CSV column prefix in the
@@ -804,16 +822,67 @@ def build_excel(records: List[Dict], meta: Dict[str, Dict],
 
     _section("Notes")
     notes = [
-        "All time numbers are medians over 8 measured iterations (after 2 warm-ups), as printed by each Q.",
+        "All time numbers are medians over the measured iterations (after warm-ups), as printed by each Q.",
         "All MB numbers come from the in-memory '[Breakdown]' lines printed after each Q's bitmap load.",
         "Unit: 1 MiB = 1.048576 MB; the spreadsheet stays in MB end-to-end.",
         "CR and CRR share one on-disk directory.  BS and BSA share one in-mem bitset pool.",
-        "Q15 shipdate bitmaps are symlinks to Q6's; Q15 owns no extra bytes on disk.",
-        "Q15/Q17/Q19 only emit medians (no stddev/min/max) — the long CSV preserves that.",
     ]
     for n in notes:
         readme.cell(row=rr, column=1, value="•").alignment = Alignment(horizontal="right")
         readme.cell(row=rr, column=2, value=n)
+        rr += 1
+    rr += 1
+
+    _section("TPC-H 1.5.7 §5 compliance — auxiliary data structures")
+    compliance = [
+        ("Spec rule",
+         "Each directive may reference no more than one base table and may not reference other auxiliary structures.  "
+         "Each directive may reference one and only one of: PK column(s), FK column(s), or a date column.  "
+         "Functions/expressions on those columns are allowed.  Multi-column / multi-table indexes are forbidden."),
+        ("Q1",
+         "COMPLIANT — bitmap_shipdate (date), bitmap_linestatus (varchar→ASCII byte), bitmap_returnflag (varchar→ASCII byte).  Each single column."),
+        ("Q3",
+         "COMPLIANT — bitmap_orderkey (FK on l_orderkey), bitmap_shipdate (date).  Customer mktsegment + orders orderdate filters at query-time."),
+        ("Q4",
+         "COMPLIANT — bitmap_orderkey (FK on l_orderkey).  l_commitdate < l_receiptdate evaluated at query-time on BMFetch'd cols."),
+        ("Q5",
+         "COMPLIANT — bitmap_orderkey + bitmap_suppkey (both FKs).  Region/nation/customer/orders/supplier semi-joins at query-time."),
+        ("Q6",
+         "COMPLIANT — bitmap_shipdate_GE (date, year-bucketed) + bitmap_discount/quantity (single columns).  BPE variants over the SAME columns are TPC-H 1.5.7 explicitly allowed."),
+        ("Q14",
+         "COMPLIANT — bitmap_shipdate (date) only.  PROMO% predicate evaluated by part scan at query-time."),
+        ("Q15",
+         "COMPLIANT — bitmap_shipdate (date) only.  Per-supplier max revenue computed at query-time."),
+        ("Q17",
+         "COMPLIANT — bitmap_partkey (FK on l_partkey).  p_brand+p_container scan at query-time."),
+        ("Q19",
+         "COMPLIANT — bitmap_shipmode + bitmap_shipinstruct (each single varchar column).  3 OR-group brand+container+size+quantity predicates evaluated at query-time."),
+        ("Q8 / Q10",
+         "NOT BENCHED in this workbook (older bitmap-file pipeline retired pre-port).  The pre-built join_result/0.bm structures they relied on were multi-table — incompatible with TPC-H 1.5.7 §5 — and have been removed.  Future port follows the same pattern as Q3/Q4/Q5."),
+        ("Q12",
+         "PARTIAL — uses bitmap_shipmode + bitmap_receiptdate (single col, OK).  The previous pre-built commit_lt_receipt / ship_lt_commit bitmaps were two-column expressions and have been removed; commit/ship-date predicates are now evaluated at query-time on BMFetch'd cols."),
+    ]
+    for tag, doc in compliance:
+        readme.cell(row=rr, column=1, value=tag).font = Q_FONT
+        readme.cell(row=rr, column=2, value=doc)
+        readme.cell(row=rr, column=2).alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        rr += 1
+    rr += 1
+
+    _section("Algorithm matrix (per backend k-way OR strategy)")
+    algo_matrix = [
+        ("CB",  "Pairwise SparseComBit::apply_or_to (no native k-way merge; sparse segment storage already amortises common cases)."),
+        ("CR",  "Pairwise |= (CRoaring's standard mode — comparison baseline)."),
+        ("CRR", "fastunion (priority-queue k-way merge over run-optimised bitmaps; CRoaring's advertised path)."),
+        ("WAH", "Pairwise |= (FastBit has no public k-way merge API)."),
+        ("EW",  "fast_logicalor (k-way priority-queue merge; EWAH's idiomatic path)."),
+        ("CON", "fast_logicalor (k-way merge; Concise's idiomatic path)."),
+        ("BS",  "Scalar word-level OR (uncompressed reference, single-pass through 64-bit words)."),
+        ("BSA", "AVX-512 word-level OR (same data layout as BS, vectorised)."),
+    ]
+    for tag, doc in algo_matrix:
+        readme.cell(row=rr, column=1, value=tag).font = Q_FONT
+        readme.cell(row=rr, column=2, value=doc)
         rr += 1
 
     readme.column_dimensions["A"].width = 12
