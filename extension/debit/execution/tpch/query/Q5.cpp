@@ -384,9 +384,9 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
             auto* cb_skey = dynamic_cast<bm_index::IndexedComBit*>(idx_skey_base);
             if (!cb_skey) { std::cerr << "[Q5] ERROR: orderkey is ComBit, suppkey isn't.\n"; return; }
 
-            std::vector<bool> empty_bits(num_rows_lineitem, false);
-            ComBit btv_or  = ComBit::compress(empty_bits, false, cb_okey->segment_bits());
-            ComBit btv_supp= ComBit::compress(empty_bits, false, cb_skey->segment_bits());
+            // O(num_segs) empty seed (avoids 60M-bool scratch + compress sweep).
+            ComBit btv_or  = ComBit::from_sparse_positions({}, num_rows_lineitem, cb_okey->segment_bits());
+            ComBit btv_supp= ComBit::from_sparse_positions({}, num_rows_lineitem, cb_skey->segment_bits());
             for (auto& [okey, _] : order_nation_map) cb_okey->apply_or_to(btv_or, okey);
             for (auto& [skey, _] : supp_nation_map ) cb_skey->apply_or_to(btv_supp, skey);
             btv_or &= btv_supp;

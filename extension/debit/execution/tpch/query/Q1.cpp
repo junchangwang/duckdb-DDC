@@ -263,21 +263,21 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
             auto* cb_rf_x = dynamic_cast<bm_index::IndexedComBit*>(idx_rf);
             if (!cb_ls_x || !cb_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
 
-            std::vector<bool> empty_bits(num_rows, false);
+            // empty_bits no longer used here (replaced by from_sparse_positions).
             auto t_a0 = clk::now();
-            ComBit shipdate_filter = ComBit::compress(empty_bits, false, cb_ship->segment_bits());
+            ComBit shipdate_filter = ComBit::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
             cb_ship->apply_or_range_to(shipdate_filter, INT64_MIN, Q1_SHIPDATE_CUTOFF);
             auto t_a1 = clk::now();
 
             // Pre-cache linestatus / returnflag base bitmaps.
             std::map<char, ComBit> ls_btv, rf_btv;
             for (int li = 0; li < LS_COUNT; li++) {
-                ComBit b = ComBit::compress(empty_bits, false, cb_ship->segment_bits());
+                ComBit b = ComBit::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
                 cb_ls_x->apply_or_to(b, static_cast<int64_t>(LS_CHARS[li]));
                 ls_btv[LS_CHARS[li]] = std::move(b);
             }
             for (int ri = 0; ri < RF_COUNT; ri++) {
-                ComBit b = ComBit::compress(empty_bits, false, cb_ship->segment_bits());
+                ComBit b = ComBit::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
                 cb_rf_x->apply_or_to(b, static_cast<int64_t>(RF_CHARS[ri]));
                 rf_btv[RF_CHARS[ri]] = std::move(b);
             }

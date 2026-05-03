@@ -41,8 +41,12 @@
 
 #include <atomic>
 #include <chrono>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <map>
 #include <mutex>
+#include <string>
 #include <vector>
 
 namespace duckdb {
@@ -60,6 +64,52 @@ static constexpr int64_t Q6_QUANTITY_HI_EXCL  = 2400;  // raw int64 < 2400 means
 static std::once_flag q6_once_flag_new;
 static std::mutex     q6_build_mutex;
 static std::atomic<bool> q6_built{false};
+
+// -----------------------------------------------------------------------
+// q6_emit_csv — write Schema-A CSV for the just-finished backend run.
+// Per-iteration timings are unavailable (Q6 is a pull-pipeline source,
+// not a controlled iteration loop), so stddev=0 / min=median / max=median.
+// bench_suite.py merges per-backend CSV captures into one combined file.
+// -----------------------------------------------------------------------
+struct Q6Phase { std::string op; double median; };
+
+static void q6_emit_csv(const char* backend_name,
+                        const std::vector<Q6Phase>& phases)
+{
+    std::string sf = bm_bench::sf_label();
+    std::string path = "q6_results_" + sf + ".csv";
+    std::ofstream csv(path);
+    if (!csv) return;
+    csv << std::fixed << std::setprecision(4);
+    csv << "sf,operation,"
+        << "wah_median_ms,wah_stddev_ms,wah_min_ms,wah_max_ms,"
+        << "combit_median_ms,combit_stddev_ms,combit_min_ms,combit_max_ms,"
+        << "croaring_median_ms,croaring_stddev_ms,croaring_min_ms,croaring_max_ms,"
+        << "croaring_run_median_ms,croaring_run_stddev_ms,croaring_run_min_ms,croaring_run_max_ms,"
+        << "ewah_median_ms,ewah_stddev_ms,ewah_min_ms,ewah_max_ms,"
+        << "bs_median_ms,bs_stddev_ms,bs_min_ms,bs_max_ms,"
+        << "bsa_median_ms,bsa_stddev_ms,bsa_min_ms,bsa_max_ms,"
+        << "concise_median_ms,concise_stddev_ms,concise_min_ms,concise_max_ms,"
+        << "cb_vs_wah,cr_vs_wah,crr_vs_wah,ew_vs_wah,bs_vs_wah,bsa_vs_wah,con_vs_wah\n";
+    auto cell_z = [&]() { csv << "0,0,0,0,"; };
+    auto cell_m = [&](double m) { csv << m << ",0," << m << "," << m << ","; };
+    auto cell_pick = [&](const std::string& bn, const std::string& match, double m) {
+        if (bn == match) cell_m(m); else cell_z();
+    };
+    std::string bn = backend_name;
+    for (auto& ph : phases) {
+        csv << sf << "," << ph.op << ",";
+        cell_pick(bn, "WAH",         ph.median);
+        cell_pick(bn, "ComBit",      ph.median);
+        cell_pick(bn, "CRoaring",    ph.median);
+        cell_pick(bn, "CRoaringRun", ph.median);
+        cell_pick(bn, "EWAH",        ph.median);
+        cell_z();   // BS  — N/A
+        cell_z();   // BSA — N/A
+        cell_pick(bn, "Concise",     ph.median);
+        csv << "0,0,0,0,0,0,0\n";
+    }
+}
 
 // -----------------------------------------------------------------------
 // q6_get_rowids — extract sorted ascending row IDs from a backend's
@@ -146,10 +196,12 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
         auto* cb_qty_x  = dynamic_cast<bm_index::IndexedComBit*>(idx_qty);
         if (!cb_disc_x || !cb_qty_x) { std::cerr << "[Q6] ComBit type mismatch.\n"; return; }
 
-        std::vector<bool> empty_bits(num_rows, false);
-        ComBit btv_ship = ComBit::compress(empty_bits, false, cb_ship->segment_bits());
-        ComBit btv_disc = ComBit::compress(empty_bits, false, cb_disc_x->segment_bits());
-        ComBit btv_qty  = ComBit::compress(empty_bits, false, cb_qty_x->segment_bits());
+        // Empty-seed via from_sparse_positions({}, num_rows) is O(num_segs)
+        // instead of O(num_rows) — avoids allocating a 60M-bool scratch
+        // vector + a per-segment compress sweep (~700ms at SF10).
+        ComBit btv_ship = ComBit::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
+        ComBit btv_disc = ComBit::from_sparse_positions({}, num_rows, cb_disc_x->segment_bits());
+        ComBit btv_qty  = ComBit::from_sparse_positions({}, num_rows, cb_qty_x->segment_bits());
 
         auto t_a = clk::now();
         cb_ship->apply_or_to(btv_ship, Q6_SHIPDATE_YEAR);
@@ -184,12 +236,14 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
                   << "  rowids="  << ms(t_e, t_f)
                   << "  total="   << ms(t0, t_f)
                   << "  rows="    << row_ids->size() << std::endl;
-        if (!row_ids->empty()) {
-            row_t mx = (*row_ids)[0], mn = (*row_ids)[0];
-            for (auto r : *row_ids) { if (r > mx) mx = r; if (r < mn) mn = r; }
-            std::cout << "  [Q6 ComBit] row_id range: [" << mn << ", " << mx
-                      << "] num_rows=" << num_rows << std::endl;
-        }
+        q6_emit_csv("ComBit", {
+            {"ship_GE",     ms(t_a, t_b)},
+            {"OR_discount", ms(t_b, t_c)},
+            {"OR_quantity", ms(t_c, t_d)},
+            {"AND",         ms(t_d, t_e)},
+            {"GetRowIds",   ms(t_e, t_f)},
+            {"TOTAL",       ms(t0, t_f)},
+        });
         q6_built.store(true);
         return;
     }
@@ -222,6 +276,14 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
                   << "  rowids="  << ms(t_e, t_f)
                   << "  total="   << ms(t0, t_f)
                   << "  rows="    << row_ids->size() << std::endl;
+        q6_emit_csv(idx_disc->backend_name(), {
+            {"ship_GE",     ms(t_a, t_b)},
+            {"OR_discount", ms(t_b, t_c)},
+            {"OR_quantity", ms(t_c, t_d)},
+            {"AND",         ms(t_d, t_e)},
+            {"GetRowIds",   ms(t_e, t_f)},
+            {"TOTAL",       ms(t0, t_f)},
+        });
         q6_built.store(true);
         return;
     }
@@ -254,6 +316,14 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
                   << "  rowids="  << ms(t_e, t_f)
                   << "  total="   << ms(t0, t_f)
                   << "  rows="    << row_ids->size() << std::endl;
+        q6_emit_csv("WAH", {
+            {"ship_GE",     ms(t_a, t_b)},
+            {"OR_discount", ms(t_b, t_c)},
+            {"OR_quantity", ms(t_c, t_d)},
+            {"AND",         ms(t_d, t_e)},
+            {"GetRowIds",   ms(t_e, t_f)},
+            {"TOTAL",       ms(t0, t_f)},
+        });
         q6_built.store(true);
         return;
     }
@@ -287,6 +357,14 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
                   << "  rowids="  << ms(t_e, t_f)
                   << "  total="   << ms(t0, t_f)
                   << "  rows="    << row_ids->size() << std::endl;
+        q6_emit_csv("EWAH", {
+            {"ship_GE",     ms(t_a, t_b)},
+            {"OR_discount", ms(t_b, t_c)},
+            {"OR_quantity", ms(t_c, t_d)},
+            {"AND",         ms(t_d, t_e)},
+            {"GetRowIds",   ms(t_e, t_f)},
+            {"TOTAL",       ms(t0, t_f)},
+        });
         q6_built.store(true);
         return;
     }
@@ -318,6 +396,14 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
                   << "  rowids="  << ms(t_e, t_f)
                   << "  total="   << ms(t0, t_f)
                   << "  rows="    << row_ids->size() << std::endl;
+        q6_emit_csv("Concise", {
+            {"ship_GE",     ms(t_a, t_b)},
+            {"OR_discount", ms(t_b, t_c)},
+            {"OR_quantity", ms(t_c, t_d)},
+            {"AND",         ms(t_d, t_e)},
+            {"GetRowIds",   ms(t_e, t_f)},
+            {"TOTAL",       ms(t0, t_f)},
+        });
         q6_built.store(true);
         return;
     }
@@ -337,11 +423,15 @@ SourceResultType BMTableScan::BMTPCH_Q6(ExecutionContext &context, DataChunk &ch
 {
     // Single global lock for the whole call: BMFetch's RowGroupCollection
     // path uses a global `col_states` vector that is NOT thread-safe (see
-    // src/storage/table/row_group_collection.cpp BMFetchColState), so all
-    // BMTPCH_Q6 calls must serialise.  Mirror of teacher's pattern.
+    // src/storage/table/row_group_collection.cpp BMFetchColState).  Lock
+    // also serialises the build-once and the cursor advancement.  We
+    // never reset q6_built within a process — DuckDB's parallel scan
+    // would otherwise see multiple workers re-enter BMTPCH_Q6 after one
+    // worker reset state, double-build, and double-stream the row_ids
+    // (manifests as the aggregate being summed twice).
     std::lock_guard<std::mutex> lock(q6_build_mutex);
 
-    if (*cursor == 0) {
+    if (*cursor == 0 && !q6_built.load()) {
         TPCH_Q6_Lineitem_GetRowIds(context, row_ids);
         num_idlist = row_ids->size();
     }
@@ -369,14 +459,14 @@ SourceResultType BMTableScan::BMTPCH_Q6(ExecutionContext &context, DataChunk &ch
                                                    column_fetch_state, num_idlist);
         *cursor += fetch_count;
         return SourceResultType::HAVE_MORE_OUTPUT;
-    } else {
-        row_ids->clear();
-        *cursor = 0;
-        num_idlist = 0;
-        q6_built.store(false);
-        context.client.query_source = "tpch";
-        return SourceResultType::FINISHED;
     }
+    // Stream exhausted.  Keep q6_built=true so any straggler thread
+    // that races into BMTPCH_Q6 sees `*cursor >= row_ids->size()` and
+    // returns FINISHED without rebuilding the row_ids vector.  We do
+    // NOT reset query_source here either — that would route stragglers
+    // through DuckDB's normal scan path and emit the entire lineitem
+    // table as if no filter ran.
+    return SourceResultType::FINISHED;
 }
 
 }  // namespace duckdb

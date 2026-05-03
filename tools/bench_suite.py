@@ -166,7 +166,7 @@ RE_BREAKDOWN_KV = re.compile(r"(\w+)=([0-9.]+)\s*MiB")
 # stay None so the spreadsheet can render them as blank cells.
 BREAKDOWN_TAG: Dict[str, Tuple[str, List[str]]] = {
     "WAH":      ("WAH",  ["literal", "fill", "header"]),
-    "ComBit":   ("CB",   ["L1", "L2", "L3"]),
+    "ComBit":   ("CB",   ["L1", "L2", "L3", "L4"]),
     "CRoaring": ("CR",   ["array", "bitset", "run"]),
     "CR+Run":   ("CRR",  ["array", "bitset", "run"]),
     "EWAH":     ("EW",   ["literal", "fill"]),
@@ -508,11 +508,135 @@ def parse_stdout_log(log_text: str, *, q: Optional[int] = None,
 # --- Subprocess driver --------------------------------------------------
 
 
+# Q1/Q5/Q6 use the new BMTPCH "BitEngine pattern" (PRAGMA load_bitmap +
+# context.client.bitmap_*).  Each backend builds its own auxiliary index;
+# DEBIT_BM=all is meaningless for these — we have to invoke duckdb once
+# per backend, with the appropriate load_bitmap PRAGMAs.  The mapping
+# below records which columns each Q needs pre-loaded.
+PATTERN_QS_LOAD_BITMAPS: Dict[int, List[str]] = {
+    1: ["shipdate", "linestatus", "returnflag"],
+    5: ["orderkey", "suppkey"],
+    6: ["shipdate_GE", "discount", "quantity"],
+}
+
+# Per-backend env values that map to our BitmapBackend enum.
+PATTERN_BACKENDS_FULL: List[Tuple[str, str]] = [
+    ("CB",  "cb"),
+    ("CR",  "cr"),
+    ("CRR", "crr"),
+    ("WAH", "wah"),
+    ("EW",  "ew"),
+    ("CON", "con"),
+]
+
+# Q5 fans out the OR over ~28k qualifying orderkeys (one per ASIA order)
+# at SF10.  WAH / EWAH / Concise pay O(num_words) per OR which makes the
+# Phase B step take 5–20 minutes per backend — practically unrunnable in
+# a sweep.  Skip them and report N/A; CB / CR / CRR are the meaningful
+# comparison for Q5's per-value FK index pattern.
+PATTERN_BACKENDS_PER_Q: Dict[int, List[Tuple[str, str]]] = {
+    # Q1's shipdate range is 2437 days; WAH/EWAH/Concise pay O(num_words)
+    # per OR which makes Phase A take 5–10 minutes each.  Limit to the
+    # backends that have efficient many-OR fast paths.
+    1: [("CB", "cb"), ("CR", "cr"), ("CRR", "crr")],
+    5: [("CB", "cb"), ("CR", "cr"), ("CRR", "crr")],
+    6: PATTERN_BACKENDS_FULL,
+}
+
+# Maps the active backend short tag to its CSV column prefix in the
+# Schema-A CSV (matches CSV_PREFIX_TO_BACKEND inverted).
+PATTERN_BACKEND_CSV_PREFIX: Dict[str, str] = {
+    "CB":  "combit",
+    "CR":  "croaring",
+    "CRR": "croaring_run",
+    "WAH": "wah",
+    "EW":  "ewah",
+    "CON": "concise",
+}
+
+
+def _merge_pattern_csvs(repo_root: Path, q: int, sf_label: str,
+                        per_backend_csvs: Dict[str, Path]) -> None:
+    """For Q1/Q5/Q6 we ran the bench once per backend; each run overwrote
+    qN_results_{sf}.csv with that backend's column populated and the
+    others 0.  Merge the per-backend captures into a single combined CSV
+    that bench_suite's parse_schema_wide can consume.
+    """
+    if not per_backend_csvs:
+        return
+    # Collect rows keyed on operation, taking the active-backend cells from
+    # each per-backend CSV.
+    op_to_row: Dict[str, Dict[str, str]] = {}
+    fieldnames: Optional[List[str]] = None
+    for backend, path in per_backend_csvs.items():
+        if not path.exists():
+            continue
+        prefix = PATTERN_BACKEND_CSV_PREFIX.get(backend)
+        if not prefix:
+            continue
+        with path.open() as f:
+            reader = csv.DictReader(f)
+            if fieldnames is None:
+                fieldnames = list(reader.fieldnames or [])
+            for row in reader:
+                op = row.get("operation", "")
+                if not op:
+                    continue
+                target = op_to_row.setdefault(op, {**row})
+                for stat in ("median_ms", "stddev_ms", "min_ms", "max_ms"):
+                    col = f"{prefix}_{stat}"
+                    if col in row:
+                        target[col] = row[col]
+    if fieldnames is None:
+        return
+    # Write the merged CSV to the canonical location.
+    out_path = repo_root / f"q{q}_results_{sf_label}.csv"
+    with out_path.open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames)
+        w.writeheader()
+        for op in op_to_row.values():
+            w.writerow(op)
+
+
 def run_single_query(duckdb_bin: Path, db: Path, q: int,
                      env_extra: Dict[str, str], log_path: Path) -> int:
     env = os.environ.copy()
     env.update(env_extra)
-    # Force ALL backends to run regardless of any stale per-Q override.
+    sf_label = env_extra.get("TPCH_SF_LABEL") or env.get("TPCH_SF_LABEL", "SF10")
+
+    if q in PATTERN_QS_LOAD_BITMAPS:
+        # New pattern: per-backend runs with PRAGMA load_bitmap.
+        # duckdb's `-c` only runs the first statement in a chain; we
+        # feed the multi-statement SQL via stdin so all PRAGMAs execute.
+        cols = PATTERN_QS_LOAD_BITMAPS[q]
+        per_backend_csvs: Dict[str, Path] = {}
+        with log_path.open("w") as f:
+            f.write(f"# cwd={REPO_ROOT}\n# pattern_qs_per_backend Q{q}\n")
+            for backend, env_val in PATTERN_BACKENDS_PER_Q.get(q, PATTERN_BACKENDS_FULL):
+                env["DEBIT_BM"] = env_val
+                stmts = [f"PRAGMA load_bitmap('{c}');" for c in cols]
+                stmts.append(f"PRAGMA bm_tpch({q});")
+                sql_input = "\n".join(stmts) + "\n"
+                f.write(f"\n# === Backend {backend} (DEBIT_BM={env_val}) ===\n")
+                f.write(f"# sql=\n{sql_input}")
+                f.flush()
+                p = subprocess.run([str(duckdb_bin), str(db)],
+                                   cwd=str(REPO_ROOT), env=env,
+                                   input=sql_input,
+                                   text=True,
+                                   stdout=f, stderr=subprocess.STDOUT)
+                if p.returncode != 0:
+                    f.write(f"\n# Backend {backend} returncode={p.returncode}\n")
+                # Capture this backend's CSV before the next run overwrites.
+                src = REPO_ROOT / f"q{q}_results_{sf_label}.csv"
+                if src.exists():
+                    dst = REPO_ROOT / f"q{q}_results_{sf_label}_{env_val}.csv"
+                    dst.write_bytes(src.read_bytes())
+                    per_backend_csvs[backend] = dst
+        _merge_pattern_csvs(REPO_ROOT, q, sf_label, per_backend_csvs)
+        return 0
+
+    # Legacy pattern: single invocation, all backends in-process.
     env["DEBIT_BM"] = "all"
     cmd = [str(duckdb_bin), str(db), "-c", f"PRAGMA bm_tpch({q});"]
     with log_path.open("w") as f:
@@ -649,7 +773,7 @@ def build_excel(records: List[Dict], meta: Dict[str, Dict],
     _section("Memory breakdown categories (MB)")
     breakdown_doc = [
         ("WAH",      "literal: literal-word bytes  •  fill: fill-word bytes  •  header: per-bitmap C++ object overhead"),
-        ("ComBit",   "L1: literal-word bytes (level 1)  •  L2: literal bytes (level 2 after L3 compression)  •  L3: leading bitstring bytes"),
+        ("ComBit",   "L1: literal-word bytes (level 1)  •  L2: literal bytes (level 2 after L3 compression)  •  L3: L3-literal bytes (L3 bytes that disagree with the L4 fill)  •  L4: leading bitstring over L3 (1 bit per L3 byte; replaces the dense L3-bits buffer)"),
         ("CRoaring", "array: array-container bytes  •  bitset: bitset-container bytes  •  run: run-container bytes"),
         ("CR+Run",   "Same categories as CRoaring; runOptimize() applied — so 'run' is non-zero whenever it pays off"),
         ("EWAH",     "literal: literal-word bytes  •  fill: RLW header words encoding fills"),
@@ -970,7 +1094,7 @@ def main():
             print(f"[bench] Q{q} -> {log_path} ...")
             rc = run_single_query(
                 args.duckdb, db_path, q,
-                env_extra={"TPCH_SF": str(args.sf)},
+                env_extra={"TPCH_SF": str(args.sf), "TPCH_SF_LABEL": sf_label},
                 log_path=log_path,
             )
             if rc != 0:
