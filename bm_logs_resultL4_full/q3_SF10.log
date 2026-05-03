@@ -1,172 +1,59 @@
 # cwd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev
-# cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(3);
+# pattern_qs_per_backend Q3
+
+# === Backend CB (DEBIT_BM=cb) ===
+# sql=
+PRAGMA load_bitmap('orderkey');
+PRAGMA load_bitmap('shipdate');
+PRAGMA bm_tpch(3);
+[load_bitmap] orderkey: scanned 59986052 rows in 630 ms
+[load_bitmap] orderkey: built ComBit index (15000000 keys, 4448.84 MB) in 13047 ms
+[load_bitmap] shipdate: scanned 59986052 rows in 284 ms
+[load_bitmap] shipdate: built ComBit index (2526 keys, 6586.64 MB) in 23395 ms
 
 ================================================================
-  TPC-H Q3 Benchmark — ComBit vs WAH vs CRoaring vs EWAH (SF10)
-  OR shipdate days [1170..2526] -> AND join_result -> Top-10
-  TPC-H params: c_mktsegment='BUILDING', date=1995-03-15
-  Iterations: 10 (first 2 = warm-up)
+  TPC-H Q3 (BitEngine pattern, runtime semi-joins)
+  Pre-loaded: bitmap_orderkey + bitmap_shipdate
 ================================================================
 
-[Pre-load] orders: 15000000 rows in 304.634 ms
-[Pre-load] customer: 1500000 rows, c_mktsegment='BUILDING' set=300276 max_ck=1500000 in 34.589 ms
-[Pre-load] lineitem: 59986052 rows (l_orderkey, l_extendedprice, l_discount) in 507.288 ms
-[Build join_bitmap] 5845603 set / 59986052 rows in 434.286 ms (counted in Total)
+--- Iteration 1/5 (warm-up) ---
+  ComBit:  PhaseA(cust_scan)=26.444  PhaseB(orders+okey_OR)=1435.36  PhaseC(shipdate_OR)=908.244  PhaseD(AND+rowids)=9.69  PhaseE(BMFetch+agg)=254.407  Total=2634.15  rows=302114
 
-[Load] Loading bitmaps (mode=ALL)...
-  WAH load:      1960.86 ms
-  ComBit load:   4016.28 ms
-  CRoaring load: 1450.09 ms
-  CRR load:      223.906 ms
-  EWAH load:     3214.11 ms
-  Bitset load:   4545.01 ms (shared by BS / BSA)
-  Concise load:  593.109 ms
+--- Iteration 2/5 ---
+  ComBit:  PhaseA(cust_scan)=24.297  PhaseB(orders+okey_OR)=1291.68  PhaseC(shipdate_OR)=905.567  PhaseD(AND+rowids)=8.622  PhaseE(BMFetch+agg)=82.776  Total=2312.94  rows=302114
 
---- Iteration 1/10 (warm-up) ---
-  CB:   OR=282.036  NOT=0  AND=0.702  Agg=36.772  Total=753.797  rows=302114
-  CR:   OR=285.484  NOT=0  AND=3.835  Agg=27.794  Total=751.401  rows=302114
-  CRR:  OR=127.713  NOT=0  AND=12.744  Agg=25.71  Total=600.455  rows=302114
-  WAH:  OR=134.916  NOT=0  AND=7.053  Agg=40.677  Total=616.933  rows=302114
-  EW:   OR=3127.26  NOT=0  AND=6.937  Agg=32.117  Total=3600.61  rows=302114
-  BS:   OR=1318.82  NOT=0  AND=0.965  Agg=34.312  Total=1788.39  rows=302114
-  BSA:  OR=877.303  NOT=0  AND=0.647  Agg=34.292  Total=1346.53  rows=302114
-  CON:  OR=3502.92  NOT=0  AND=24.006  Agg=35.722  Total=3996.94  rows=302114
+--- Iteration 3/5 ---
+  ComBit:  PhaseA(cust_scan)=24.119  PhaseB(orders+okey_OR)=1297.01  PhaseC(shipdate_OR)=904.845  PhaseD(AND+rowids)=8.67  PhaseE(BMFetch+agg)=82.757  Total=2317.4  rows=302114
 
---- Iteration 2/10 (warm-up) ---
-  CB:   OR=279.847  NOT=0  AND=0.674  Agg=34.015  Total=748.822  rows=302114
-  CR:   OR=288.252  NOT=0  AND=3.982  Agg=27.529  Total=754.05  rows=302114
-  CRR:  OR=129.251  NOT=0  AND=12.794  Agg=25.807  Total=602.139  rows=302114
-  WAH:  OR=132.782  NOT=0  AND=5.019  Agg=40.875  Total=612.963  rows=302114
-  EW:   OR=3110.3  NOT=0  AND=6.941  Agg=32.37  Total=3583.9  rows=302114
-  BS:   OR=1319.61  NOT=0  AND=0.971  Agg=34.157  Total=1789.03  rows=302114
-  BSA:  OR=877.149  NOT=0  AND=0.653  Agg=34.368  Total=1346.46  rows=302114
-  CON:  OR=3508.83  NOT=0  AND=24.049  Agg=35.872  Total=4003.04  rows=302114
+--- Iteration 4/5 ---
+  ComBit:  PhaseA(cust_scan)=24.29  PhaseB(orders+okey_OR)=1294.89  PhaseC(shipdate_OR)=904.723  PhaseD(AND+rowids)=8.61  PhaseE(BMFetch+agg)=82.728  Total=2315.25  rows=302114
 
---- Iteration 3/10 ---
-  CB:   OR=279.829  NOT=0  AND=0.693  Agg=34.216  Total=749.025  rows=302114
-  CR:   OR=288.523  NOT=0  AND=3.836  Agg=27.529  Total=754.176  rows=302114
-  CRR:  OR=127.332  NOT=0  AND=12.813  Agg=25.764  Total=600.196  rows=302114
-  WAH:  OR=132.742  NOT=0  AND=5.073  Agg=41.135  Total=613.238  rows=302114
-  EW:   OR=3138.21  NOT=0  AND=7.044  Agg=32.235  Total=3611.78  rows=302114
-  BS:   OR=1317.56  NOT=0  AND=0.978  Agg=34.138  Total=1786.97  rows=302114
-  BSA:  OR=876.896  NOT=0  AND=0.646  Agg=34.122  Total=1345.95  rows=302114
-  CON:  OR=3515.47  NOT=0  AND=24.281  Agg=35.772  Total=4009.81  rows=302114
+--- Iteration 5/5 ---
+  ComBit:  PhaseA(cust_scan)=24.127  PhaseB(orders+okey_OR)=1298.54  PhaseC(shipdate_OR)=905.192  PhaseD(AND+rowids)=8.634  PhaseE(BMFetch+agg)=82.617  Total=2319.11  rows=302114
 
---- Iteration 4/10 ---
-  CB:   OR=278.712  NOT=0  AND=0.683  Agg=33.757  Total=747.439  rows=302114
-  CR:   OR=287.342  NOT=0  AND=3.831  Agg=27.896  Total=753.356  rows=302114
-  CRR:  OR=130.155  NOT=0  AND=12.736  Agg=25.418  Total=602.596  rows=302114
-  WAH:  OR=132.546  NOT=0  AND=5.003  Agg=40.681  Total=612.517  rows=302114
-  EW:   OR=3143.63  NOT=0  AND=6.95  Agg=32.254  Total=3617.12  rows=302114
-  BS:   OR=1312.38  NOT=0  AND=0.987  Agg=34.307  Total=1781.96  rows=302114
-  BSA:  OR=874.512  NOT=0  AND=0.652  Agg=34.271  Total=1343.72  rows=302114
-  CON:  OR=3510.54  NOT=0  AND=23.971  Agg=35.865  Total=4004.66  rows=302114
+[OK] ComBit matches DuckDB SQL ground truth (top 10).
 
---- Iteration 5/10 ---
-  CB:   OR=278.971  NOT=0  AND=0.678  Agg=33.853  Total=747.788  rows=302114
-  CR:   OR=288.062  NOT=0  AND=3.806  Agg=27.604  Total=753.759  rows=302114
-  CRR:  OR=129.424  NOT=0  AND=12.81  Agg=25.521  Total=602.042  rows=302114
-  WAH:  OR=132.368  NOT=0  AND=4.974  Agg=41.068  Total=612.696  rows=302114
-  EW:   OR=3126.25  NOT=0  AND=6.92  Agg=32.086  Total=3599.54  rows=302114
-  BS:   OR=1315.74  NOT=0  AND=0.986  Agg=34.2  Total=1785.21  rows=302114
-  BSA:  OR=874.046  NOT=0  AND=0.648  Agg=34.296  Total=1343.28  rows=302114
-  CON:  OR=3501.9  NOT=0  AND=24.008  Agg=36.107  Total=3996.31  rows=302114
-
---- Iteration 6/10 ---
-  CB:   OR=278.845  NOT=0  AND=0.683  Agg=33.939  Total=747.753  rows=302114
-  CR:   OR=287.826  NOT=0  AND=3.835  Agg=27.509  Total=753.457  rows=302114
-  CRR:  OR=131.498  NOT=0  AND=12.809  Agg=25.91  Total=604.505  rows=302114
-  WAH:  OR=132.614  NOT=0  AND=4.979  Agg=41.054  Total=612.933  rows=302114
-  EW:   OR=3132.54  NOT=0  AND=6.98  Agg=32.184  Total=3605.99  rows=302114
-  BS:   OR=1315.99  NOT=0  AND=0.987  Agg=34.188  Total=1785.45  rows=302114
-  BSA:  OR=874.757  NOT=0  AND=0.654  Agg=34.368  Total=1344.07  rows=302114
-  CON:  OR=3507.07  NOT=0  AND=24.211  Agg=35.68  Total=4001.25  rows=302114
-
---- Iteration 7/10 ---
-  CB:   OR=278.722  NOT=0  AND=0.685  Agg=33.872  Total=747.566  rows=302114
-  CR:   OR=287.536  NOT=0  AND=3.833  Agg=27.617  Total=753.273  rows=302114
-  CRR:  OR=130.311  NOT=0  AND=12.746  Agg=25.736  Total=603.08  rows=302114
-  WAH:  OR=133.395  NOT=0  AND=4.966  Agg=40.743  Total=613.391  rows=302114
-  EW:   OR=3148.79  NOT=0  AND=6.959  Agg=32.141  Total=3622.18  rows=302114
-  BS:   OR=1317.4  NOT=0  AND=0.979  Agg=34.379  Total=1787.05  rows=302114
-  BSA:  OR=874.49  NOT=0  AND=0.651  Agg=34.455  Total=1343.88  rows=302114
-  CON:  OR=3506.91  NOT=0  AND=23.997  Agg=35.845  Total=4001.04  rows=302114
-
---- Iteration 8/10 ---
-  CB:   OR=278.997  NOT=0  AND=0.684  Agg=33.554  Total=747.522  rows=302114
-  CR:   OR=287.54  NOT=0  AND=3.829  Agg=27.558  Total=753.215  rows=302114
-  CRR:  OR=129.098  NOT=0  AND=12.784  Agg=25.634  Total=601.803  rows=302114
-  WAH:  OR=133.076  NOT=0  AND=4.954  Agg=41.106  Total=613.423  rows=302114
-  EW:   OR=3127.22  NOT=0  AND=6.997  Agg=32.108  Total=3600.61  rows=302114
-  BS:   OR=1317.08  NOT=0  AND=0.979  Agg=34.122  Total=1786.47  rows=302114
-  BSA:  OR=874.674  NOT=0  AND=0.652  Agg=34.262  Total=1343.88  rows=302114
-  CON:  OR=3516.6  NOT=0  AND=24.041  Agg=35.851  Total=4010.78  rows=302114
-
---- Iteration 9/10 ---
-  CB:   OR=280.371  NOT=0  AND=0.685  Agg=33.814  Total=749.157  rows=302114
-  CR:   OR=288.053  NOT=0  AND=3.818  Agg=27.444  Total=753.601  rows=302114
-  CRR:  OR=126.906  NOT=0  AND=12.751  Agg=25.85  Total=599.794  rows=302114
-  WAH:  OR=132.424  NOT=0  AND=4.962  Agg=41.077  Total=612.751  rows=302114
-  EW:   OR=3138.11  NOT=0  AND=7.087  Agg=32.657  Total=3612.14  rows=302114
-  BS:   OR=1342.63  NOT=0  AND=0.976  Agg=34.61  Total=1812.5  rows=302114
-  BSA:  OR=892.721  NOT=0  AND=0.666  Agg=34.806  Total=1362.48  rows=302114
-  CON:  OR=3522.14  NOT=0  AND=24.309  Agg=36.224  Total=4016.96  rows=302114
-
---- Iteration 10/10 ---
-  CB:   OR=291.24  NOT=0  AND=0.698  Agg=34.229  Total=760.453  rows=302114
-  CR:   OR=292.091  NOT=0  AND=3.899  Agg=28.148  Total=758.425  rows=302114
-  CRR:  OR=132.34  NOT=0  AND=12.861  Agg=25.933  Total=605.421  rows=302114
-  WAH:  OR=134.192  NOT=0  AND=5  Agg=41.588  Total=615.067  rows=302114
-  EW:   OR=3133.43  NOT=0  AND=6.994  Agg=32.83  Total=3607.54  rows=302114
-  BS:   OR=1342.73  NOT=0  AND=0.979  Agg=34.98  Total=1812.97  rows=302114
-  BSA:  OR=895.782  NOT=0  AND=0.664  Agg=34.896  Total=1365.63  rows=302114
-  CON:  OR=3521.47  NOT=0  AND=24.27  Agg=36.113  Total=4016.14  rows=302114
-
-[Baseline] DuckDB native SQL Top-10  (single run: 306.12 ms)
-[OK] all active backends match DuckDB SQL ground truth (Top-10, revenue within 0.01).
-
-  Q3 Top-10 (revenue DESC, o_orderdate ASC, source=ComBit):
-  l_orderkey           revenue  o_orderdate o_shippriority 
-  4791171          440715.2185  1995-02-23  9060           
-  46678469         439855.3250  1995-01-27  10015          
-  23906758         432728.5737  1995-03-14  9744           
-  23861382         428739.1368  1995-03-09  8687           
-  59393639         426036.0662  1995-02-12  8084           
-  3355202          425100.6657  1995-03-04  9763           
-  9806272          425088.0568  1995-03-13  8601           
-  22810436         423231.9690  1995-01-02  8326           
-  16384100         421478.7294  1995-03-02  9793           
-  52974151         415367.1195  1995-02-05  9882           
+  Q3 top-10 (orderkey, revenue, orderdate, shippriority):
+    4791171  440715.2185  1995-02-23  9060
+    46678469  439855.3250  1995-01-27  10015
+    23906758  432728.5737  1995-03-14  9744
+    23861382  428739.1368  1995-03-09  8687
+    59393639  426036.0662  1995-02-12  8084
+    3355202  425100.6657  1995-03-04  9763
+    9806272  425088.0568  1995-03-13  8601
+    22810436  423231.9690  1995-01-02  8326
+    16384100  421478.7294  1995-03-02  9793
+    52974151  415367.1195  1995-02-05  9882
 
 ================================================================
-  Q3 RESULTS (8 measured iterations, median +/- stddev)
+  Q3 RESULTS — ComBit (4 measured iter, median +/- stddev)
 ================================================================
-                  CB (ms)         CR (ms)        CRR (ms)        WAH (ms)        EW (ms)
-  -----------------------------------------------------------------------------------------
-  OR_ship       278.9840 +/- 4.0180  287.9395 +/- 1.4492  129.7895 +/- 1.7535  132.6780 +/- 0.5792  3135.7705 +/- 7.2626
-  NOT             0.0000 +/- 0.0000    0.0000 +/- 0.0000    0.0000 +/- 0.0000    0.0000 +/- 0.0000    0.0000 +/- 0.0000
-  AND             0.6845 +/- 0.0059    3.8320 +/- 0.0257   12.7965 +/- 0.0399    4.9765 +/- 0.0357    6.9870 +/- 0.0499
-  Agg            33.8625 +/- 0.2121   27.5810 +/- 0.2224   25.7500 +/- 0.1728   41.0725 +/- 0.2576   32.2095 +/- 0.2586
-  -----------------------------------------------------------------------------------------
-  TOTAL         747.7705 +/- 4.1553  753.5290 +/- 1.6388  602.3190 +/- 1.8092  613.0855 +/- 0.7537  3609.6585 +/- 7.2905
-
-  CB rows: 302114  CR rows: 302114  CRR rows: 302114  WAH rows: 302114  EW rows: 302114
-================================================================
-
-
-================================================================
-  Q3 BASELINE BACKENDS (no compression / Concise)
-================================================================
-                  BS (ms)         BSA (ms)        Concise (ms)     BS vs WAH   BSA vs WAH   CON vs WAH
-  ----------------------------------------------------------------------------------------------
-  OR_ship       1317.2420 +/- 11.6423  874.7155 +/- 8.4539  3513.0015 +/- 6.8485     0.1007x     0.1517x     0.0378x
-  NOT             0.0000 +/- 0.0000    0.0000 +/- 0.0000    0.0000 +/- 0.0000     0.0000x     0.0000x     0.0000x
-  AND             0.9790 +/- 0.0042    0.6520 +/- 0.0067   24.1260 +/- 0.1353     5.0832x     7.6327x     0.2063x
-  Agg            34.2535 +/- 0.2763   34.3320 +/- 0.2572   35.8580 +/- 0.1790     1.1991x     1.1963x     1.1454x
-  ----------------------------------------------------------------------------------------------
-  TOTAL         1786.7160 +/- 11.8833  1343.9740 +/- 8.6953  4007.2330 +/- 7.0102     0.3431x     0.4562x     0.1530x
-
-  BS rows: 302114  BSA rows: 302114  CON rows: 302114
+  PhaseA (customer scan)    : 24.2085 +/- 0.0853 ms
+  PhaseB (orders+orderkey OR): 1295.9505 +/- 2.5724 ms
+  PhaseC (shipdate range OR): 905.0185 +/- 0.3288 ms
+  PhaseD (AND + get rowids) : 8.6280 +/- 0.0224 ms
+  PhaseE (BMFetch + agg)    : 82.7425 +/- 0.0616 ms
+  TOTAL                     : 2316.3235 +/- 2.3143 ms
 ================================================================
 
   [CSV] q3_results_SF10.csv
@@ -187,4 +74,151 @@
 ├────────────┴───────────────┴─────────────┴────────────────┤
 │ 10 rows                                         4 columns │
 └───────────────────────────────────────────────────────────┘
-  [Breakdown] ComBit   L1=30.45 MiB  L2=29.99 MiB  L3=27.44 MiB  L4=18.95 MiB  total=106.83 MiB
+
+# === Backend CR (DEBIT_BM=cr) ===
+# sql=
+PRAGMA load_bitmap('orderkey');
+PRAGMA load_bitmap('shipdate');
+PRAGMA bm_tpch(3);
+[load_bitmap] orderkey: scanned 59986052 rows in 636 ms
+[load_bitmap] orderkey: built CRoaring index (15000000 keys, 359.978 MB) in 6575 ms
+[load_bitmap] shipdate: scanned 59986052 rows in 286 ms
+[load_bitmap] shipdate: built CRoaring index (2526 keys, 138.443 MB) in 1324 ms
+
+================================================================
+  TPC-H Q3 (BitEngine pattern, runtime semi-joins)
+  Pre-loaded: bitmap_orderkey + bitmap_shipdate
+================================================================
+
+--- Iteration 1/5 (warm-up) ---
+  CRoaring:  PhaseA(cust_scan)=25.049  PhaseB(orders+okey_OR)=2474.59  PhaseC(shipdate_OR)=296.132  PhaseD(AND+rowids)=6.143  PhaseE(BMFetch+agg)=255.13  Total=3057.04  rows=302114
+
+--- Iteration 2/5 ---
+  CRoaring:  PhaseA(cust_scan)=23.179  PhaseB(orders+okey_OR)=2347.57  PhaseC(shipdate_OR)=300.571  PhaseD(AND+rowids)=5.45  PhaseE(BMFetch+agg)=83.085  Total=2759.86  rows=302114
+
+--- Iteration 3/5 ---
+  CRoaring:  PhaseA(cust_scan)=22.958  PhaseB(orders+okey_OR)=2350.18  PhaseC(shipdate_OR)=300.348  PhaseD(AND+rowids)=5.459  PhaseE(BMFetch+agg)=82.81  Total=2761.75  rows=302114
+
+--- Iteration 4/5 ---
+  CRoaring:  PhaseA(cust_scan)=22.993  PhaseB(orders+okey_OR)=2350.24  PhaseC(shipdate_OR)=299.512  PhaseD(AND+rowids)=5.425  PhaseE(BMFetch+agg)=83.109  Total=2761.28  rows=302114
+
+--- Iteration 5/5 ---
+  CRoaring:  PhaseA(cust_scan)=23.051  PhaseB(orders+okey_OR)=2348.26  PhaseC(shipdate_OR)=300.216  PhaseD(AND+rowids)=5.471  PhaseE(BMFetch+agg)=82.999  Total=2760  rows=302114
+
+[OK] CRoaring matches DuckDB SQL ground truth (top 10).
+
+  Q3 top-10 (orderkey, revenue, orderdate, shippriority):
+    4791171  440715.2185  1995-02-23  9060
+    46678469  439855.3250  1995-01-27  10015
+    23906758  432728.5737  1995-03-14  9744
+    23861382  428739.1368  1995-03-09  8687
+    59393639  426036.0662  1995-02-12  8084
+    3355202  425100.6657  1995-03-04  9763
+    9806272  425088.0568  1995-03-13  8601
+    22810436  423231.9690  1995-01-02  8326
+    16384100  421478.7294  1995-03-02  9793
+    52974151  415367.1195  1995-02-05  9882
+
+================================================================
+  Q3 RESULTS — CRoaring (4 measured iter, median +/- stddev)
+================================================================
+  PhaseA (customer scan)    : 23.0220 +/- 0.0841 ms
+  PhaseB (orders+orderkey OR): 2349.2210 +/- 1.1722 ms
+  PhaseC (shipdate range OR): 300.2820 +/- 0.3960 ms
+  PhaseD (AND + get rowids) : 5.4545 +/- 0.0169 ms
+  PhaseE (BMFetch + agg)    : 83.0420 +/- 0.1175 ms
+  TOTAL                     : 2760.6415 +/- 0.8136 ms
+================================================================
+
+  [CSV] q3_results_SF10.csv
+┌────────────┬───────────────┬─────────────┬────────────────┐
+│ l_orderkey │    revenue    │ o_orderdate │ o_shippriority │
+│   int64    │ decimal(38,4) │    date     │     int32      │
+├────────────┼───────────────┼─────────────┼────────────────┤
+│    4791171 │   440715.2185 │ 1995-02-23  │              0 │
+│   46678469 │   439855.3250 │ 1995-01-27  │              0 │
+│   23906758 │   432728.5737 │ 1995-03-14  │              0 │
+│   23861382 │   428739.1368 │ 1995-03-09  │              0 │
+│   59393639 │   426036.0662 │ 1995-02-12  │              0 │
+│    3355202 │   425100.6657 │ 1995-03-04  │              0 │
+│    9806272 │   425088.0568 │ 1995-03-13  │              0 │
+│   22810436 │   423231.9690 │ 1995-01-02  │              0 │
+│   16384100 │   421478.7294 │ 1995-03-02  │              0 │
+│   52974151 │   415367.1195 │ 1995-02-05  │              0 │
+├────────────┴───────────────┴─────────────┴────────────────┤
+│ 10 rows                                         4 columns │
+└───────────────────────────────────────────────────────────┘
+
+# === Backend CRR (DEBIT_BM=crr) ===
+# sql=
+PRAGMA load_bitmap('orderkey');
+PRAGMA load_bitmap('shipdate');
+PRAGMA bm_tpch(3);
+[load_bitmap] orderkey: scanned 59986052 rows in 634 ms
+[load_bitmap] orderkey: built CRoaringRun index (15000000 keys, 257.154 MB) in 6760 ms
+[load_bitmap] shipdate: scanned 59986052 rows in 283 ms
+[load_bitmap] shipdate: built CRoaringRun index (2526 keys, 138.443 MB) in 1363 ms
+
+================================================================
+  TPC-H Q3 (BitEngine pattern, runtime semi-joins)
+  Pre-loaded: bitmap_orderkey + bitmap_shipdate
+================================================================
+
+--- Iteration 1/5 (warm-up) ---
+  CRoaringRun:  PhaseA(cust_scan)=25.011  PhaseB(orders+okey_OR)=4165.81  PhaseC(shipdate_OR)=131.851  PhaseD(AND+rowids)=15.213  PhaseE(BMFetch+agg)=256.183  Total=4594.07  rows=302114
+
+--- Iteration 2/5 ---
+  CRoaringRun:  PhaseA(cust_scan)=23.662  PhaseB(orders+okey_OR)=4027.37  PhaseC(shipdate_OR)=130.706  PhaseD(AND+rowids)=14.485  PhaseE(BMFetch+agg)=83.031  Total=4279.25  rows=302114
+
+--- Iteration 3/5 ---
+  CRoaringRun:  PhaseA(cust_scan)=23.125  PhaseB(orders+okey_OR)=4019.69  PhaseC(shipdate_OR)=129.779  PhaseD(AND+rowids)=14.443  PhaseE(BMFetch+agg)=82.963  Total=4270  rows=302114
+
+--- Iteration 4/5 ---
+  CRoaringRun:  PhaseA(cust_scan)=23.249  PhaseB(orders+okey_OR)=4022.47  PhaseC(shipdate_OR)=128.982  PhaseD(AND+rowids)=14.438  PhaseE(BMFetch+agg)=82.843  Total=4271.99  rows=302114
+
+--- Iteration 5/5 ---
+  CRoaringRun:  PhaseA(cust_scan)=23.223  PhaseB(orders+okey_OR)=4018.88  PhaseC(shipdate_OR)=127.339  PhaseD(AND+rowids)=14.435  PhaseE(BMFetch+agg)=82.882  Total=4266.77  rows=302114
+
+[OK] CRoaringRun matches DuckDB SQL ground truth (top 10).
+
+  Q3 top-10 (orderkey, revenue, orderdate, shippriority):
+    4791171  440715.2185  1995-02-23  9060
+    46678469  439855.3250  1995-01-27  10015
+    23906758  432728.5737  1995-03-14  9744
+    23861382  428739.1368  1995-03-09  8687
+    59393639  426036.0662  1995-02-12  8084
+    3355202  425100.6657  1995-03-04  9763
+    9806272  425088.0568  1995-03-13  8601
+    22810436  423231.9690  1995-01-02  8326
+    16384100  421478.7294  1995-03-02  9793
+    52974151  415367.1195  1995-02-05  9882
+
+================================================================
+  Q3 RESULTS — CRoaringRun (4 measured iter, median +/- stddev)
+================================================================
+  PhaseA (customer scan)    : 23.2360 +/- 0.2057 ms
+  PhaseB (orders+orderkey OR): 4021.0805 +/- 3.3182 ms
+  PhaseC (shipdate range OR): 129.3805 +/- 1.2363 ms
+  PhaseD (AND + get rowids) : 14.4405 +/- 0.0203 ms
+  PhaseE (BMFetch + agg)    : 82.9225 +/- 0.0727 ms
+  TOTAL                     : 4270.9940 +/- 4.5828 ms
+================================================================
+
+  [CSV] q3_results_SF10.csv
+┌────────────┬───────────────┬─────────────┬────────────────┐
+│ l_orderkey │    revenue    │ o_orderdate │ o_shippriority │
+│   int64    │ decimal(38,4) │    date     │     int32      │
+├────────────┼───────────────┼─────────────┼────────────────┤
+│    4791171 │   440715.2185 │ 1995-02-23  │              0 │
+│   46678469 │   439855.3250 │ 1995-01-27  │              0 │
+│   23906758 │   432728.5737 │ 1995-03-14  │              0 │
+│   23861382 │   428739.1368 │ 1995-03-09  │              0 │
+│   59393639 │   426036.0662 │ 1995-02-12  │              0 │
+│    3355202 │   425100.6657 │ 1995-03-04  │              0 │
+│    9806272 │   425088.0568 │ 1995-03-13  │              0 │
+│   22810436 │   423231.9690 │ 1995-01-02  │              0 │
+│   16384100 │   421478.7294 │ 1995-03-02  │              0 │
+│   52974151 │   415367.1195 │ 1995-02-05  │              0 │
+├────────────┴───────────────┴─────────────┴────────────────┤
+│ 10 rows                                         4 columns │
+└───────────────────────────────────────────────────────────┘

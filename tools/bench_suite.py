@@ -314,7 +314,10 @@ def parse_schema_simple(path: Path, q: int) -> List[Dict]:
 
 
 # Q-number → which CSV schema to use.
-SCHEMA_B_QS = {15, 17, 19}
+# Q15 still uses the legacy Schema-B (backend,or_ms,agg_ms,total_ms)
+# from its old in-process bench loop.  Q17 and Q19 now use Schema-A
+# after the BMTPCH port.
+SCHEMA_B_QS = {15}
 
 
 def parse_csv_for_q(repo_root: Path, q: int, sf_label: str) -> List[Dict]:
@@ -555,8 +558,11 @@ PATTERN_BACKENDS_PER_Q: Dict[int, List[Tuple[str, str]]] = {
     6:  PATTERN_BACKENDS_FULL,
     # Q14: small (~30 day shipdate range) — all backends.
     14: PATTERN_BACKENDS_FULL,
-    # Q17: ~6 partkey OR — small, all backends.
-    17: PATTERN_BACKENDS_FULL,
+    # Q17: bitmap_partkey has 2M unique values at SF10.  WAH/EW/CON
+    # build is O(num_rows × num_keys) due to per-key sparse bitmap
+    # creation — would take days.  Limit to CB/CR/CRR which use sparse
+    # / container-aware storage.
+    17: [("CB", "cb"), ("CR", "cr"), ("CRR", "crr")],
     # Q19: 2 single-key ANDs — small, all backends.
     19: PATTERN_BACKENDS_FULL,
 }
@@ -866,6 +872,46 @@ def build_excel(records: List[Dict], meta: Dict[str, Dict],
         readme.cell(row=rr, column=1, value=tag).font = Q_FONT
         readme.cell(row=rr, column=2, value=doc)
         readme.cell(row=rr, column=2).alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        rr += 1
+    rr += 1
+
+    _section("Phase-name glossary (TPC-H query → phase semantics)")
+    phase_glossary = [
+        ("Q1 PhaseA",  "shipdate complement OR (~90 day-bitmaps for shipdate > '1998-09-02') + flip in byte-stream space."),
+        ("Q1 PhaseB",  "Per-(returnflag, linestatus) group: linestatus_btv AND returnflag_btv, then byte-stream AND with shipdate filter."),
+        ("Q1 PhaseC",  "Single sequential scan of lineitem(qty, price, disc, tax); per-row inline aggregate using the 5 group byte-streams (mirror of teacher's reduce_leadingbits)."),
+        ("Q3 PhaseA",  "Customer scan: c_mktsegment='BUILDING' → c_custkey set."),
+        ("Q3 PhaseB",  "Orders scan: filter o_orderdate < '1995-03-15' AND o_custkey ∈ set; for each match OR bitmap_orderkey[o_orderkey] into btv_res; build l_orderkey_map for downstream aggregate."),
+        ("Q3 PhaseC",  "Shipdate range OR (l_shipdate > cutoff)."),
+        ("Q3 PhaseD",  "btv_res &= shipdate_filter; get_rowids."),
+        ("Q3 PhaseE",  "BMFetch lineitem(orderkey, price, discount) per row; sum revenue per orderkey."),
+        ("Q4 PhaseA",  "Orders scan: filter o_orderdate ∈ [1993-07-01, 1993-10-01) → orderkey_priority map."),
+        ("Q4 PhaseB",  "OR matching orderkey bitmaps from bitmap_orderkey; get_rowids."),
+        ("Q4 PhaseC",  "BMFetch lineitem(orderkey, commitdate, receiptdate); per-row eval EXISTS commit < receipt; collect orderkey set."),
+        ("Q4 PhaseD",  "Count by priority for orderkeys in the EXISTS set."),
+        ("Q5 PhaseA",  "5 explicit semi-joins: region(ASIA) → nation → customer → orders(date range) → supplier."),
+        ("Q5 PhaseB",  "Multi-OR over l_orderkey bitmaps for qualifying orders + multi-OR over l_suppkey bitmaps for qualifying suppliers; AND."),
+        ("Q5 PhaseC",  "BMFetch lineitem(orderkey, suppkey, price, discount); aggregate revenue per nation."),
+        ("Q6 ship_GE", "Apply per-year shipdate bitmap (Btvs_GE[1994])."),
+        ("Q6 OR_disc", "Multi-OR over discount bitmaps in [5, 7], or single AND_NOT via discount_BPE."),
+        ("Q6 OR_qty",  "Multi-OR over quantity bitmaps in [0, 2399 raw], or single AND_NOT via quantity_BPE."),
+        ("Q6 AND",     "btv_disc &= btv_qty; btv_disc &= btv_ship_GE."),
+        ("Q6 GetRowIds", "Extract sorted row IDs from final result bitmap."),
+        ("Q14 PhaseA", "Shipdate range OR (1 month: l_shipdate ∈ ['1995-09-01', '1995-10-01'))."),
+        ("Q14 PhaseB", "Part scan: p_type LIKE 'PROMO%' → promo_partkeys."),
+        ("Q14 PhaseC", "BMFetch lineitem(partkey, price, discount); accumulate total_rev + promo_rev (if l_partkey ∈ promo_set)."),
+        ("Q15 OR_ship", "Single-column shipdate range OR ([1996-01-01, 1996-04-01))."),
+        ("Q15 walk",   "Walk filter rows; revenue_by_suppkey[col_suppkey[r]] += price * (100 - disc)."),
+        ("Q17 PhaseA", "Part scan: p_brand='Brand#23' AND p_container='MED BOX'; per-match OR bitmap_partkey[partkey]."),
+        ("Q17 PhaseB", "BMFetch lineitem(partkey, qty, extprice); compute per-partkey avg(qty)."),
+        ("Q17 PhaseC", "Filter rows where qty < 0.2 × avg_qty[partkey]; sum extprice."),
+        ("Q19 PhaseA", "bitmap_shipmode[A] AND bitmap_shipinstruct[D] (covers AIR + AIR REG + DELIVER IN PERSON)."),
+        ("Q19 PhaseB", "Part scan → unordered_map<partkey, GroupSpec> for the 3 OR-groups (brand×container×size×qty range)."),
+        ("Q19 PhaseC", "BMFetch lineitem(partkey, qty, price, disc); per-row look up partkey → group; check qty range; sum revenue."),
+    ]
+    for tag, doc in phase_glossary:
+        readme.cell(row=rr, column=1, value=tag).font = Q_FONT
+        readme.cell(row=rr, column=2, value=doc)
         rr += 1
     rr += 1
 

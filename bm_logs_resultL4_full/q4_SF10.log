@@ -1,159 +1,43 @@
 # cwd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev
-# cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(4);
+# pattern_qs_per_backend Q4
+
+# === Backend CB (DEBIT_BM=cb) ===
+# sql=
+PRAGMA load_bitmap('orderkey');
+PRAGMA bm_tpch(4);
+[load_bitmap] orderkey: scanned 59986052 rows in 664 ms
+[load_bitmap] orderkey: built ComBit index (15000000 keys, 4448.84 MB) in 13078 ms
 
 ================================================================
-  TPC-H Q4 Benchmark — ComBit vs WAH vs CRoaring vs EWAH (SF10)
-  OR orderdate days 547..638 (92 bitmaps) -> AND late_lineitem -> per-priority popcount
-  TPC-H params: orderdate range [1993-07-01, 1993-10-01), EXISTS l_commitdate < l_receiptdate
-  Iterations: 10 (first 2 = warm-up)
+  TPC-H Q4 (BitEngine pattern, runtime EXISTS via BMFetch)
+  Pre-loaded: bitmap_orderkey
 ================================================================
 
-[Probe] orders num_rows = 15000000
-[Build late_lineitem] 13753474 set / 15000000 orders in 6625.17 ms
+--- Iteration 1/5 (warm-up) ---
+  ComBit:  PhaseA(orders_scan)=317.712  PhaseB(orderkey_OR+ids)=273.541  PhaseC(BMFetch+EXISTS)=413.083  PhaseD(count_by_priority)=60.512  Total=1064.85  rows=2294856  groups=5
 
-[Load] Loading bitmaps (mode=ALL)...
-  WAH load:      136.383 ms
-  ComBit load:   292.417 ms
-  CRoaring load: 153.598 ms
-  CRR load:      63.814 ms
-  EWAH load:     182.751 ms
-  Bitset load:   62.338 ms (shared by BS / BSA)
-  Concise load:  168.994 ms
+--- Iteration 2/5 ---
+  ComBit:  PhaseA(orders_scan)=243.311  PhaseB(orderkey_OR+ids)=268.46  PhaseC(BMFetch+EXISTS)=233.912  PhaseD(count_by_priority)=57.946  Total=803.631  rows=2294856  groups=5
 
---- Iteration 1/10 (warm-up) ---
-  CB:   OR=4.318  AND_late=0.66  AND_prio+Pop=1.151  Total=6.13
-  CR:   OR=19.641  AND_late=0.464  AND_prio+Pop=2.029  Total=22.136
-  CRR:  OR=1.823  AND_late=0.479  AND_prio+Pop=2.031  Total=4.334
-  WAH:  OR=1.467  AND_late=0.287  AND_prio+Pop=3.373  Total=5.127
-  EW:   OR=50.709  AND_late=1.025  AND_prio+Pop=3.131  Total=54.866
-  BS:   OR=21.764  AND_late=0.199  AND_prio+Pop=1.028  Total=22.993
-  BSA:  OR=14.698  AND_late=0.147  AND_prio+Pop=0.723  Total=15.569
-  CON:  OR=56.452  AND_late=7.227  AND_prio+Pop=23.209  Total=86.889
+--- Iteration 3/5 ---
+  ComBit:  PhaseA(orders_scan)=242.817  PhaseB(orderkey_OR+ids)=266.82  PhaseC(BMFetch+EXISTS)=233.613  PhaseD(count_by_priority)=57.052  Total=800.304  rows=2294856  groups=5
 
---- Iteration 2/10 (warm-up) ---
-  CB:   OR=4.309  AND_late=0.638  AND_prio+Pop=1.181  Total=6.128
-  CR:   OR=19.635  AND_late=0.466  AND_prio+Pop=2.032  Total=22.134
-  CRR:  OR=1.821  AND_late=0.472  AND_prio+Pop=2.025  Total=4.319
-  WAH:  OR=1.523  AND_late=0.304  AND_prio+Pop=3.352  Total=5.18
-  EW:   OR=50.523  AND_late=1.035  AND_prio+Pop=3.12  Total=54.679
-  BS:   OR=20.835  AND_late=0.171  AND_prio+Pop=0.907  Total=21.914
-  BSA:  OR=14.252  AND_late=0.134  AND_prio+Pop=0.685  Total=15.072
-  CON:  OR=56.429  AND_late=7.248  AND_prio+Pop=23.308  Total=86.986
+--- Iteration 4/5 ---
+  ComBit:  PhaseA(orders_scan)=242.968  PhaseB(orderkey_OR+ids)=267.668  PhaseC(BMFetch+EXISTS)=234.376  PhaseD(count_by_priority)=59.182  Total=804.196  rows=2294856  groups=5
 
---- Iteration 3/10 ---
-  CB:   OR=4.315  AND_late=0.644  AND_prio+Pop=1.173  Total=6.133
-  CR:   OR=19.761  AND_late=0.463  AND_prio+Pop=2.048  Total=22.273
-  CRR:  OR=1.854  AND_late=0.471  AND_prio+Pop=2.029  Total=4.355
-  WAH:  OR=1.518  AND_late=0.288  AND_prio+Pop=3.348  Total=5.154
-  EW:   OR=50.765  AND_late=1.008  AND_prio+Pop=3.107  Total=54.882
-  BS:   OR=20.75  AND_late=0.179  AND_prio+Pop=0.939  Total=21.869
-  BSA:  OR=14.256  AND_late=0.14  AND_prio+Pop=0.693  Total=15.091
-  CON:  OR=56.923  AND_late=7.268  AND_prio+Pop=23.037  Total=87.229
+--- Iteration 5/5 ---
+  ComBit:  PhaseA(orders_scan)=244.512  PhaseB(orderkey_OR+ids)=268.248  PhaseC(BMFetch+EXISTS)=234.169  PhaseD(count_by_priority)=57.937  Total=804.867  rows=2294856  groups=5
 
---- Iteration 4/10 ---
-  CB:   OR=4.28  AND_late=0.64  AND_prio+Pop=1.157  Total=6.078
-  CR:   OR=19.679  AND_late=0.461  AND_prio+Pop=2.026  Total=22.167
-  CRR:  OR=1.817  AND_late=0.456  AND_prio+Pop=2.017  Total=4.291
-  WAH:  OR=1.547  AND_late=0.287  AND_prio+Pop=3.351  Total=5.187
-  EW:   OR=50.49  AND_late=0.984  AND_prio+Pop=3.15  Total=54.626
-  BS:   OR=20.339  AND_late=0.181  AND_prio+Pop=0.911  Total=21.432
-  BSA:  OR=14.037  AND_late=0.135  AND_prio+Pop=0.683  Total=14.856
-  CON:  OR=56.47  AND_late=7.254  AND_prio+Pop=23.167  Total=86.892
-
---- Iteration 5/10 ---
-  CB:   OR=4.278  AND_late=0.629  AND_prio+Pop=1.126  Total=6.034
-  CR:   OR=19.71  AND_late=0.477  AND_prio+Pop=2.054  Total=22.242
-  CRR:  OR=1.805  AND_late=0.45  AND_prio+Pop=2.018  Total=4.274
-  WAH:  OR=1.552  AND_late=0.279  AND_prio+Pop=3.381  Total=5.212
-  EW:   OR=50.824  AND_late=0.994  AND_prio+Pop=3.121  Total=54.94
-  BS:   OR=20.28  AND_late=0.186  AND_prio+Pop=0.93  Total=21.397
-  BSA:  OR=14.037  AND_late=0.135  AND_prio+Pop=0.682  Total=14.855
-  CON:  OR=56.352  AND_late=7.254  AND_prio+Pop=23.035  Total=86.643
-
---- Iteration 6/10 ---
-  CB:   OR=4.311  AND_late=0.644  AND_prio+Pop=1.191  Total=6.147
-  CR:   OR=19.644  AND_late=0.466  AND_prio+Pop=2.058  Total=22.168
-  CRR:  OR=1.85  AND_late=0.458  AND_prio+Pop=2.023  Total=4.332
-  WAH:  OR=1.459  AND_late=0.28  AND_prio+Pop=3.352  Total=5.092
-  EW:   OR=50.561  AND_late=1.03  AND_prio+Pop=3.055  Total=54.647
-  BS:   OR=19.28  AND_late=0.174  AND_prio+Pop=0.852  Total=20.307
-  BSA:  OR=13.704  AND_late=0.138  AND_prio+Pop=0.679  Total=14.522
-  CON:  OR=56.428  AND_late=7.26  AND_prio+Pop=23.209  Total=86.898
-
---- Iteration 7/10 ---
-  CB:   OR=4.279  AND_late=0.63  AND_prio+Pop=1.099  Total=6.009
-  CR:   OR=19.653  AND_late=0.476  AND_prio+Pop=2.045  Total=22.174
-  CRR:  OR=1.813  AND_late=0.458  AND_prio+Pop=2.022  Total=4.294
-  WAH:  OR=1.46  AND_late=0.288  AND_prio+Pop=3.378  Total=5.127
-  EW:   OR=50.776  AND_late=1.038  AND_prio+Pop=3.093  Total=54.908
-  BS:   OR=19.436  AND_late=0.17  AND_prio+Pop=0.908  Total=20.515
-  BSA:  OR=13.794  AND_late=0.136  AND_prio+Pop=0.674  Total=14.605
-  CON:  OR=56.555  AND_late=7.262  AND_prio+Pop=23.157  Total=86.975
-
---- Iteration 8/10 ---
-  CB:   OR=4.335  AND_late=0.639  AND_prio+Pop=1.106  Total=6.08
-  CR:   OR=19.68  AND_late=0.477  AND_prio+Pop=2.029  Total=22.186
-  CRR:  OR=1.852  AND_late=0.469  AND_prio+Pop=2.035  Total=4.357
-  WAH:  OR=1.47  AND_late=0.281  AND_prio+Pop=3.381  Total=5.133
-  EW:   OR=51.664  AND_late=1.174  AND_prio+Pop=3.11  Total=55.948
-  BS:   OR=21.472  AND_late=0.201  AND_prio+Pop=1.137  Total=22.811
-  BSA:  OR=14.456  AND_late=0.151  AND_prio+Pop=0.77  Total=15.378
-  CON:  OR=56.574  AND_late=7.264  AND_prio+Pop=23.252  Total=87.091
-
---- Iteration 9/10 ---
-  CB:   OR=4.321  AND_late=0.64  AND_prio+Pop=1.184  Total=6.145
-  CR:   OR=19.702  AND_late=0.467  AND_prio+Pop=2.036  Total=22.207
-  CRR:  OR=1.858  AND_late=0.466  AND_prio+Pop=2.057  Total=4.381
-  WAH:  OR=1.451  AND_late=0.295  AND_prio+Pop=3.362  Total=5.109
-  EW:   OR=50.684  AND_late=1.026  AND_prio+Pop=3.105  Total=54.815
-  BS:   OR=20.902  AND_late=0.206  AND_prio+Pop=1.097  Total=22.206
-  BSA:  OR=14.267  AND_late=0.144  AND_prio+Pop=0.745  Total=15.158
-  CON:  OR=56.437  AND_late=7.263  AND_prio+Pop=23.146  Total=86.846
-
---- Iteration 10/10 ---
-  CB:   OR=4.299  AND_late=0.645  AND_prio+Pop=1.188  Total=6.133
-  CR:   OR=19.734  AND_late=0.467  AND_prio+Pop=2.028  Total=22.23
-  CRR:  OR=1.812  AND_late=0.473  AND_prio+Pop=2.025  Total=4.311
-  WAH:  OR=1.458  AND_late=0.296  AND_prio+Pop=3.344  Total=5.099
-  EW:   OR=50.649  AND_late=0.981  AND_prio+Pop=3.112  Total=54.742
-  BS:   OR=19.636  AND_late=0.171  AND_prio+Pop=0.932  Total=20.741
-  BSA:  OR=13.863  AND_late=0.134  AND_prio+Pop=0.693  Total=14.692
-  CON:  OR=56.517  AND_late=7.276  AND_prio+Pop=23.043  Total=86.837
-
-[Baseline] DuckDB native SQL Q4  (single run: 894.51 ms)
-[OK] all active backends match DuckDB SQL ground truth (per-priority counts exact).
-
-  Q4 per-priority counts (source=ComBit):
-  o_orderpriority        order_count
-  1-URGENT                    105214
-  2-HIGH                      104821
-  3-MEDIUM                    105227
-  4-NOT SPECIFIED             105422
-  5-LOW                       105356
+[OK] ComBit matches DuckDB SQL ground truth (5 priorities).
 
 ================================================================
-  Q4 RESULTS (8 measured iterations, median +/- stddev)
+  Q4 RESULTS — ComBit (4 measured iter, median +/- stddev)
 ================================================================
-                  CB (ms)         CR (ms)        CRR (ms)        WAH (ms)        EW (ms)
-  -----------------------------------------------------------------------------------------
-  OR_date           4.30 +/-  0.02     19.69 +/-  0.04      1.83 +/-  0.02      1.46 +/-  0.04     50.72 +/-  0.34
-  AND_late          0.64 +/-  0.01      0.47 +/-  0.01      0.46 +/-  0.01      0.29 +/-  0.01      1.02 +/-  0.06
-  AND_prio+Pop      1.17 +/-  0.04      2.04 +/-  0.01      2.02 +/-  0.01      3.36 +/-  0.01      3.11 +/-  0.02
-  -----------------------------------------------------------------------------------------
-  TOTAL             6.11 +/-  0.05     22.20 +/-  0.04      4.32 +/-  0.04      5.13 +/-  0.04     54.85 +/-  0.40
-================================================================
-
-
-================================================================
-  Q4 BASELINE BACKENDS (no compression / Concise)
-================================================================
-                  BS (ms)         BSA (ms)        Concise (ms)     BS vs WAH   BSA vs WAH   CON vs WAH
-  ----------------------------------------------------------------------------------------------
-  OR_date          20.31 +/-  0.72     14.04 +/-  0.24     56.49 +/-  0.16      0.07x      0.10x      0.03x
-  AND_late          0.18 +/-  0.01      0.14 +/-  0.01      7.26 +/-  0.01      1.60x      2.10x      0.04x
-  AND_prio+Pop      0.93 +/-  0.09      0.69 +/-  0.03     23.15 +/-  0.08      3.61x      4.88x      0.15x
-  ----------------------------------------------------------------------------------------------
-  TOTAL            21.41 +/-  0.81     14.86 +/-  0.28     86.89 +/-  0.16      0.24x      0.35x      0.06x
+  PhaseA (orders scan)        : 243.139 +/- 0.665387 ms
+  PhaseB (orderkey OR + ids)  : 267.958 +/- 0.635241 ms
+  PhaseC (BMFetch + EXISTS)   : 234.041 +/- 0.285581 ms
+  PhaseD (count by priority)  : 57.9415 +/- 0.758171 ms
+  TOTAL                       : 803.913 +/- 1.75597 ms
 ================================================================
 
   [CSV] q4_results_SF10.csv
@@ -167,4 +51,105 @@
 │ 4-NOT SPECIFIED │      105422 │
 │ 5-LOW           │      105356 │
 └─────────────────┴─────────────┘
-  [Breakdown] ComBit   L1=7.99 MiB  L2=1.40 MiB  L3=0.62 MiB  L4=0.34 MiB  total=10.34 MiB
+
+# === Backend CR (DEBIT_BM=cr) ===
+# sql=
+PRAGMA load_bitmap('orderkey');
+PRAGMA bm_tpch(4);
+[load_bitmap] orderkey: scanned 59986052 rows in 634 ms
+[load_bitmap] orderkey: built CRoaring index (15000000 keys, 359.978 MB) in 6430 ms
+
+================================================================
+  TPC-H Q4 (BitEngine pattern, runtime EXISTS via BMFetch)
+  Pre-loaded: bitmap_orderkey
+================================================================
+
+--- Iteration 1/5 (warm-up) ---
+  CRoaring:  PhaseA(orders_scan)=312.268  PhaseB(orderkey_OR+ids)=488.193  PhaseC(BMFetch+EXISTS)=415.255  PhaseD(count_by_priority)=65.213  Total=1280.93  rows=2294856  groups=5
+
+--- Iteration 2/5 ---
+  CRoaring:  PhaseA(orders_scan)=242.382  PhaseB(orderkey_OR+ids)=477.861  PhaseC(BMFetch+EXISTS)=235.601  PhaseD(count_by_priority)=59.395  Total=1015.24  rows=2294856  groups=5
+
+--- Iteration 3/5 ---
+  CRoaring:  PhaseA(orders_scan)=242.292  PhaseB(orderkey_OR+ids)=478.759  PhaseC(BMFetch+EXISTS)=234.351  PhaseD(count_by_priority)=58.411  Total=1013.82  rows=2294856  groups=5
+
+--- Iteration 4/5 ---
+  CRoaring:  PhaseA(orders_scan)=248.175  PhaseB(orderkey_OR+ids)=479.073  PhaseC(BMFetch+EXISTS)=235.324  PhaseD(count_by_priority)=56.1  Total=1018.67  rows=2294856  groups=5
+
+--- Iteration 5/5 ---
+  CRoaring:  PhaseA(orders_scan)=242.896  PhaseB(orderkey_OR+ids)=479.187  PhaseC(BMFetch+EXISTS)=234.411  PhaseD(count_by_priority)=58.528  Total=1015.02  rows=2294856  groups=5
+
+[OK] CRoaring matches DuckDB SQL ground truth (5 priorities).
+
+================================================================
+  Q4 RESULTS — CRoaring (4 measured iter, median +/- stddev)
+================================================================
+  PhaseA (orders scan)        : 242.639 +/- 2.45807 ms
+  PhaseB (orderkey OR + ids)  : 478.916 +/- 0.52012 ms
+  PhaseC (BMFetch + EXISTS)   : 234.868 +/- 0.549956 ms
+  PhaseD (count by priority)  : 58.4695 +/- 1.22031 ms
+  TOTAL                       : 1015.13 +/- 1.80743 ms
+================================================================
+
+  [CSV] q4_results_SF10.csv
+┌─────────────────┬─────────────┐
+│ o_orderpriority │ order_count │
+│     varchar     │    int64    │
+├─────────────────┼─────────────┤
+│ 1-URGENT        │      105214 │
+│ 2-HIGH          │      104821 │
+│ 3-MEDIUM        │      105227 │
+│ 4-NOT SPECIFIED │      105422 │
+│ 5-LOW           │      105356 │
+└─────────────────┴─────────────┘
+
+# === Backend CRR (DEBIT_BM=crr) ===
+# sql=
+PRAGMA load_bitmap('orderkey');
+PRAGMA bm_tpch(4);
+[load_bitmap] orderkey: scanned 59986052 rows in 634 ms
+[load_bitmap] orderkey: built CRoaringRun index (15000000 keys, 257.154 MB) in 6780 ms
+
+================================================================
+  TPC-H Q4 (BitEngine pattern, runtime EXISTS via BMFetch)
+  Pre-loaded: bitmap_orderkey
+================================================================
+
+--- Iteration 1/5 (warm-up) ---
+  CRoaringRun:  PhaseA(orders_scan)=316.288  PhaseB(orderkey_OR+ids)=158.487  PhaseC(BMFetch+EXISTS)=417.565  PhaseD(count_by_priority)=59.66  Total=952.002  rows=2294856  groups=5
+
+--- Iteration 2/5 ---
+  CRoaringRun:  PhaseA(orders_scan)=243.744  PhaseB(orderkey_OR+ids)=157.431  PhaseC(BMFetch+EXISTS)=234.277  PhaseD(count_by_priority)=58.102  Total=693.555  rows=2294856  groups=5
+
+--- Iteration 3/5 ---
+  CRoaringRun:  PhaseA(orders_scan)=243.566  PhaseB(orderkey_OR+ids)=155.1  PhaseC(BMFetch+EXISTS)=235.519  PhaseD(count_by_priority)=57.744  Total=691.931  rows=2294856  groups=5
+
+--- Iteration 4/5 ---
+  CRoaringRun:  PhaseA(orders_scan)=243.224  PhaseB(orderkey_OR+ids)=155.746  PhaseC(BMFetch+EXISTS)=237.561  PhaseD(count_by_priority)=55.772  Total=692.303  rows=2294856  groups=5
+
+--- Iteration 5/5 ---
+  CRoaringRun:  PhaseA(orders_scan)=243.264  PhaseB(orderkey_OR+ids)=155.325  PhaseC(BMFetch+EXISTS)=233.635  PhaseD(count_by_priority)=59.154  Total=691.38  rows=2294856  groups=5
+
+[OK] CRoaringRun matches DuckDB SQL ground truth (5 priorities).
+
+================================================================
+  Q4 RESULTS — CRoaringRun (4 measured iter, median +/- stddev)
+================================================================
+  PhaseA (orders scan)        : 243.415 +/- 0.215385 ms
+  PhaseB (orderkey OR + ids)  : 155.536 +/- 0.913551 ms
+  PhaseC (BMFetch + EXISTS)   : 234.898 +/- 1.49733 ms
+  PhaseD (count by priority)  : 57.923 +/- 1.2242 ms
+  TOTAL                       : 692.117 +/- 0.799587 ms
+================================================================
+
+  [CSV] q4_results_SF10.csv
+┌─────────────────┬─────────────┐
+│ o_orderpriority │ order_count │
+│     varchar     │    int64    │
+├─────────────────┼─────────────┤
+│ 1-URGENT        │      105214 │
+│ 2-HIGH          │      104821 │
+│ 3-MEDIUM        │      105227 │
+│ 4-NOT SPECIFIED │      105422 │
+│ 5-LOW           │      105356 │
+└─────────────────┴─────────────┘
