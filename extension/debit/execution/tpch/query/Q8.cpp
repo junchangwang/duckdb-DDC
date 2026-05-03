@@ -127,18 +127,6 @@ static const int Q8_WARMUP     = bm_bench::warmup_count(2);
 static std::once_flag q8_once_flag;
 
 // Byte-LUT for ComBit aggregation (same pattern as Q5).
-struct Q8ByteEntry { uint8_t count; uint8_t pos[8]; };
-static Q8ByteEntry q8_byte_lut[256];
-static bool q8_lut_init = []() {
-    for (int v = 0; v < 256; v++) {
-        uint8_t c = 0;
-        for (int b = 7; b >= 0; b--)
-            if (v & (1 << b)) q8_byte_lut[v].pos[c++] = 7 - b;
-        q8_byte_lut[v].count = c;
-    }
-    return true;
-}();
-
 // Bitmap loaders.
 static ComBit q8_load_cb(const std::string& p) {
     std::ifstream in(p, std::ios::binary);
@@ -171,24 +159,6 @@ static ewah::EWAHBoolArray<uint64_t> q8_load_ew(const std::string& p) {
 }
 
 // Statistics helper.
-struct Q8Stats {
-    double median, stddev, min_val, max_val;
-};
-static Q8Stats q8_compute_stats(std::vector<double>& v) {
-    Q8Stats s{};
-    if (v.empty()) return s;
-    std::sort(v.begin(), v.end());
-    size_t n = v.size();
-    s.median  = (n % 2 == 0) ? (v[n/2-1] + v[n/2]) / 2.0 : v[n/2];
-    s.min_val = v.front();
-    s.max_val = v.back();
-    double mean = std::accumulate(v.begin(), v.end(), 0.0) / n;
-    double sq = 0;
-    for (auto x : v) sq += (x - mean) * (x - mean);
-    s.stddev = std::sqrt(sq / n);
-    return s;
-}
-
 // Per-year aggregation result (denom = total revenue across all suppliers
 // in AMERICA + ECONOMY ANODIZED STEEL + that year; numer = subset where
 // supplier is BRAZIL).
@@ -295,15 +265,67 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
     std::cout << "[Pre-load] Done in " << ms(t_preload, t_preload_done) << " ms" << std::endl;
 
     // ============================================================
-    // 1. Load bitmaps (per-backend gated + timed)
-    //
-    // ComBit additionally pre-decompresses cb_year[1995/1996] and
-    // cb_brazil into flat byte buffers so the per-iteration walk can do
-    // O(1) byte lookups by word_pos.  These are static across
-    // iterations, so the decompress cost is paid once at load time and
-    // is not part of per-query timing.
+    // 0.5 Build all multi-table BJI bitmaps dynamically (TPC-H 1.5.7).
+    //     Single 7-table SQL JOIN streams per-lineitem (day, year,
+    //     join_match, is_brazil) tuples through DuckDB's hash join engine.
+    //     We bucket these into per-day, per-year, join, and brazil
+    //     position lists, then encode each into the requested backend
+    //     formats below.  No multi-table BJI files on disk.
     // ============================================================
-    std::cout << "\n[Load] Loading bitmaps (mode=" << q8_bm_label() << ")..." << std::endl;
+    std::vector<std::vector<uint32_t>> q8_date_pos(Q8_DATE_END + 1);
+    std::vector<std::vector<uint32_t>> q8_year_pos(2);    // 1995, 1996
+    std::vector<uint32_t> q8_join_pos, q8_brazil_pos;
+    double q8_join_setup_ms = 0;
+    {
+        auto t0 = std::chrono::high_resolution_clock::now();
+        Connection con(*context.client.db);
+        auto r = con.Query(
+            "SELECT (o.o_orderdate - DATE '1992-01-01')::INT, "
+            "       EXTRACT(year FROM o.o_orderdate)::INT, "
+            "       CASE WHEN r1.r_name = 'AMERICA' "
+            "             AND p.p_type = 'ECONOMY ANODIZED STEEL' THEN 1 ELSE 0 END, "
+            "       CASE WHEN n2.n_name = 'BRAZIL' THEN 1 ELSE 0 END "
+            "FROM lineitem l "
+            "JOIN orders o ON l.l_orderkey = o.o_orderkey "
+            "JOIN customer c ON o.o_custkey = c.c_custkey "
+            "JOIN nation n1 ON c.c_nationkey = n1.n_nationkey "
+            "JOIN region r1 ON n1.n_regionkey = r1.r_regionkey "
+            "JOIN supplier s ON l.l_suppkey = s.s_suppkey "
+            "JOIN nation n2 ON s.s_nationkey = n2.n_nationkey "
+            "JOIN part p ON l.l_partkey = p.p_partkey "
+            "ORDER BY l.rowid");
+        if (!r || r->HasError()) {
+            std::cerr << "Q8 build SQL failed: "
+                      << (r ? r->GetError() : "null result") << std::endl;
+            return;
+        }
+        size_t pos = 0;
+        while (auto chunk = r->Fetch()) {
+            auto day = FlatVector::GetData<int32_t>(chunk->data[0]);
+            auto yr  = FlatVector::GetData<int32_t>(chunk->data[1]);
+            auto jm  = FlatVector::GetData<int32_t>(chunk->data[2]);
+            auto br  = FlatVector::GetData<int32_t>(chunk->data[3]);
+            for (idx_t j = 0; j < chunk->size(); j++, pos++) {
+                int d = day[j];
+                if (d >= Q8_DATE_START && d <= Q8_DATE_END)
+                    q8_date_pos[d].push_back(static_cast<uint32_t>(pos));
+                if (yr[j] == 1995) q8_year_pos[0].push_back(static_cast<uint32_t>(pos));
+                else if (yr[j] == 1996) q8_year_pos[1].push_back(static_cast<uint32_t>(pos));
+                if (jm[j]) q8_join_pos.push_back(static_cast<uint32_t>(pos));
+                if (br[j]) q8_brazil_pos.push_back(static_cast<uint32_t>(pos));
+            }
+        }
+        q8_join_setup_ms = ms(t0, std::chrono::high_resolution_clock::now());
+        std::cout << "[Build Q8 join] " << pos << " lineitems scanned in "
+                  << q8_join_setup_ms << " ms (counted in Total)"
+                  << "  (join_pos=" << q8_join_pos.size()
+                  << " brazil_pos=" << q8_brazil_pos.size() << ")" << std::endl;
+    }
+
+    // ============================================================
+    // 1. Build per-backend bitmaps from position lists (per-backend gated)
+    // ============================================================
+    std::cout << "\n[Load] Building bitmaps (mode=" << q8_bm_label() << ")..." << std::endl;
 
     // --- ComBit ---
     std::vector<ComBit> cb_date;
@@ -315,22 +337,29 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
     if (run_cb()) {
         auto t0 = std::chrono::high_resolution_clock::now();
         cb_date.resize(Q8_DATE_END + 1);
-        for (int d = Q8_DATE_START; d <= Q8_DATE_END; d++)
-            cb_date[d] = q8_load_cb(Q8_CB_DIR + "/orderdate/" + std::to_string(d) + ".bm");
-        cb_join = q8_load_cb(Q8_CB_DIR + "/join_result/0.bm");
+        std::vector<bool> mask(num_rows, false);
+        std::vector<uint32_t>* prev = nullptr;
+        for (int d = Q8_DATE_START; d <= Q8_DATE_END; d++) {
+            if (prev) for (uint32_t p : *prev) mask[p] = false;
+            for (uint32_t p : q8_date_pos[d]) mask[p] = true;
+            cb_date[d] = ComBit::compress(mask, false);
+            prev = &q8_date_pos[d];
+        }
+        if (prev) for (uint32_t p : *prev) mask[p] = false;
+        for (uint32_t p : q8_join_pos) mask[p] = true;
+        cb_join = ComBit::compress(mask, false);
+        for (uint32_t p : q8_join_pos) mask[p] = false;
 
-        // Year + brazil: load compressed, then expand to flat byte
-        // buffer for O(1) word-position lookup during the per-iteration
-        // walk.  combit_decompress_to_flat handles arbitrary segment
-        // states; cost is amortised across all iterations.
         for (size_t yi = 0; yi < Q8_YEARS.size(); yi++) {
-            ComBit y = q8_load_cb(Q8_CB_DIR + "/year/" + std::to_string(Q8_YEARS[yi]) + ".bm");
+            for (uint32_t p : q8_year_pos[yi]) mask[p] = true;
+            ComBit y = ComBit::compress(mask, false);
             cb_year_flat[yi] = combit_decompress_to_flat(y);
+            for (uint32_t p : q8_year_pos[yi]) mask[p] = false;
         }
-        {
-            ComBit b = q8_load_cb(Q8_CB_DIR + "/brazil/0.bm");
-            cb_brazil_flat = combit_decompress_to_flat(b);
-        }
+        for (uint32_t p : q8_brazil_pos) mask[p] = true;
+        ComBit b = ComBit::compress(mask, false);
+        cb_brazil_flat = combit_decompress_to_flat(b);
+        for (uint32_t p : q8_brazil_pos) mask[p] = false;
 
         cb_date_ptrs.reserve(Q8_DATE_END - Q8_DATE_START + 1);
         for (int d = Q8_DATE_START; d <= Q8_DATE_END; d++)
@@ -346,12 +375,14 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
     if (run_cr()) {
         auto t0 = std::chrono::high_resolution_clock::now();
         cr_date.resize(Q8_DATE_END + 1);
-        for (int d = Q8_DATE_START; d <= Q8_DATE_END; d++)
-            cr_date[d] = q8_load_cr(Q8_CR_DIR + "/orderdate/" + std::to_string(d) + ".bm");
-        cr_join   = q8_load_cr(Q8_CR_DIR + "/join_result/0.bm");
-        cr_brazil = q8_load_cr(Q8_CR_DIR + "/brazil/0.bm");
+        for (int d = Q8_DATE_START; d <= Q8_DATE_END; d++) {
+            auto& pos = q8_date_pos[d];
+            if (!pos.empty()) cr_date[d].addMany(pos.size(), pos.data());
+        }
+        if (!q8_join_pos.empty())   cr_join.addMany(q8_join_pos.size(), q8_join_pos.data());
+        if (!q8_brazil_pos.empty()) cr_brazil.addMany(q8_brazil_pos.size(), q8_brazil_pos.data());
         for (size_t yi = 0; yi < Q8_YEARS.size(); yi++)
-            cr_year[yi] = q8_load_cr(Q8_CR_DIR + "/year/" + std::to_string(Q8_YEARS[yi]) + ".bm");
+            if (!q8_year_pos[yi].empty()) cr_year[yi].addMany(q8_year_pos[yi].size(), q8_year_pos[yi].data());
         cr_load_ms = ms(t0, std::chrono::high_resolution_clock::now());
     }
 
@@ -365,15 +396,16 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         auto t0 = std::chrono::high_resolution_clock::now();
         crr_date.resize(Q8_DATE_END + 1);
         for (int d = Q8_DATE_START; d <= Q8_DATE_END; d++) {
-            crr_date[d] = q8_load_cr(Q8_CR_DIR + "/orderdate/" + std::to_string(d) + ".bm");
+            auto& pos = q8_date_pos[d];
+            if (!pos.empty()) crr_date[d].addMany(pos.size(), pos.data());
             crr_date[d].runOptimize();
         }
-        crr_join = q8_load_cr(Q8_CR_DIR + "/join_result/0.bm");
+        if (!q8_join_pos.empty()) crr_join.addMany(q8_join_pos.size(), q8_join_pos.data());
         crr_join.runOptimize();
-        crr_brazil = q8_load_cr(Q8_CR_DIR + "/brazil/0.bm");
+        if (!q8_brazil_pos.empty()) crr_brazil.addMany(q8_brazil_pos.size(), q8_brazil_pos.data());
         crr_brazil.runOptimize();
         for (size_t yi = 0; yi < Q8_YEARS.size(); yi++) {
-            crr_year[yi] = q8_load_cr(Q8_CR_DIR + "/year/" + std::to_string(Q8_YEARS[yi]) + ".bm");
+            if (!q8_year_pos[yi].empty()) crr_year[yi].addMany(q8_year_pos[yi].size(), q8_year_pos[yi].data());
             crr_year[yi].runOptimize();
         }
         crr_date_ptrs.reserve(Q8_DATE_END - Q8_DATE_START + 1);
@@ -389,13 +421,22 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
     double wah_load_ms = 0;
     if (run_wah()) {
         auto t0 = std::chrono::high_resolution_clock::now();
+        auto wah_build = [&](ibis::bitvector& w, const std::vector<uint32_t>& pos) {
+            size_t k = 0;
+            for (size_t i = 0; i < num_rows; i++) {
+                bool b = (k < pos.size() && pos[k] == i);
+                if (b) k++;
+                w += (b ? 1 : 0);
+            }
+            w.compress();
+        };
         wah_date.resize(Q8_DATE_END + 1);
         for (int d = Q8_DATE_START; d <= Q8_DATE_END; d++)
-            wah_date[d] = q8_load_wah(Q8_WAH_DIR + "/orderdate/" + std::to_string(d) + ".bm");
-        wah_join   = q8_load_wah(Q8_WAH_DIR + "/join_result/0.bm");
-        wah_brazil = q8_load_wah(Q8_WAH_DIR + "/brazil/0.bm");
+            wah_build(wah_date[d], q8_date_pos[d]);
+        wah_build(wah_join, q8_join_pos);
+        wah_build(wah_brazil, q8_brazil_pos);
         for (size_t yi = 0; yi < Q8_YEARS.size(); yi++)
-            wah_year[yi] = q8_load_wah(Q8_WAH_DIR + "/year/" + std::to_string(Q8_YEARS[yi]) + ".bm");
+            wah_build(wah_year[yi], q8_year_pos[yi]);
         wah_load_ms = ms(t0, std::chrono::high_resolution_clock::now());
     }
 
@@ -407,13 +448,17 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
     double ew_load_ms = 0;
     if (run_ew()) {
         auto t0 = std::chrono::high_resolution_clock::now();
+        auto ew_build = [&](ewah::EWAHBoolArray<uint64_t>& e, const std::vector<uint32_t>& pos) {
+            for (uint32_t p : pos) e.set(p);
+            if (e.sizeInBits() < num_rows) e.padWithZeroes(num_rows);
+        };
         ew_date.resize(Q8_DATE_END + 1);
         for (int d = Q8_DATE_START; d <= Q8_DATE_END; d++)
-            ew_date[d] = q8_load_ew(Q8_EW_DIR + "/orderdate/" + std::to_string(d) + ".bm");
-        ew_join   = q8_load_ew(Q8_EW_DIR + "/join_result/0.bm");
-        ew_brazil = q8_load_ew(Q8_EW_DIR + "/brazil/0.bm");
+            ew_build(ew_date[d], q8_date_pos[d]);
+        ew_build(ew_join, q8_join_pos);
+        ew_build(ew_brazil, q8_brazil_pos);
         for (size_t yi = 0; yi < Q8_YEARS.size(); yi++)
-            ew_year[yi] = q8_load_ew(Q8_EW_DIR + "/year/" + std::to_string(Q8_YEARS[yi]) + ".bm");
+            ew_build(ew_year[yi], q8_year_pos[yi]);
         ew_date_ptrs.reserve(Q8_DATE_END - Q8_DATE_START + 1);
         for (int d = Q8_DATE_START; d <= Q8_DATE_END; d++)
             ew_date_ptrs.push_back(&ew_date[d]);
@@ -427,15 +472,17 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
     double bs_load_ms = 0;
     if (run_bs() || run_bsa()) {
         auto t0 = std::chrono::high_resolution_clock::now();
+        auto bs_build = [&](bs::Bitmap& b, const std::vector<uint32_t>& pos) {
+            b.alloc_for_bits(num_rows);
+            for (uint32_t p : pos) b.words[p / 64] |= uint64_t(1) << (p % 64);
+        };
         bs_date.resize(Q8_DATE_END + 1);
         for (int d = Q8_DATE_START; d <= Q8_DATE_END; d++)
-            bs_date[d] = bm_bench::load_bitmap_from_croaring(
-                Q8_CR_DIR + "/orderdate/" + std::to_string(d) + ".bm");
-        bs_join   = bm_bench::load_bitmap_from_croaring(Q8_CR_DIR + "/join_result/0.bm");
-        bs_brazil = bm_bench::load_bitmap_from_croaring(Q8_CR_DIR + "/brazil/0.bm");
+            bs_build(bs_date[d], q8_date_pos[d]);
+        bs_build(bs_join, q8_join_pos);
+        bs_build(bs_brazil, q8_brazil_pos);
         for (size_t yi = 0; yi < Q8_YEARS.size(); yi++)
-            bs_year[yi] = bm_bench::load_bitmap_from_croaring(
-                Q8_CR_DIR + "/year/" + std::to_string(Q8_YEARS[yi]) + ".bm");
+            bs_build(bs_year[yi], q8_year_pos[yi]);
         bs_load_ms = ms(t0, std::chrono::high_resolution_clock::now());
     }
 
@@ -449,13 +496,11 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         auto t0 = std::chrono::high_resolution_clock::now();
         con_date.resize(Q8_DATE_END + 1);
         for (int d = Q8_DATE_START; d <= Q8_DATE_END; d++)
-            con_date[d] = bm_bench::load_concise_from_croaring(
-                Q8_CR_DIR + "/orderdate/" + std::to_string(d) + ".bm");
-        con_join   = bm_bench::load_concise_from_croaring(Q8_CR_DIR + "/join_result/0.bm");
-        con_brazil = bm_bench::load_concise_from_croaring(Q8_CR_DIR + "/brazil/0.bm");
+            for (uint32_t p : q8_date_pos[d]) con_date[d].add(p);
+        for (uint32_t p : q8_join_pos)   con_join.add(p);
+        for (uint32_t p : q8_brazil_pos) con_brazil.add(p);
         for (size_t yi = 0; yi < Q8_YEARS.size(); yi++)
-            con_year[yi] = bm_bench::load_concise_from_croaring(
-                Q8_CR_DIR + "/year/" + std::to_string(Q8_YEARS[yi]) + ".bm");
+            for (uint32_t p : q8_year_pos[yi]) con_year[yi].add(p);
         con_date_ptrs.reserve(Q8_DATE_END - Q8_DATE_START + 1);
         for (int d = Q8_DATE_START; d <= Q8_DATE_END; d++)
             con_date_ptrs.push_back(&con_date[d]);
@@ -528,7 +573,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
                 // Year 1995 contribution.
                 uint8_t b95 = join_byte & yfa[word_pos];
                 if (b95) {
-                    const auto& e = q8_byte_lut[b95];
+                    const auto& e = bm_bench::byte_lut[b95];
                     for (int k = 0; k < e.count; k++) {
                         size_t row = rbase + e.pos[k];
                         int64_t rev = pp[row] * (100 - dp[row]);
@@ -536,7 +581,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
                     }
                     uint8_t br95 = b95 & brf[word_pos];
                     if (br95) {
-                        const auto& eb = q8_byte_lut[br95];
+                        const auto& eb = bm_bench::byte_lut[br95];
                         for (int k = 0; k < eb.count; k++) {
                             size_t row = rbase + eb.pos[k];
                             int64_t rev = pp[row] * (100 - dp[row]);
@@ -549,7 +594,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
                 // Year 1996 contribution.
                 uint8_t b96 = join_byte & yfb[word_pos];
                 if (b96) {
-                    const auto& e = q8_byte_lut[b96];
+                    const auto& e = bm_bench::byte_lut[b96];
                     for (int k = 0; k < e.count; k++) {
                         size_t row = rbase + e.pos[k];
                         int64_t rev = pp[row] * (100 - dp[row]);
@@ -557,7 +602,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
                     }
                     uint8_t br96 = b96 & brf[word_pos];
                     if (br96) {
-                        const auto& eb = q8_byte_lut[br96];
+                        const auto& eb = bm_bench::byte_lut[br96];
                         for (int k = 0; k < eb.count; k++) {
                             size_t row = rbase + eb.pos[k];
                             int64_t rev = pp[row] * (100 - dp[row]);
@@ -572,7 +617,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
             cb_res = res;
             cb_rows = total_rows;
 
-            double d_or = ms(t0, t1), d_and = ms(t1, t3), d_total = ms(t0, t3);
+            double d_or = ms(t0, t1), d_and = ms(t1, t3), d_total = ms(t0, t3) + q8_join_setup_ms;
             std::cout << "  CB:   OR_date=" << d_or
                       << "  AND+Agg=" << d_and
                       << "  Total=" << d_total
@@ -622,7 +667,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
             cr_res = res;
             cr_rows = total_rows;
 
-            double d_or = ms(t0, t1), d_and = ms(t1, t2), d_total = ms(t0, t2);
+            double d_or = ms(t0, t1), d_and = ms(t1, t2), d_total = ms(t0, t2) + q8_join_setup_ms;
             std::cout << "  CR:   OR_date=" << d_or
                       << "  AND+Agg=" << d_and
                       << "  Total=" << d_total
@@ -668,7 +713,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
             crr_res = res;
             crr_rows = total_rows;
 
-            double d_or = ms(t0, t1), d_and = ms(t1, t2), d_total = ms(t0, t2);
+            double d_or = ms(t0, t1), d_and = ms(t1, t2), d_total = ms(t0, t2) + q8_join_setup_ms;
             std::cout << "  CRR:  OR_date=" << d_or
                       << "  AND+Agg=" << d_and
                       << "  Total=" << d_total
@@ -727,7 +772,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
             wah_res = res;
             wah_rows = total_rows;
 
-            double d_or = ms(t0, t1), d_and = ms(t1, t2), d_total = ms(t0, t2);
+            double d_or = ms(t0, t1), d_and = ms(t1, t2), d_total = ms(t0, t2) + q8_join_setup_ms;
             std::cout << "  WAH:  OR_date=" << d_or
                       << "  AND+Agg=" << d_and
                       << "  Total=" << d_total
@@ -780,7 +825,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
             ew_res = res;
             ew_rows = total_rows;
 
-            double d_or = ms(t0, t1), d_and = ms(t1, t2), d_total = ms(t0, t2);
+            double d_or = ms(t0, t1), d_and = ms(t1, t2), d_total = ms(t0, t2) + q8_join_setup_ms;
             std::cout << "  EW:   OR_date=" << d_or
                       << "  AND+Agg=" << d_and
                       << "  Total=" << d_total
@@ -844,7 +889,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
             bs_res = res;
             bs_rows = total_rows;
 
-            double d_or = ms(t0, t1), d_and = ms(t1, t2), d_total = ms(t0, t2);
+            double d_or = ms(t0, t1), d_and = ms(t1, t2), d_total = ms(t0, t2) + q8_join_setup_ms;
             std::cout << "  BS:   OR_date=" << d_or
                       << "  AND+Agg=" << d_and
                       << "  Total=" << d_total
@@ -908,7 +953,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
             bsa_res = res;
             bsa_rows = total_rows;
 
-            double d_or = ms(t0, t1), d_and = ms(t1, t2), d_total = ms(t0, t2);
+            double d_or = ms(t0, t1), d_and = ms(t1, t2), d_total = ms(t0, t2) + q8_join_setup_ms;
             std::cout << "  BSA:  OR_date=" << d_or
                       << "  AND+Agg=" << d_and
                       << "  Total=" << d_total
@@ -954,7 +999,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
             con_res = res;
             con_rows = total_rows;
 
-            double d_or = ms(t0, t1), d_and = ms(t1, t2), d_total = ms(t0, t2);
+            double d_or = ms(t0, t1), d_and = ms(t1, t2), d_total = ms(t0, t2) + q8_join_setup_ms;
             std::cout << "  CON:  OR_date=" << d_or
                       << "  AND+Agg=" << d_and
                       << "  Total=" << d_total
@@ -1149,37 +1194,37 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
     // ============================================================
     // 5. Statistics summary
     // ============================================================
-    auto cb_or_s  = q8_compute_stats(cb_or_t);
-    auto cb_and_s = q8_compute_stats(cb_and_t);
-    auto cb_tot_s = q8_compute_stats(cb_tot_t);
+    auto cb_or_s  = bm_bench::compute_stats(cb_or_t);
+    auto cb_and_s = bm_bench::compute_stats(cb_and_t);
+    auto cb_tot_s = bm_bench::compute_stats(cb_tot_t);
 
-    auto cr_or_s  = q8_compute_stats(cr_or_t);
-    auto cr_and_s = q8_compute_stats(cr_and_t);
-    auto cr_tot_s = q8_compute_stats(cr_tot_t);
+    auto cr_or_s  = bm_bench::compute_stats(cr_or_t);
+    auto cr_and_s = bm_bench::compute_stats(cr_and_t);
+    auto cr_tot_s = bm_bench::compute_stats(cr_tot_t);
 
-    auto crr_or_s  = q8_compute_stats(crr_or_t);
-    auto crr_and_s = q8_compute_stats(crr_and_t);
-    auto crr_tot_s = q8_compute_stats(crr_tot_t);
+    auto crr_or_s  = bm_bench::compute_stats(crr_or_t);
+    auto crr_and_s = bm_bench::compute_stats(crr_and_t);
+    auto crr_tot_s = bm_bench::compute_stats(crr_tot_t);
 
-    auto wah_or_s  = q8_compute_stats(wah_or_t);
-    auto wah_and_s = q8_compute_stats(wah_and_t);
-    auto wah_tot_s = q8_compute_stats(wah_tot_t);
+    auto wah_or_s  = bm_bench::compute_stats(wah_or_t);
+    auto wah_and_s = bm_bench::compute_stats(wah_and_t);
+    auto wah_tot_s = bm_bench::compute_stats(wah_tot_t);
 
-    auto ew_or_s  = q8_compute_stats(ew_or_t);
-    auto ew_and_s = q8_compute_stats(ew_and_t);
-    auto ew_tot_s = q8_compute_stats(ew_tot_t);
+    auto ew_or_s  = bm_bench::compute_stats(ew_or_t);
+    auto ew_and_s = bm_bench::compute_stats(ew_and_t);
+    auto ew_tot_s = bm_bench::compute_stats(ew_tot_t);
 
-    auto bs_or_s   = q8_compute_stats(bs_or_t);
-    auto bs_and_s  = q8_compute_stats(bs_and_t);
-    auto bs_tot_s  = q8_compute_stats(bs_tot_t);
+    auto bs_or_s   = bm_bench::compute_stats(bs_or_t);
+    auto bs_and_s  = bm_bench::compute_stats(bs_and_t);
+    auto bs_tot_s  = bm_bench::compute_stats(bs_tot_t);
 
-    auto bsa_or_s  = q8_compute_stats(bsa_or_t);
-    auto bsa_and_s = q8_compute_stats(bsa_and_t);
-    auto bsa_tot_s = q8_compute_stats(bsa_tot_t);
+    auto bsa_or_s  = bm_bench::compute_stats(bsa_or_t);
+    auto bsa_and_s = bm_bench::compute_stats(bsa_and_t);
+    auto bsa_tot_s = bm_bench::compute_stats(bsa_tot_t);
 
-    auto con_or_s  = q8_compute_stats(con_or_t);
-    auto con_and_s = q8_compute_stats(con_and_t);
-    auto con_tot_s = q8_compute_stats(con_tot_t);
+    auto con_or_s  = bm_bench::compute_stats(con_or_t);
+    auto con_and_s = bm_bench::compute_stats(con_and_t);
+    auto con_tot_s = bm_bench::compute_stats(con_tot_t);
 
     int measured = Q8_ITERATIONS - Q8_WARMUP;
     std::cout << std::fixed << std::setprecision(2);
@@ -1191,8 +1236,8 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         std::cout << "                  CB (ms)         CR (ms)        CRR (ms)        WAH (ms)        EW (ms)" << std::endl;
         std::cout << "  -----------------------------------------------------------------------------------------" << std::endl;
 
-        auto print_row = [](const char* label, Q8Stats& cb, Q8Stats& cr,
-                            Q8Stats& crr, Q8Stats& wah, Q8Stats& ew) {
+        auto print_row = [](const char* label, bm_bench::Stats& cb, bm_bench::Stats& cr,
+                            bm_bench::Stats& crr, bm_bench::Stats& wah, bm_bench::Stats& ew) {
             std::cout << "  " << std::left << std::setw(14) << label
                       << std::right
                       << std::setw(8) << cb.median << " +/- " << std::setw(5) << cb.stddev
@@ -1221,8 +1266,8 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         std::cout << "                  BS (ms)         BSA (ms)        Concise (ms)     BS vs WAH   BSA vs WAH   CON vs WAH" << std::endl;
         std::cout << "  ----------------------------------------------------------------------------------------------" << std::endl;
 
-        auto print_baseline_row = [](const char* label, Q8Stats& w,
-                                     Q8Stats& b, Q8Stats& ba, Q8Stats& c) {
+        auto print_baseline_row = [](const char* label, bm_bench::Stats& w,
+                                     bm_bench::Stats& b, bm_bench::Stats& ba, bm_bench::Stats& c) {
             double bs_sp  = (b.median  > 0) ? w.median / b.median  : 0;
             double bsa_sp = (ba.median > 0) ? w.median / ba.median : 0;
             double con_sp = (c.median  > 0) ? w.median / c.median  : 0;
@@ -1246,7 +1291,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
                   << "  CON rows: " << con_rows << std::endl;
         std::cout << "================================================================\n" << std::endl;
     } else {
-        Q8Stats *sel_or = nullptr, *sel_and = nullptr, *sel_tot = nullptr;
+        bm_bench::Stats *sel_or = nullptr, *sel_and = nullptr, *sel_tot = nullptr;
         size_t sel_rows = 0;
         switch (Q8_BM) {
             case Q8BmType::WAH: sel_or = &wah_or_s; sel_and = &wah_and_s; sel_tot = &wah_tot_s; sel_rows = wah_rows; break;
@@ -1267,7 +1312,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         std::cout << "                  median(ms)   stddev    min      max" << std::endl;
         std::cout << "  -------------------------------------------------------------" << std::endl;
 
-        auto print_single = [](const char* label, Q8Stats& s) {
+        auto print_single = [](const char* label, bm_bench::Stats& s) {
             std::cout << "  " << std::left << std::setw(16) << label
                       << std::right << std::setw(9) << s.median
                       << std::setw(10) << s.stddev
@@ -1305,9 +1350,9 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
                 << "concise_median_ms,concise_stddev_ms,concise_min_ms,concise_max_ms\n";
 
             auto csv_row = [&](const std::string& op,
-                               Q8Stats& cb, Q8Stats& cr, Q8Stats& crr,
-                               Q8Stats& wah, Q8Stats& ew,
-                               Q8Stats& b, Q8Stats& ba, Q8Stats& co) {
+                               bm_bench::Stats& cb, bm_bench::Stats& cr, bm_bench::Stats& crr,
+                               bm_bench::Stats& wah, bm_bench::Stats& ew,
+                               bm_bench::Stats& b, bm_bench::Stats& ba, bm_bench::Stats& co) {
                 csv << sf_label << "," << op << ","
                     << cb.median  << "," << cb.stddev  << "," << cb.min_val  << "," << cb.max_val  << ","
                     << cr.median  << "," << cr.stddev  << "," << cr.min_val  << "," << cr.max_val  << ","

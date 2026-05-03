@@ -19,15 +19,14 @@
 //   1. join_result/0.bm pre-encodes the customer/orders/lineitem join
 //      with c_mktsegment='BUILDING' AND o_orderdate<'1995-03-15'
 //      (one bit per lineitem row; built once at export time).
-//   2. OR shipdate days [1..1169]  → date_lo (= shipdate <= 1169)
-//   3. NOT date_lo                 → date_hi (= shipdate >  1169)
-//   4. AND with join_result        → filter
-//   5. Walk filter, aggregate revenue per l_orderkey
-//   6. Top-10 via heap, sorted DESC by (revenue, o_orderdate)
+//   2. OR shipdate days [1170..2526]  → date_hi (= shipdate > 1995-03-15)
+//   3. AND with join_result           → filter
+//   4. Walk filter, aggregate revenue per l_orderkey
+//   5. Top-10 via heap, sorted DESC by (revenue, o_orderdate)
 //
 // Day 1169 = 1995-03-15 in days-since-1992-01-01.  The bitmap exporter
-// emits days 1..2526 (full TPC-H shipdate domain), so the complement
-// "days >1169" requires OR over 1169 bitmaps + NOT over [0, num_rows).
+// emits days 1..2526 (full TPC-H shipdate domain), so we directly OR
+// days [1170..2526] (the full positive predicate) — no NOT step needed.
 #include "duckdb/execution/execution_context.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/connection.hpp"
@@ -98,8 +97,10 @@ static std::string q3_sf_label() { return bm_bench::sf_label(); }
 
 // --- Q3 predicate (spec §2.4.3) ---
 //   l_shipdate > 1995-03-15  ↔  day > 1169 (days since 1992-01-01)
-//   Complement: OR days [1..1169], NOT.
-static const int Q3_SHIP_CUTOFF = 1169;
+//   Direct: OR days [1170..2526].  TPC-H shipdate domain is 2526 days
+//   (1992-01-01 .. 1998-12-31); the bitmap exporter emits one .bm per day.
+static const int Q3_SHIP_START = 1170;
+static const int Q3_SHIP_END   = 2526;
 
 static const int Q3_ITERATIONS = bm_bench::iter_count(10);
 static const int Q3_WARMUP     = bm_bench::warmup_count(2);
@@ -107,18 +108,6 @@ static const int Q3_WARMUP     = bm_bench::warmup_count(2);
 static std::once_flag q3_once_flag;
 
 // --- ComBit byte-LUT (shared pattern with Q5/Q6/Q10) ---
-struct Q3ByteEntry { uint8_t count; uint8_t pos[8]; };
-static Q3ByteEntry q3_byte_lut[256];
-static bool q3_byte_lut_init = []() {
-    for (int v = 0; v < 256; v++) {
-        uint8_t c = 0;
-        for (int b = 7; b >= 0; b--)
-            if (v & (1 << b)) q3_byte_lut[v].pos[c++] = 7 - b;
-        q3_byte_lut[v].count = c;
-    }
-    return true;
-}();
-
 // --- Per-format bitmap loaders (BS/CON share bm_baseline_loaders.hpp) ---
 static ComBit q3_load_cb(const std::string& p) {
     std::ifstream in(p, std::ios::binary);
@@ -151,39 +140,6 @@ static ewah::EWAHBoolArray<uint64_t> q3_load_ew(const std::string& p) {
 }
 
 // --- WAH NOT (in-place AVX-512 flip on decompressed bitvector) ---
-static void q3_wah_flip(ibis::bitvector* btv) {
-#if defined(__AVX512F__)
-    auto* it = btv->m_vec.begin();
-    while (it + 15 < btv->m_vec.end()) {
-        _mm512_storeu_epi32(it, _mm512_andnot_epi32(
-            _mm512_loadu_epi32(it), _mm512_set1_epi32(0x7fffffff)));
-        it += 16;
-    }
-    for (; it < btv->m_vec.end(); it++) *it ^= ibis::bitvector::ALLONES;
-    if (btv->active.nbits > 0) btv->active.val ^= ((1u << btv->active.nbits) - 1);
-#else
-    for (auto* it = btv->m_vec.begin(); it < btv->m_vec.end(); ++it)
-        *it ^= ibis::bitvector::ALLONES;
-    if (btv->active.nbits > 0) btv->active.val ^= ((1u << btv->active.nbits) - 1);
-#endif
-}
-
-// --- Stats helper ---
-struct Q3Stats { double median = 0, stddev = 0, min_val = 0, max_val = 0; };
-static Q3Stats q3_stats(std::vector<double> v) {
-    Q3Stats s{};
-    if (v.empty()) return s;
-    std::sort(v.begin(), v.end());
-    size_t n = v.size();
-    s.median  = (n % 2 == 0) ? (v[n/2-1] + v[n/2]) / 2.0 : v[n/2];
-    s.min_val = v.front();
-    s.max_val = v.back();
-    double mean = std::accumulate(v.begin(), v.end(), 0.0) / n, sq = 0;
-    for (auto x : v) sq += (x - mean) * (x - mean);
-    s.stddev = std::sqrt(sq / n);
-    return s;
-}
-
 // --- Top-10 element + min-heap comparator ---
 //   Min-heap is keyed so that the *worst* row sits on top:
 //   smallest revenue (or, on tie, latest orderdate).  When a better
@@ -226,39 +182,109 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         std::cout << "  TPC-H Q3 Benchmark — " << q3_label() << " only ("
                   << q3_sf_label() << ")" << std::endl;
     }
-    std::cout << "  Complement OR shipdate days 1.." << Q3_SHIP_CUTOFF
-              << " -> NOT -> AND join_result -> Top-10" << std::endl;
+    std::cout << "  OR shipdate days [" << Q3_SHIP_START << ".." << Q3_SHIP_END
+              << "] -> AND join_result -> Top-10" << std::endl;
     std::cout << "  TPC-H params: c_mktsegment='BUILDING', date=1995-03-15" << std::endl;
     std::cout << "  Iterations: " << Q3_ITERATIONS << " (first " << Q3_WARMUP << " = warm-up)" << std::endl;
     std::cout << "================================================================" << std::endl;
 
     // -----------------------------------------------------------------------
-    // 1. Side-table load: orders_meta — qualifying (orderkey -> orderdate, shippriority).
-    //    Loaded directly via DuckDB SQL (no external CSV); only orders that
-    //    pass the join+segment+date predicate are returned.
+    // 1. Single-table column loads (FastBit-style L2 compliance).
+    //    No SQL JOINs, no multi-table aux structures.  Every loaded column
+    //    references at most one base table.
     // -----------------------------------------------------------------------
-    std::unordered_map<int64_t, std::pair<int32_t, int32_t>> orders_meta;
+    size_t num_orders = 0;
+    std::vector<int64_t> orders_okey, orders_ckey;
+    std::vector<int32_t> orders_date, orders_pri;
     {
         auto t0 = clock::now();
-        Connection con(*context.client.db);
-        const std::string sql =
-            "SELECT o.o_orderkey, "
-            "       (o.o_orderdate - DATE '1970-01-01')::INT AS orderdate_epoch, "
-            "       o.o_shippriority "
-            "FROM orders o JOIN customer c ON o.o_custkey = c.c_custkey "
-            "WHERE c.c_mktsegment = 'BUILDING' AND o.o_orderdate < DATE '1995-03-15'";
-        auto r = con.Query(sql);
-        if (r && !r->HasError()) {
-            orders_meta.reserve(r->RowCount());
-            for (idx_t i = 0; i < r->RowCount(); i++) {
-                orders_meta[r->GetValue(0, i).GetValue<int64_t>()] = {
-                    r->GetValue(1, i).GetValue<int32_t>(),
-                    r->GetValue(2, i).GetValue<int32_t>()
-                };
+        auto& tbl = Catalog::GetEntry<TableCatalogEntry>(context.client, "", "", "orders");
+        auto& tx  = DuckTransaction::Get(context.client, tbl.catalog);
+        TableScanState st;
+        // 0:o_orderkey, 1:o_custkey, 4:o_orderdate, 7:o_shippriority
+        vector<StorageIndex> cols{ StorageIndex(0), StorageIndex(1),
+                                   StorageIndex(4), StorageIndex(7) };
+        tbl.GetStorage().InitializeScan(context.client, tx, st, cols);
+        vector<LogicalType> types{
+            tbl.GetColumns().GetColumnTypes()[0],
+            tbl.GetColumns().GetColumnTypes()[1],
+            tbl.GetColumns().GetColumnTypes()[4],
+            tbl.GetColumns().GetColumnTypes()[7] };
+        orders_okey.reserve(15'000'000);
+        orders_ckey.reserve(15'000'000);
+        orders_date.reserve(15'000'000);
+        orders_pri.reserve(15'000'000);
+        while (true) {
+            DataChunk ch; ch.Initialize(context.client, types);
+            tbl.GetStorage().Scan(tx, ch, st);
+            if (ch.size() == 0) break;
+            auto okey = FlatVector::GetData<int64_t>(ch.data[0]);
+            auto ckey = FlatVector::GetData<int64_t>(ch.data[1]);
+            auto date = FlatVector::GetData<date_t>(ch.data[2]);
+            auto pri  = FlatVector::GetData<int32_t>(ch.data[3]);
+            for (idx_t i = 0; i < ch.size(); i++) {
+                orders_okey.push_back(okey[i]);
+                orders_ckey.push_back(ckey[i]);
+                orders_date.push_back(date[i].days);  // days since 1970-01-01
+                orders_pri.push_back(pri[i]);
             }
         }
-        std::cout << "\n[Side-load] orders_meta: " << orders_meta.size()
-                  << " qualifying orders in " << q3_ms(t0, clock::now()) << " ms" << std::endl;
+        num_orders = orders_okey.size();
+        std::cout << "\n[Pre-load] orders: " << num_orders
+                  << " rows in " << q3_ms(t0, clock::now()) << " ms" << std::endl;
+    }
+
+    // Customer scan: build per-customer flat byte array of c_mktsegment match.
+    // c_custkey is dense 1..num_cust at SF10, so customer row index = c_custkey - 1.
+    std::vector<uint8_t> cust_seg;
+    {
+        auto t0 = clock::now();
+        auto& tbl = Catalog::GetEntry<TableCatalogEntry>(context.client, "", "", "customer");
+        auto& tx  = DuckTransaction::Get(context.client, tbl.catalog);
+        TableScanState st;
+        vector<StorageIndex> cols{ StorageIndex(0), StorageIndex(6) };
+        tbl.GetStorage().InitializeScan(context.client, tx, st, cols);
+        vector<LogicalType> types{
+            tbl.GetColumns().GetColumnTypes()[0],
+            tbl.GetColumns().GetColumnTypes()[6] };
+        const std::string SEGMENT = "BUILDING";  // TPC-H Q3 validation param
+        std::vector<std::pair<int64_t, bool>> tmp;
+        tmp.reserve(1'500'000);
+        size_t max_ck = 0;
+        while (true) {
+            DataChunk ch; ch.Initialize(context.client, types);
+            tbl.GetStorage().Scan(tx, ch, st);
+            if (ch.size() == 0) break;
+            auto ck = FlatVector::GetData<int64_t>(ch.data[0]);
+            // Use UnifiedVectorFormat to handle DuckDB's dictionary/constant
+            // string encodings — direct FlatVector::GetData reads the
+            // dictionary header and gives wrong values for most rows.
+            UnifiedVectorFormat sg_uvf;
+            ch.data[1].ToUnifiedFormat(ch.size(), sg_uvf);
+            auto sg = UnifiedVectorFormat::GetData<string_t>(sg_uvf);
+            for (idx_t i = 0; i < ch.size(); i++) {
+                size_t ki = static_cast<size_t>(ck[i]);
+                if (ki > max_ck) max_ck = ki;
+                auto idx = sg_uvf.sel->get_index(i);
+                bool match = (sg[idx].GetSize() == SEGMENT.size() &&
+                              std::memcmp(sg[idx].GetData(), SEGMENT.data(),
+                                          SEGMENT.size()) == 0);
+                tmp.push_back({ck[i], match});
+            }
+        }
+        cust_seg.assign((max_ck + 8) / 8, 0);
+        size_t set_count = 0;
+        for (auto& [k, m] : tmp) {
+            if (m) {
+                size_t row = static_cast<size_t>(k - 1);
+                cust_seg[row / 8] |= uint8_t(1) << (row % 8);
+                set_count++;
+            }
+        }
+        std::cout << "[Pre-load] customer: " << tmp.size()
+                  << " rows, c_mktsegment='" << SEGMENT << "' set=" << set_count
+                  << " max_ck=" << max_ck << " in "
+                  << q3_ms(t0, clock::now()) << " ms" << std::endl;
     }
 
     // -----------------------------------------------------------------------
@@ -305,24 +331,68 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
     }
 
     // -----------------------------------------------------------------------
+    // 2.5 (FastBit-style L2) Compute orders_qual per-orders flat bitmap from
+    //     single-table data: scan orders.o_orderdate + FK lookup against
+    //     cust_seg via o_custkey.  Per-lineitem join_pos is then derived by
+    //     sort-merge with l_orderkey (lineitem and orders both sorted by
+    //     orderkey in TPC-H dbgen).  No SQL JOIN, no multi-table aux.
+    // -----------------------------------------------------------------------
+    constexpr int32_t Q3_ORD_DATE_CUTOFF_EPOCH = 9204;  // 1995-03-15 epoch days
+    std::vector<uint8_t> orders_qual((num_orders + 7) / 8, 0);
+    std::vector<uint32_t> join_pos;
+    double q3_join_setup_ms = 0;
+    {
+        auto t0 = clock::now();
+        // Scan orders + FK lookup cust_seg via o_custkey → orders_qual.
+        for (size_t i = 0; i < num_orders; i++) {
+            if (orders_date[i] >= Q3_ORD_DATE_CUTOFF_EPOCH) continue;
+            size_t cust_row = static_cast<size_t>(orders_ckey[i] - 1);
+            if (cust_seg[cust_row / 8] & (uint8_t(1) << (cust_row % 8))) {
+                orders_qual[i / 8] |= uint8_t(1) << (i % 8);
+            }
+        }
+        // Sort-merge orders↔lineitem by orderkey to build per-lineitem join_pos.
+        join_pos.reserve(static_cast<size_t>(num_rows / 50));
+        size_t ord_idx = 0;
+        for (size_t j = 0; j < num_rows; j++) {
+            int64_t ok = col_okey[j];
+            while (ord_idx < num_orders && orders_okey[ord_idx] < ok) ord_idx++;
+            if (ord_idx >= num_orders || orders_okey[ord_idx] != ok) continue;
+            if (orders_qual[ord_idx / 8] & (uint8_t(1) << (ord_idx % 8))) {
+                join_pos.push_back(static_cast<uint32_t>(j));
+            }
+        }
+        q3_join_setup_ms = q3_ms(t0, clock::now());
+        std::cout << "[Build join_bitmap] " << join_pos.size() << " set / "
+                  << num_rows << " rows in " << q3_join_setup_ms
+                  << " ms (counted in Total)" << std::endl;
+    }
+
+
+    // -----------------------------------------------------------------------
     // 3. Load bitmaps (per-backend gated).
-    //    join_result is a single bitmap; shipdate is 1169 bitmaps for the
-    //    complement OR.  All loaders are timed individually.
+    //    Per-backend `*_join` is built in-memory from join_pos.
+    //    shipdate is 1357 single-table bitmaps on lineitem.l_shipdate
+    //    days [1170..2526] (date column — TPC-H 1.5.7 compliant).
     // -----------------------------------------------------------------------
     std::cout << "\n[Load] Loading bitmaps (mode=" << q3_label() << ")..." << std::endl;
-    const int ship_or_end = Q3_SHIP_CUTOFF;
+    const int ship_or_start = Q3_SHIP_START;
+    const int ship_or_end   = Q3_SHIP_END;
+    const int ship_or_count = ship_or_end - ship_or_start + 1;
 
     std::vector<ComBit> cb_ship; ComBit cb_join;
     std::vector<const ComBit*> cb_ship_ptrs;
     double cb_load_ms = 0;
     if (run_cb()) {
         auto t0 = clock::now();
-        cb_join = q3_load_cb(Q3_CB_DIR + "/join_result/0.bm");
+        std::vector<bool> jm(num_rows, false);
+        for (uint32_t p : join_pos) jm[p] = true;
+        cb_join = ComBit::compress(jm, false);
         cb_ship.resize(ship_or_end + 1);
-        for (int d = 1; d <= ship_or_end; d++)
+        for (int d = ship_or_start; d <= ship_or_end; d++)
             cb_ship[d] = q3_load_cb(Q3_CB_DIR + "/shipdate/" + std::to_string(d) + ".bm");
-        cb_ship_ptrs.reserve(ship_or_end);
-        for (int d = 1; d <= ship_or_end; d++) cb_ship_ptrs.push_back(&cb_ship[d]);
+        cb_ship_ptrs.reserve(ship_or_count);
+        for (int d = ship_or_start; d <= ship_or_end; d++) cb_ship_ptrs.push_back(&cb_ship[d]);
         cb_load_ms = q3_ms(t0, clock::now());
     }
 
@@ -334,9 +404,9 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
     double cr_load_ms = 0;
     if (run_cr()) {
         auto t0 = clock::now();
-        cr_join = q3_load_cr(Q3_CR_DIR + "/join_result/0.bm");
+        if (!join_pos.empty()) cr_join.addMany(join_pos.size(), join_pos.data());
         cr_ship.resize(ship_or_end + 1);
-        for (int d = 1; d <= ship_or_end; d++)
+        for (int d = ship_or_start; d <= ship_or_end; d++)
             cr_ship[d] = q3_load_cr(Q3_CR_DIR + "/shipdate/" + std::to_string(d) + ".bm");
         cr_load_ms = q3_ms(t0, clock::now());
     }
@@ -346,15 +416,15 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
     double crr_load_ms = 0;
     if (run_crr()) {
         auto t0 = clock::now();
-        crr_join = q3_load_cr(Q3_CR_DIR + "/join_result/0.bm");
+        if (!join_pos.empty()) crr_join.addMany(join_pos.size(), join_pos.data());
         crr_join.runOptimize();
         crr_ship.resize(ship_or_end + 1);
-        for (int d = 1; d <= ship_or_end; d++) {
+        for (int d = ship_or_start; d <= ship_or_end; d++) {
             crr_ship[d] = q3_load_cr(Q3_CR_DIR + "/shipdate/" + std::to_string(d) + ".bm");
             crr_ship[d].runOptimize();
         }
-        crr_ship_ptrs.reserve(ship_or_end);
-        for (int d = 1; d <= ship_or_end; d++) crr_ship_ptrs.push_back(&crr_ship[d]);
+        crr_ship_ptrs.reserve(ship_or_count);
+        for (int d = ship_or_start; d <= ship_or_end; d++) crr_ship_ptrs.push_back(&crr_ship[d]);
         crr_load_ms = q3_ms(t0, clock::now());
     }
 
@@ -362,9 +432,17 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
     double wah_load_ms = 0;
     if (run_wah()) {
         auto t0 = clock::now();
-        wah_join = q3_load_wah(Q3_WAH_DIR + "/join_result/0.bm");
+        // WAH join_bitmap built via sequential bit append (canonical
+        // FastBit construction, same pattern as WahBackend::Append).
+        size_t k = 0;
+        for (size_t i = 0; i < num_rows; i++) {
+            bool b = (k < join_pos.size() && join_pos[k] == i);
+            if (b) k++;
+            wah_join += (b ? 1 : 0);
+        }
+        wah_join.compress();
         wah_ship.resize(ship_or_end + 1);
-        for (int d = 1; d <= ship_or_end; d++)
+        for (int d = ship_or_start; d <= ship_or_end; d++)
             wah_ship[d] = q3_load_wah(Q3_WAH_DIR + "/shipdate/" + std::to_string(d) + ".bm");
         wah_load_ms = q3_ms(t0, clock::now());
     }
@@ -380,12 +458,17 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
     double ew_load_ms = 0;
     if (run_ew()) {
         auto t0 = clock::now();
-        ew_join = q3_load_ew(Q3_EW_DIR + "/join_result/0.bm");
+        // EWAH set() requires monotonic increasing positions; join_pos
+        // is in row order so already sorted.  Pad to num_rows by
+        // appending empty words for the trailing zeros.
+        for (uint32_t p : join_pos) ew_join.set(p);
+        if (ew_join.sizeInBits() < num_rows)
+            ew_join.padWithZeroes(num_rows);
         ew_ship.resize(ship_or_end + 1);
-        for (int d = 1; d <= ship_or_end; d++)
+        for (int d = ship_or_start; d <= ship_or_end; d++)
             ew_ship[d] = q3_load_ew(Q3_EW_DIR + "/shipdate/" + std::to_string(d) + ".bm");
-        ew_ship_ptrs.reserve(ship_or_end);
-        for (int d = 1; d <= ship_or_end; d++) ew_ship_ptrs.push_back(&ew_ship[d]);
+        ew_ship_ptrs.reserve(ship_or_count);
+        for (int d = ship_or_start; d <= ship_or_end; d++) ew_ship_ptrs.push_back(&ew_ship[d]);
         ew_load_ms = q3_ms(t0, clock::now());
     }
 
@@ -395,28 +478,30 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
     double bs_load_ms = 0;
     if (run_bs() || run_bsa()) {
         auto t0 = clock::now();
-        bs_join = bm_bench::load_bitmap_from_croaring(Q3_CR_DIR + "/join_result/0.bm");
+        // Bitset join_bitmap: dense uint64 array, set bits directly.
+        bs_join.alloc_for_bits(num_rows);
+        for (uint32_t p : join_pos)
+            bs_join.words[p / 64] |= uint64_t(1) << (p % 64);
         bs_ship.resize(ship_or_end + 1);
-        for (int d = 1; d <= ship_or_end; d++)
+        for (int d = ship_or_start; d <= ship_or_end; d++)
             bs_ship[d] = bm_bench::load_bitmap_from_croaring(Q3_CR_DIR + "/shipdate/" + std::to_string(d) + ".bm");
         bs_load_ms = q3_ms(t0, clock::now());
     }
 
-    // Concise.  con_full universe is built once at load to support NOT
-    // via `con_full.logicalandnot(future)` (no native flip in Concise).
+    // Concise.  Direct OR over days [ship_or_start..ship_or_end] — no
+    // universe needed since we no longer require NOT.
     std::vector<ConciseSet<false>> con_ship; ConciseSet<false> con_join;
     std::vector<const ConciseSet<false>*> con_ship_ptrs;
-    ConciseSet<false> con_full;
     double con_load_ms = 0;
     if (run_con()) {
         auto t0 = clock::now();
-        con_join = bm_bench::load_concise_from_croaring(Q3_CR_DIR + "/join_result/0.bm");
+        // Concise add() requires monotonic positions; join_pos is sorted.
+        for (uint32_t p : join_pos) con_join.add(p);
         con_ship.resize(ship_or_end + 1);
-        for (int d = 1; d <= ship_or_end; d++)
+        for (int d = ship_or_start; d <= ship_or_end; d++)
             con_ship[d] = bm_bench::load_concise_from_croaring(Q3_CR_DIR + "/shipdate/" + std::to_string(d) + ".bm");
-        con_ship_ptrs.reserve(ship_or_end);
-        for (int d = 1; d <= ship_or_end; d++) con_ship_ptrs.push_back(&con_ship[d]);
-        for (uint32_t i = 0; i < num_rows; i++) con_full.add(i);
+        con_ship_ptrs.reserve(ship_or_count);
+        for (int d = ship_or_start; d <= ship_or_end; d++) con_ship_ptrs.push_back(&con_ship[d]);
         con_load_ms = q3_ms(t0, clock::now());
     }
 
@@ -427,7 +512,7 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
     if (run_ew())  std::cout << "  EWAH load:     " << ew_load_ms  << " ms" << std::endl;
     if (run_bs() || run_bsa())
                     std::cout << "  Bitset load:   " << bs_load_ms  << " ms (shared by BS / BSA)" << std::endl;
-    if (run_con()) std::cout << "  Concise load:  " << con_load_ms << " ms (incl. universe build)" << std::endl;
+    if (run_con()) std::cout << "  Concise load:  " << con_load_ms << " ms" << std::endl;
 
     // -----------------------------------------------------------------------
     // 4. Top-K extractor (lives outside the timed phases so per-backend
@@ -439,9 +524,11 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         std::priority_queue<Q3Row, std::vector<Q3Row>, Q3MinHeapCmp> heap;
         for (auto& [ok, r] : rev) {
             if (r == 0) continue;
-            auto mit = orders_meta.find(ok);
-            if (mit == orders_meta.end()) continue;
-            Q3Row row{ok, r, mit->second.first, mit->second.second};
+            // Binary search orderkey in sorted orders_okey to fetch metadata.
+            auto it = std::lower_bound(orders_okey.begin(), orders_okey.end(), ok);
+            if (it == orders_okey.end() || *it != ok) continue;
+            size_t row_idx = static_cast<size_t>(it - orders_okey.begin());
+            Q3Row row{ok, r, orders_date[row_idx], orders_pri[row_idx]};
             if ((int)heap.size() < 10) {
                 heap.push(row);
             } else {
@@ -490,16 +577,16 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
             auto t0 = clock::now();
             ComBit cb_comp = ComBit::OR_many(cb_ship_ptrs.size(), cb_ship_ptrs.data());
             auto t1 = clock::now();
-            ComBit cb_filt = ~cb_comp;
-            auto t2 = clock::now();
-            cb_filt &= cb_join;
+            // NOT step elided — full positive predicate via OR [1170..2526].
+            auto t2 = t1;
+            cb_comp &= cb_join;
             auto t3 = clock::now();
             std::unordered_map<int64_t, int64_t> rev;
             size_t cnt = 0;
-            cb_filt.for_each_literal(
+            cb_comp.for_each_literal(
                 [&](uint32_t word_pos, uint8_t val) {
                     size_t rbase = static_cast<size_t>(word_pos) * 8;
-                    const auto& e = q3_byte_lut[val];
+                    const auto& e = bm_bench::byte_lut[val];
                     for (int k = 0; k < e.count; k++) {
                         size_t r = rbase + e.pos[k];
                         rev[col_okey[r]] += col_price[r] * (100 - col_disc[r]);
@@ -510,7 +597,7 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
             std::vector<Q3Row> top; extract_topk(rev, top);
             cb_top = top; cb_rows = cnt;
 
-            double d0=q3_ms(t0,t1), d1=q3_ms(t1,t2), d2=q3_ms(t2,t3), d3=q3_ms(t3,t4), dt=q3_ms(t0,t4);
+            double d0=q3_ms(t0,t1), d1=q3_ms(t1,t2), d2=q3_ms(t2,t3), d3=q3_ms(t3,t4), dt=q3_ms(t0,t4) + q3_join_setup_ms;
             std::cout << "  CB:   OR=" << d0 << "  NOT=" << d1 << "  AND=" << d2
                       << "  Agg=" << d3 << "  Total=" << dt << "  rows=" << cnt << std::endl;
             if (!warm) { cb_or.push_back(d0); cb_not.push_back(d1); cb_and.push_back(d2);
@@ -522,11 +609,11 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         // baseline.  CRR below adds fastunion + runOptimize.
         if (run_cr()) {
             auto t0 = clock::now();
-            roaring::Roaring comp = cr_ship[1];
-            for (int d = 2; d <= ship_or_end; d++) comp |= cr_ship[d];
+            roaring::Roaring comp = cr_ship[ship_or_start];
+            for (int d = ship_or_start + 1; d <= ship_or_end; d++) comp |= cr_ship[d];
             auto t1 = clock::now();
-            comp.flip(0, static_cast<uint64_t>(num_rows));
-            auto t2 = clock::now();
+            // NOT step elided.
+            auto t2 = t1;
             roaring::Roaring filt = comp & cr_join;
             auto t3 = clock::now();
             std::unordered_map<int64_t, int64_t> rev;
@@ -540,7 +627,7 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
             std::vector<Q3Row> top; extract_topk(rev, top);
             cr_top = top; cr_rows = cnt;
 
-            double d0=q3_ms(t0,t1), d1=q3_ms(t1,t2), d2=q3_ms(t2,t3), d3=q3_ms(t3,t4), dt=q3_ms(t0,t4);
+            double d0=q3_ms(t0,t1), d1=q3_ms(t1,t2), d2=q3_ms(t2,t3), d3=q3_ms(t3,t4), dt=q3_ms(t0,t4) + q3_join_setup_ms;
             std::cout << "  CR:   OR=" << d0 << "  NOT=" << d1 << "  AND=" << d2
                       << "  Agg=" << d3 << "  Total=" << dt << "  rows=" << cnt << std::endl;
             if (!warm) { cr_or.push_back(d0); cr_not.push_back(d1); cr_and.push_back(d2);
@@ -552,8 +639,8 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
             auto t0 = clock::now();
             roaring::Roaring comp = roaring::Roaring::fastunion(crr_ship_ptrs.size(), crr_ship_ptrs.data());
             auto t1 = clock::now();
-            comp.flip(0, static_cast<uint64_t>(num_rows));
-            auto t2 = clock::now();
+            // NOT step elided.
+            auto t2 = t1;
             roaring::Roaring filt = comp & crr_join;
             auto t3 = clock::now();
             std::unordered_map<int64_t, int64_t> rev;
@@ -567,7 +654,7 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
             std::vector<Q3Row> top; extract_topk(rev, top);
             crr_top = top; crr_rows = cnt;
 
-            double d0=q3_ms(t0,t1), d1=q3_ms(t1,t2), d2=q3_ms(t2,t3), d3=q3_ms(t3,t4), dt=q3_ms(t0,t4);
+            double d0=q3_ms(t0,t1), d1=q3_ms(t1,t2), d2=q3_ms(t2,t3), d3=q3_ms(t3,t4), dt=q3_ms(t0,t4) + q3_join_setup_ms;
             std::cout << "  CRR:  OR=" << d0 << "  NOT=" << d1 << "  AND=" << d2
                       << "  Agg=" << d3 << "  Total=" << dt << "  rows=" << cnt << std::endl;
             if (!warm) { crr_or.push_back(d0); crr_not.push_back(d1); crr_and.push_back(d2);
@@ -577,11 +664,11 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         // ===== WAH =====
         if (run_wah()) {
             auto t0 = clock::now();
-            ibis::bitvector comp = wah_ship[1]; comp.decompress();
-            for (int d = 2; d <= ship_or_end; d++) comp |= wah_ship[d];
+            ibis::bitvector comp = wah_ship[ship_or_start]; comp.decompress();
+            for (int d = ship_or_start + 1; d <= ship_or_end; d++) comp |= wah_ship[d];
             auto t1 = clock::now();
-            q3_wah_flip(&comp);
-            auto t2 = clock::now();
+            // NOT step elided.
+            auto t2 = t1;
             ibis::bitvector filt; filt.copy(comp); filt &= wah_join;
             auto t3 = clock::now();
             std::unordered_map<int64_t, int64_t> rev;
@@ -596,7 +683,7 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
             std::vector<Q3Row> top; extract_topk(rev, top);
             wah_top = top; wah_rows = cnt;
 
-            double d0=q3_ms(t0,t1), d1=q3_ms(t1,t2), d2=q3_ms(t2,t3), d3=q3_ms(t3,t4), dt=q3_ms(t0,t4);
+            double d0=q3_ms(t0,t1), d1=q3_ms(t1,t2), d2=q3_ms(t2,t3), d3=q3_ms(t3,t4), dt=q3_ms(t0,t4) + q3_join_setup_ms;
             std::cout << "  WAH:  OR=" << d0 << "  NOT=" << d1 << "  AND=" << d2
                       << "  Agg=" << d3 << "  Total=" << dt << "  rows=" << cnt << std::endl;
             if (!warm) { wah_or.push_back(d0); wah_not.push_back(d1); wah_and.push_back(d2);
@@ -604,16 +691,16 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         }
 
         // ===== EWAH =====
-        // fast_logicalor: priority-queue k-way merge (ewah-inl.h:1129).
-        // Measured ~1.5x faster than the iterative pairwise loop on
-        // 1169 dense shipdate bitmaps (Q3 SF10).
+        // fast_logicalor: priority-queue k-way merge (ewah-inl.h:1129) over
+        // 1357 dense shipdate bitmaps [1170..2526] (Q3 SF10).
         if (run_ew()) {
             auto t0 = clock::now();
             ewah::EWAHBoolArray<uint64_t> comp = ewah::fast_logicalor(
                 ew_ship_ptrs.size(), ew_ship_ptrs.data());
             auto t1 = clock::now();
+            // NOT step elided; padWithZeroes still needed so logicaland
+            // matches join sizing (ew_join is padded to num_rows).
             comp.padWithZeroes(num_rows);
-            comp.inplace_logicalnot();
             auto t2 = clock::now();
             ewah::EWAHBoolArray<uint64_t> filt;
             comp.logicaland(ew_join, filt);
@@ -629,7 +716,7 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
             std::vector<Q3Row> top; extract_topk(rev, top);
             ew_top = top; ew_rows = cnt;
 
-            double d0=q3_ms(t0,t1), d1=q3_ms(t1,t2), d2=q3_ms(t2,t3), d3=q3_ms(t3,t4), dt=q3_ms(t0,t4);
+            double d0=q3_ms(t0,t1), d1=q3_ms(t1,t2), d2=q3_ms(t2,t3), d3=q3_ms(t3,t4), dt=q3_ms(t0,t4) + q3_join_setup_ms;
             std::cout << "  EW:   OR=" << d0 << "  NOT=" << d1 << "  AND=" << d2
                       << "  Agg=" << d3 << "  Total=" << dt << "  rows=" << cnt << std::endl;
             if (!warm) { ew_or.push_back(d0); ew_not.push_back(d1); ew_and.push_back(d2);
@@ -639,12 +726,12 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         // ===== Bitset (scalar) =====
         if (run_bs()) {
             auto t0 = clock::now();
-            bs::Bitmap comp = bs_ship[1].clone();
-            for (int d = 2; d <= ship_or_end; d++)
+            bs::Bitmap comp = bs_ship[ship_or_start].clone();
+            for (int d = ship_or_start + 1; d <= ship_or_end; d++)
                 bs::or_inplace(comp, bs_ship[d], false);
             auto t1 = clock::now();
-            bs::not_inplace(comp, false);
-            auto t2 = clock::now();
+            // NOT step elided.
+            auto t2 = t1;
             bs::and_inplace(comp, bs_join, false);
             auto t3 = clock::now();
             std::unordered_map<int64_t, int64_t> rev;
@@ -664,7 +751,7 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
             std::vector<Q3Row> top; extract_topk(rev, top);
             bs_top = top; bs_rows = cnt;
 
-            double d0=q3_ms(t0,t1), d1=q3_ms(t1,t2), d2=q3_ms(t2,t3), d3=q3_ms(t3,t4), dt=q3_ms(t0,t4);
+            double d0=q3_ms(t0,t1), d1=q3_ms(t1,t2), d2=q3_ms(t2,t3), d3=q3_ms(t3,t4), dt=q3_ms(t0,t4) + q3_join_setup_ms;
             std::cout << "  BS:   OR=" << d0 << "  NOT=" << d1 << "  AND=" << d2
                       << "  Agg=" << d3 << "  Total=" << dt << "  rows=" << cnt << std::endl;
             if (!warm) { bs_or.push_back(d0); bs_not.push_back(d1); bs_and.push_back(d2);
@@ -674,12 +761,12 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         // ===== Bitset + AVX-512 =====
         if (run_bsa()) {
             auto t0 = clock::now();
-            bs::Bitmap comp = bs_ship[1].clone();
-            for (int d = 2; d <= ship_or_end; d++)
+            bs::Bitmap comp = bs_ship[ship_or_start].clone();
+            for (int d = ship_or_start + 1; d <= ship_or_end; d++)
                 bs::or_inplace(comp, bs_ship[d], true);
             auto t1 = clock::now();
-            bs::not_inplace(comp, true);
-            auto t2 = clock::now();
+            // NOT step elided.
+            auto t2 = t1;
             bs::and_inplace(comp, bs_join, true);
             auto t3 = clock::now();
             std::unordered_map<int64_t, int64_t> rev;
@@ -699,7 +786,7 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
             std::vector<Q3Row> top; extract_topk(rev, top);
             bsa_top = top; bsa_rows = cnt;
 
-            double d0=q3_ms(t0,t1), d1=q3_ms(t1,t2), d2=q3_ms(t2,t3), d3=q3_ms(t3,t4), dt=q3_ms(t0,t4);
+            double d0=q3_ms(t0,t1), d1=q3_ms(t1,t2), d2=q3_ms(t2,t3), d3=q3_ms(t3,t4), dt=q3_ms(t0,t4) + q3_join_setup_ms;
             std::cout << "  BSA:  OR=" << d0 << "  NOT=" << d1 << "  AND=" << d2
                       << "  Agg=" << d3 << "  Total=" << dt << "  rows=" << cnt << std::endl;
             if (!warm) { bsa_or.push_back(d0); bsa_not.push_back(d1); bsa_and.push_back(d2);
@@ -712,9 +799,9 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
             ConciseSet<false> comp = ConciseSet<false>::fast_logicalor(
                 con_ship_ptrs.size(), con_ship_ptrs.data());
             auto t1 = clock::now();
-            ConciseSet<false> filter = con_full.logicalandnot(comp);
-            auto t2 = clock::now();
-            ConciseSet<false> filt = filter.logicaland(con_join);
+            // NOT step elided.
+            auto t2 = t1;
+            ConciseSet<false> filt = comp.logicaland(con_join);
             auto t3 = clock::now();
             std::unordered_map<int64_t, int64_t> rev;
             size_t cnt = 0;
@@ -727,7 +814,7 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
             std::vector<Q3Row> top; extract_topk(rev, top);
             con_top = top; con_rows = cnt;
 
-            double d0=q3_ms(t0,t1), d1=q3_ms(t1,t2), d2=q3_ms(t2,t3), d3=q3_ms(t3,t4), dt=q3_ms(t0,t4);
+            double d0=q3_ms(t0,t1), d1=q3_ms(t1,t2), d2=q3_ms(t2,t3), d3=q3_ms(t3,t4), dt=q3_ms(t0,t4) + q3_join_setup_ms;
             std::cout << "  CON:  OR=" << d0 << "  NOT=" << d1 << "  AND=" << d2
                       << "  Agg=" << d3 << "  Total=" << dt << "  rows=" << cnt << std::endl;
             if (!warm) { con_or.push_back(d0); con_not.push_back(d1); con_and.push_back(d2);
@@ -853,14 +940,14 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
     // -----------------------------------------------------------------------
     // 8. Statistics tables + CSV (mirrors Q10 layout).
     // -----------------------------------------------------------------------
-    auto cb_or_s=q3_stats(cb_or),  cb_not_s=q3_stats(cb_not),  cb_and_s=q3_stats(cb_and),  cb_agg_s=q3_stats(cb_agg),  cb_tot_s=q3_stats(cb_tot);
-    auto cr_or_s=q3_stats(cr_or),  cr_not_s=q3_stats(cr_not),  cr_and_s=q3_stats(cr_and),  cr_agg_s=q3_stats(cr_agg),  cr_tot_s=q3_stats(cr_tot);
-    auto crr_or_s=q3_stats(crr_or),crr_not_s=q3_stats(crr_not),crr_and_s=q3_stats(crr_and),crr_agg_s=q3_stats(crr_agg),crr_tot_s=q3_stats(crr_tot);
-    auto wah_or_s=q3_stats(wah_or),wah_not_s=q3_stats(wah_not),wah_and_s=q3_stats(wah_and),wah_agg_s=q3_stats(wah_agg),wah_tot_s=q3_stats(wah_tot);
-    auto ew_or_s=q3_stats(ew_or),  ew_not_s=q3_stats(ew_not),  ew_and_s=q3_stats(ew_and),  ew_agg_s=q3_stats(ew_agg),  ew_tot_s=q3_stats(ew_tot);
-    auto bs_or_s=q3_stats(bs_or),  bs_not_s=q3_stats(bs_not),  bs_and_s=q3_stats(bs_and),  bs_agg_s=q3_stats(bs_agg),  bs_tot_s=q3_stats(bs_tot);
-    auto bsa_or_s=q3_stats(bsa_or),bsa_not_s=q3_stats(bsa_not),bsa_and_s=q3_stats(bsa_and),bsa_agg_s=q3_stats(bsa_agg),bsa_tot_s=q3_stats(bsa_tot);
-    auto con_or_s=q3_stats(con_or),con_not_s=q3_stats(con_not),con_and_s=q3_stats(con_and),con_agg_s=q3_stats(con_agg),con_tot_s=q3_stats(con_tot);
+    auto cb_or_s=bm_bench::compute_stats(cb_or),  cb_not_s=bm_bench::compute_stats(cb_not),  cb_and_s=bm_bench::compute_stats(cb_and),  cb_agg_s=bm_bench::compute_stats(cb_agg),  cb_tot_s=bm_bench::compute_stats(cb_tot);
+    auto cr_or_s=bm_bench::compute_stats(cr_or),  cr_not_s=bm_bench::compute_stats(cr_not),  cr_and_s=bm_bench::compute_stats(cr_and),  cr_agg_s=bm_bench::compute_stats(cr_agg),  cr_tot_s=bm_bench::compute_stats(cr_tot);
+    auto crr_or_s=bm_bench::compute_stats(crr_or),crr_not_s=bm_bench::compute_stats(crr_not),crr_and_s=bm_bench::compute_stats(crr_and),crr_agg_s=bm_bench::compute_stats(crr_agg),crr_tot_s=bm_bench::compute_stats(crr_tot);
+    auto wah_or_s=bm_bench::compute_stats(wah_or),wah_not_s=bm_bench::compute_stats(wah_not),wah_and_s=bm_bench::compute_stats(wah_and),wah_agg_s=bm_bench::compute_stats(wah_agg),wah_tot_s=bm_bench::compute_stats(wah_tot);
+    auto ew_or_s=bm_bench::compute_stats(ew_or),  ew_not_s=bm_bench::compute_stats(ew_not),  ew_and_s=bm_bench::compute_stats(ew_and),  ew_agg_s=bm_bench::compute_stats(ew_agg),  ew_tot_s=bm_bench::compute_stats(ew_tot);
+    auto bs_or_s=bm_bench::compute_stats(bs_or),  bs_not_s=bm_bench::compute_stats(bs_not),  bs_and_s=bm_bench::compute_stats(bs_and),  bs_agg_s=bm_bench::compute_stats(bs_agg),  bs_tot_s=bm_bench::compute_stats(bs_tot);
+    auto bsa_or_s=bm_bench::compute_stats(bsa_or),bsa_not_s=bm_bench::compute_stats(bsa_not),bsa_and_s=bm_bench::compute_stats(bsa_and),bsa_agg_s=bm_bench::compute_stats(bsa_agg),bsa_tot_s=bm_bench::compute_stats(bsa_tot);
+    auto con_or_s=bm_bench::compute_stats(con_or),con_not_s=bm_bench::compute_stats(con_not),con_and_s=bm_bench::compute_stats(con_and),con_agg_s=bm_bench::compute_stats(con_agg),con_tot_s=bm_bench::compute_stats(con_tot);
 
     int measured = Q3_ITERATIONS - Q3_WARMUP;
 
@@ -870,7 +957,7 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         std::cout << "================================================================" << std::endl;
         std::cout << "                  CB (ms)         CR (ms)        CRR (ms)        WAH (ms)        EW (ms)" << std::endl;
         std::cout << "  -----------------------------------------------------------------------------------------" << std::endl;
-        auto pr = [](const char* l, Q3Stats& a, Q3Stats& b, Q3Stats& c, Q3Stats& d, Q3Stats& e) {
+        auto pr = [](const char* l, bm_bench::Stats& a, bm_bench::Stats& b, bm_bench::Stats& c, bm_bench::Stats& d, bm_bench::Stats& e) {
             std::cout << "  " << std::left << std::setw(14) << l << std::right
                 << std::setw(8) << a.median << " +/- " << std::setw(5) << a.stddev
                 << "  " << std::setw(8) << b.median << " +/- " << std::setw(5) << b.stddev
@@ -895,7 +982,7 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         std::cout << "================================================================" << std::endl;
         std::cout << "                  BS (ms)         BSA (ms)        Concise (ms)     BS vs WAH   BSA vs WAH   CON vs WAH" << std::endl;
         std::cout << "  ----------------------------------------------------------------------------------------------" << std::endl;
-        auto bp = [](const char* l, Q3Stats& w, Q3Stats& b, Q3Stats& ba, Q3Stats& c) {
+        auto bp = [](const char* l, bm_bench::Stats& w, bm_bench::Stats& b, bm_bench::Stats& ba, bm_bench::Stats& c) {
             double s_b = (b.median > 0) ? w.median/b.median : 0;
             double s_ba = (ba.median > 0) ? w.median/ba.median : 0;
             double s_c = (c.median > 0) ? w.median/c.median : 0;
@@ -917,7 +1004,7 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
                   << "  CON rows: " << con_rows << std::endl;
         std::cout << "================================================================\n" << std::endl;
     } else {
-        Q3Stats *sel_or=nullptr, *sel_not=nullptr, *sel_and=nullptr, *sel_agg=nullptr, *sel_tot=nullptr;
+        bm_bench::Stats *sel_or=nullptr, *sel_not=nullptr, *sel_and=nullptr, *sel_agg=nullptr, *sel_tot=nullptr;
         size_t sel_rows = 0;
         switch (Q3_BM) {
             case Q3BmType::WAH: sel_or=&wah_or_s; sel_not=&wah_not_s; sel_and=&wah_and_s; sel_agg=&wah_agg_s; sel_tot=&wah_tot_s; sel_rows=wah_rows; break;
@@ -936,7 +1023,7 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         std::cout << "================================================================" << std::endl;
         std::cout << "                  median(ms)   stddev    min      max" << std::endl;
         std::cout << "  -------------------------------------------------------------" << std::endl;
-        auto pr_one = [](const char* l, Q3Stats& s) {
+        auto pr_one = [](const char* l, bm_bench::Stats& s) {
             std::cout << "  " << std::left << std::setw(16) << l << std::right
                       << std::setw(9) << s.median << std::setw(10) << s.stddev
                       << std::setw(10) << s.min_val << std::setw(10) << s.max_val << std::endl;
@@ -969,8 +1056,8 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
                 << "concise_median_ms,concise_stddev_ms,concise_min_ms,concise_max_ms,"
                 << "cb_vs_wah,cr_vs_wah,crr_vs_wah,ew_vs_wah,bs_vs_wah,bsa_vs_wah,con_vs_wah\n";
             auto row = [&](const std::string& op,
-                           Q3Stats& w, Q3Stats& c, Q3Stats& r, Q3Stats& rr, Q3Stats& e,
-                           Q3Stats& b, Q3Stats& ba, Q3Stats& co) {
+                           bm_bench::Stats& w, bm_bench::Stats& c, bm_bench::Stats& r, bm_bench::Stats& rr, bm_bench::Stats& e,
+                           bm_bench::Stats& b, bm_bench::Stats& ba, bm_bench::Stats& co) {
                 auto sp = [](double w, double v) { return v > 0 ? w/v : 0.0; };
                 csv << sf << "," << op << ","
                     << w.median << "," << w.stddev << "," << w.min_val << "," << w.max_val << ","

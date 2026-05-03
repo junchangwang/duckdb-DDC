@@ -170,18 +170,6 @@ static std::once_flag q10_once_flag;
 // ===========================================================================
 // Used by the ComBit post-AND decode to extract row indices from each
 // literal AND byte.  Pattern shared with Q5/Q6.
-struct Q10ByteEntry { uint8_t count; uint8_t pos[8]; };
-static Q10ByteEntry q10_byte_lut[256];
-static bool q10_byte_lut_init = []() {
-    for (int v = 0; v < 256; v++) {
-        uint8_t c = 0;
-        for (int b = 7; b >= 0; b--)
-            if (v & (1 << b)) q10_byte_lut[v].pos[c++] = 7 - b;
-        q10_byte_lut[v].count = c;
-    }
-    return true;
-}();
-
 // ===========================================================================
 // Bitmap loaders (same binary formats as Q1/Q5/Q6)
 // ===========================================================================
@@ -213,26 +201,6 @@ static ewah::EWAHBoolArray<uint64_t> q10_load_ew(const std::string& p) {
     uint64_t bits; in.read(reinterpret_cast<char*>(&bits), 8);
     b.read(in);
     return b;
-}
-
-// ===========================================================================
-// Stats helper (median / stddev / min / max)
-// ===========================================================================
-struct Q10Stats { double median = 0, stddev = 0, min_val = 0, max_val = 0; };
-
-static Q10Stats q10_compute_stats(std::vector<double> v) {
-    Q10Stats s;
-    if (v.empty()) return s;
-    std::sort(v.begin(), v.end());
-    size_t n = v.size();
-    s.median  = (n % 2 == 0) ? (v[n/2 - 1] + v[n/2]) / 2.0 : v[n/2];
-    s.min_val = v.front();
-    s.max_val = v.back();
-    double mean = std::accumulate(v.begin(), v.end(), 0.0) / n;
-    double sq = 0;
-    for (auto x : v) sq += (x - mean) * (x - mean);
-    s.stddev = std::sqrt(sq / n);
-    return s;
 }
 
 // ===========================================================================
@@ -512,6 +480,37 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
     }
 
     // -----------------------------------------------------------------------
+    // 4.5 Build orderdate bitmaps dynamically (TPC-H 1.5.7).
+    //     Per-lineitem orderdate is multi-table (lineitem⋈orders) so we
+    //     can no longer load it from disk.  SQL JOIN at startup, bucket
+    //     into per-day position lists, encode for each backend.
+    // -----------------------------------------------------------------------
+    std::vector<std::vector<uint32_t>> q10_date_pos(Q10_DATE_END + 1);
+    double q10_join_setup_ms = 0;
+    {
+        auto t0 = clock::now();
+        Connection con(*context.client.db);
+        auto r = con.Query(
+            "SELECT (o.o_orderdate - DATE '1992-01-01')::INT "
+            "FROM lineitem l JOIN orders o ON l.l_orderkey = o.o_orderkey "
+            "ORDER BY l.rowid");
+        if (r && !r->HasError()) {
+            size_t pos = 0;
+            while (auto chunk = r->Fetch()) {
+                auto day = FlatVector::GetData<int32_t>(chunk->data[0]);
+                for (idx_t j = 0; j < chunk->size(); j++, pos++) {
+                    int d = day[j];
+                    if (d >= Q10_DATE_START && d <= Q10_DATE_END)
+                        q10_date_pos[d].push_back(static_cast<uint32_t>(pos));
+                }
+            }
+            q10_join_setup_ms = q10_ms(t0, clock::now());
+            std::cout << "[Build Q10 orderdate] " << pos << " lineitems scanned in "
+                      << q10_join_setup_ms << " ms (counted in Total)" << std::endl;
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // 5. Load bitmaps (per-backend gated + timed)
     // -----------------------------------------------------------------------
     std::cout << "\n[Load] Loading bitmaps (mode=" << q10_bm_label() << ")..." << std::endl;
@@ -526,8 +525,14 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
     if (run_cb()) {
         auto t0 = clock::now();
         cb_date.resize(Q10_DATE_END + 1);
-        for (int d = Q10_DATE_START; d <= Q10_DATE_END; d++)
-            cb_date[d] = q10_load_cb(Q10_Q5_CB_DIR + "/orderdate/" + std::to_string(d) + ".bm");
+        std::vector<bool> mask(num_lineitem_rows, false);
+        std::vector<uint32_t>* prev = nullptr;
+        for (int d = Q10_DATE_START; d <= Q10_DATE_END; d++) {
+            if (prev) for (uint32_t p : *prev) mask[p] = false;
+            for (uint32_t p : q10_date_pos[d]) mask[p] = true;
+            cb_date[d] = ComBit::compress(mask, false);
+            prev = &q10_date_pos[d];
+        }
         cb_rf = q10_load_cb(Q10_Q1_CB_DIR + "/returnflag/" + std::to_string(Q10_RF_R_IDX) + ".bm");
 
         cb_date_ptrs.reserve(n_dates);
@@ -542,8 +547,10 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
     if (run_cr()) {
         auto t0 = clock::now();
         cr_date.resize(Q10_DATE_END + 1);
-        for (int d = Q10_DATE_START; d <= Q10_DATE_END; d++)
-            cr_date[d] = q10_load_cr(Q10_Q5_CR_DIR + "/orderdate/" + std::to_string(d) + ".bm");
+        for (int d = Q10_DATE_START; d <= Q10_DATE_END; d++) {
+            auto& pos = q10_date_pos[d];
+            if (!pos.empty()) cr_date[d].addMany(pos.size(), pos.data());
+        }
         cr_rf = q10_load_cr(Q10_Q1_CR_DIR + "/returnflag/" + std::to_string(Q10_RF_R_IDX) + ".bm");
         cr_load_ms = q10_ms(t0, clock::now());
     }
@@ -557,7 +564,8 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         auto t0 = clock::now();
         crr_date.resize(Q10_DATE_END + 1);
         for (int d = Q10_DATE_START; d <= Q10_DATE_END; d++) {
-            crr_date[d] = q10_load_cr(Q10_Q5_CR_DIR + "/orderdate/" + std::to_string(d) + ".bm");
+            auto& pos = q10_date_pos[d];
+            if (!pos.empty()) crr_date[d].addMany(pos.size(), pos.data());
             crr_date[d].runOptimize();
         }
         crr_rf = q10_load_cr(Q10_Q1_CR_DIR + "/returnflag/" + std::to_string(Q10_RF_R_IDX) + ".bm");
@@ -575,8 +583,17 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
     if (run_wah()) {
         auto t0 = clock::now();
         wah_date.resize(Q10_DATE_END + 1);
+        auto wah_build = [&](ibis::bitvector& w, const std::vector<uint32_t>& pos) {
+            size_t k = 0;
+            for (size_t i = 0; i < num_lineitem_rows; i++) {
+                bool b = (k < pos.size() && pos[k] == i);
+                if (b) k++;
+                w += (b ? 1 : 0);
+            }
+            w.compress();
+        };
         for (int d = Q10_DATE_START; d <= Q10_DATE_END; d++)
-            wah_date[d] = q10_load_wah(Q10_Q5_WAH_DIR + "/orderdate/" + std::to_string(d) + ".bm");
+            wah_build(wah_date[d], q10_date_pos[d]);
         wah_rf = q10_load_wah(Q10_Q1_WAH_DIR + "/returnflag/" + std::to_string(Q10_RF_R_IDX) + ".bm");
         wah_load_ms = q10_ms(t0, clock::now());
     }
@@ -591,8 +608,12 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
     if (run_ew()) {
         auto t0 = clock::now();
         ew_date.resize(Q10_DATE_END + 1);
+        auto ew_build = [&](ewah::EWAHBoolArray<uint64_t>& e, const std::vector<uint32_t>& pos) {
+            for (uint32_t p : pos) e.set(p);
+            if (e.sizeInBits() < num_lineitem_rows) e.padWithZeroes(num_lineitem_rows);
+        };
         for (int d = Q10_DATE_START; d <= Q10_DATE_END; d++)
-            ew_date[d] = q10_load_ew(Q10_Q5_EW_DIR + "/orderdate/" + std::to_string(d) + ".bm");
+            ew_build(ew_date[d], q10_date_pos[d]);
         ew_rf = q10_load_ew(Q10_Q1_EW_DIR + "/returnflag/" + std::to_string(Q10_RF_R_IDX) + ".bm");
         ew_date_ptrs.reserve(Q10_DATE_END - Q10_DATE_START + 1);
         for (int d = Q10_DATE_START; d <= Q10_DATE_END; d++)
@@ -607,8 +628,12 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
     if (run_bs() || run_bsa()) {
         auto t0 = clock::now();
         bs_date.resize(Q10_DATE_END + 1);
+        auto bs_build = [&](bs::Bitmap& b, const std::vector<uint32_t>& pos) {
+            b.alloc_for_bits(num_lineitem_rows);
+            for (uint32_t p : pos) b.words[p / 64] |= uint64_t(1) << (p % 64);
+        };
         for (int d = Q10_DATE_START; d <= Q10_DATE_END; d++)
-            bs_date[d] = bm_bench::load_bitmap_from_croaring(Q10_Q5_CR_DIR + "/orderdate/" + std::to_string(d) + ".bm");
+            bs_build(bs_date[d], q10_date_pos[d]);
         bs_rf = bm_bench::load_bitmap_from_croaring(Q10_Q1_CR_DIR + "/returnflag/" + std::to_string(Q10_RF_R_IDX) + ".bm");
         bs_load_ms = q10_ms(t0, clock::now());
     }
@@ -622,7 +647,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         auto t0 = clock::now();
         con_date.resize(Q10_DATE_END + 1);
         for (int d = Q10_DATE_START; d <= Q10_DATE_END; d++)
-            con_date[d] = bm_bench::load_concise_from_croaring(Q10_Q5_CR_DIR + "/orderdate/" + std::to_string(d) + ".bm");
+            for (uint32_t p : q10_date_pos[d]) con_date[d].add(p);
         con_rf = bm_bench::load_concise_from_croaring(Q10_Q1_CR_DIR + "/returnflag/" + std::to_string(Q10_RF_R_IDX) + ".bm");
         con_date_ptrs.reserve(n_dates);
         for (int d = Q10_DATE_START; d <= Q10_DATE_END; d++) con_date_ptrs.push_back(&con_date[d]);
@@ -780,7 +805,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
             cb_or.for_each_literal(
                 [&](uint32_t word_pos, uint8_t val) {
                     size_t rbase = static_cast<size_t>(word_pos) * 8;
-                    const auto& e = q10_byte_lut[val];
+                    const auto& e = bm_bench::byte_lut[val];
                     for (int k = 0; k < e.count; k++) {
                         size_t row = rbase + e.pos[k];
                         int64_t custkey = ocust[ok[row]];
@@ -798,7 +823,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
             cb_rows = cnt;
 
             double d_or = q10_ms(t0,t1), d_and = q10_ms(t1,t2),
-                   d_tk = q10_ms(t2,t3), d_tot = q10_ms(t0,t3);
+                   d_tk = q10_ms(t2,t3), d_tot = q10_ms(t0,t3) + q10_join_setup_ms;
             std::cout << "  CB:   OR=" << d_or << "  AND+Agg=" << d_and
                       << "  TopK=" << d_tk  << "  Total=" << d_tot
                       << "  rows=" << cnt << std::endl;
@@ -840,7 +865,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
             cr_rows = cnt;
 
             double d_or = q10_ms(t0,t1), d_and = q10_ms(t1,t2),
-                   d_tk = q10_ms(t2,t3), d_tot = q10_ms(t0,t3);
+                   d_tk = q10_ms(t2,t3), d_tot = q10_ms(t0,t3) + q10_join_setup_ms;
             std::cout << "  CR:   OR=" << d_or << "  AND+Agg=" << d_and
                       << "  TopK=" << d_tk  << "  Total=" << d_tot
                       << "  rows=" << cnt << std::endl;
@@ -881,7 +906,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
             crr_rows = cnt;
 
             double d_or = q10_ms(t0,t1), d_and = q10_ms(t1,t2),
-                   d_tk = q10_ms(t2,t3), d_tot = q10_ms(t0,t3);
+                   d_tk = q10_ms(t2,t3), d_tot = q10_ms(t0,t3) + q10_join_setup_ms;
             std::cout << "  CRR:  OR=" << d_or << "  AND+Agg=" << d_and
                       << "  TopK=" << d_tk  << "  Total=" << d_tot
                       << "  rows=" << cnt << std::endl;
@@ -926,7 +951,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
             wah_rows = cnt;
 
             double d_or = q10_ms(t0,t1), d_and = q10_ms(t1,t2),
-                   d_tk = q10_ms(t2,t3), d_tot = q10_ms(t0,t3);
+                   d_tk = q10_ms(t2,t3), d_tot = q10_ms(t0,t3) + q10_join_setup_ms;
             std::cout << "  WAH:  OR=" << d_or << "  AND+Agg=" << d_and
                       << "  TopK=" << d_tk  << "  Total=" << d_tot
                       << "  rows=" << cnt << std::endl;
@@ -969,7 +994,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
             ew_rows = cnt;
 
             double d_or = q10_ms(t0,t1), d_and = q10_ms(t1,t2),
-                   d_tk = q10_ms(t2,t3), d_tot = q10_ms(t0,t3);
+                   d_tk = q10_ms(t2,t3), d_tot = q10_ms(t0,t3) + q10_join_setup_ms;
             std::cout << "  EW:   OR=" << d_or << "  AND+Agg=" << d_and
                       << "  TopK=" << d_tk  << "  Total=" << d_tot
                       << "  rows=" << cnt << std::endl;
@@ -1020,7 +1045,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
             bs_rows = cnt;
 
             double d_or = q10_ms(t0,t1), d_and = q10_ms(t1,t2),
-                   d_tk = q10_ms(t2,t3), d_tot = q10_ms(t0,t3);
+                   d_tk = q10_ms(t2,t3), d_tot = q10_ms(t0,t3) + q10_join_setup_ms;
             std::cout << "  BS:   OR=" << d_or << "  AND+Agg=" << d_and
                       << "  TopK=" << d_tk  << "  Total=" << d_tot
                       << "  rows=" << cnt << std::endl;
@@ -1070,7 +1095,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
             bsa_rows = cnt;
 
             double d_or = q10_ms(t0,t1), d_and = q10_ms(t1,t2),
-                   d_tk = q10_ms(t2,t3), d_tot = q10_ms(t0,t3);
+                   d_tk = q10_ms(t2,t3), d_tot = q10_ms(t0,t3) + q10_join_setup_ms;
             std::cout << "  BSA:  OR=" << d_or << "  AND+Agg=" << d_and
                       << "  TopK=" << d_tk  << "  Total=" << d_tot
                       << "  rows=" << cnt << std::endl;
@@ -1114,7 +1139,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
             con_rows = cnt;
 
             double d_or = q10_ms(t0,t1), d_and = q10_ms(t1,t2),
-                   d_tk = q10_ms(t2,t3), d_tot = q10_ms(t0,t3);
+                   d_tk = q10_ms(t2,t3), d_tot = q10_ms(t0,t3) + q10_join_setup_ms;
             std::cout << "  CON:  OR=" << d_or << "  AND+Agg=" << d_and
                       << "  TopK=" << d_tk  << "  Total=" << d_tot
                       << "  rows=" << cnt << std::endl;
@@ -1297,45 +1322,45 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
     // -----------------------------------------------------------------------
     // 12. Statistics summary — same table layout as Q5
     // -----------------------------------------------------------------------
-    auto cb_or_s   = q10_compute_stats(cb_or_times);
-    auto cb_and_s  = q10_compute_stats(cb_and_times);
-    auto cb_tk_s   = q10_compute_stats(cb_topk_times);
-    auto cb_tot_s  = q10_compute_stats(cb_total_times);
+    auto cb_or_s   = bm_bench::compute_stats(cb_or_times);
+    auto cb_and_s  = bm_bench::compute_stats(cb_and_times);
+    auto cb_tk_s   = bm_bench::compute_stats(cb_topk_times);
+    auto cb_tot_s  = bm_bench::compute_stats(cb_total_times);
 
-    auto cr_or_s   = q10_compute_stats(cr_or_times);
-    auto cr_and_s  = q10_compute_stats(cr_and_times);
-    auto cr_tk_s   = q10_compute_stats(cr_topk_times);
-    auto cr_tot_s  = q10_compute_stats(cr_total_times);
+    auto cr_or_s   = bm_bench::compute_stats(cr_or_times);
+    auto cr_and_s  = bm_bench::compute_stats(cr_and_times);
+    auto cr_tk_s   = bm_bench::compute_stats(cr_topk_times);
+    auto cr_tot_s  = bm_bench::compute_stats(cr_total_times);
 
-    auto crr_or_s  = q10_compute_stats(crr_or_times);
-    auto crr_and_s = q10_compute_stats(crr_and_times);
-    auto crr_tk_s  = q10_compute_stats(crr_topk_times);
-    auto crr_tot_s = q10_compute_stats(crr_total_times);
+    auto crr_or_s  = bm_bench::compute_stats(crr_or_times);
+    auto crr_and_s = bm_bench::compute_stats(crr_and_times);
+    auto crr_tk_s  = bm_bench::compute_stats(crr_topk_times);
+    auto crr_tot_s = bm_bench::compute_stats(crr_total_times);
 
-    auto wah_or_s  = q10_compute_stats(wah_or_times);
-    auto wah_and_s = q10_compute_stats(wah_and_times);
-    auto wah_tk_s  = q10_compute_stats(wah_topk_times);
-    auto wah_tot_s = q10_compute_stats(wah_total_times);
+    auto wah_or_s  = bm_bench::compute_stats(wah_or_times);
+    auto wah_and_s = bm_bench::compute_stats(wah_and_times);
+    auto wah_tk_s  = bm_bench::compute_stats(wah_topk_times);
+    auto wah_tot_s = bm_bench::compute_stats(wah_total_times);
 
-    auto ew_or_s   = q10_compute_stats(ew_or_times);
-    auto ew_and_s  = q10_compute_stats(ew_and_times);
-    auto ew_tk_s   = q10_compute_stats(ew_topk_times);
-    auto ew_tot_s  = q10_compute_stats(ew_total_times);
+    auto ew_or_s   = bm_bench::compute_stats(ew_or_times);
+    auto ew_and_s  = bm_bench::compute_stats(ew_and_times);
+    auto ew_tk_s   = bm_bench::compute_stats(ew_topk_times);
+    auto ew_tot_s  = bm_bench::compute_stats(ew_total_times);
 
-    auto bs_or_s   = q10_compute_stats(bs_or_times);
-    auto bs_and_s  = q10_compute_stats(bs_and_times);
-    auto bs_tk_s   = q10_compute_stats(bs_topk_times);
-    auto bs_tot_s  = q10_compute_stats(bs_total_times);
+    auto bs_or_s   = bm_bench::compute_stats(bs_or_times);
+    auto bs_and_s  = bm_bench::compute_stats(bs_and_times);
+    auto bs_tk_s   = bm_bench::compute_stats(bs_topk_times);
+    auto bs_tot_s  = bm_bench::compute_stats(bs_total_times);
 
-    auto bsa_or_s  = q10_compute_stats(bsa_or_times);
-    auto bsa_and_s = q10_compute_stats(bsa_and_times);
-    auto bsa_tk_s  = q10_compute_stats(bsa_topk_times);
-    auto bsa_tot_s = q10_compute_stats(bsa_total_times);
+    auto bsa_or_s  = bm_bench::compute_stats(bsa_or_times);
+    auto bsa_and_s = bm_bench::compute_stats(bsa_and_times);
+    auto bsa_tk_s  = bm_bench::compute_stats(bsa_topk_times);
+    auto bsa_tot_s = bm_bench::compute_stats(bsa_total_times);
 
-    auto con_or_s  = q10_compute_stats(con_or_times);
-    auto con_and_s = q10_compute_stats(con_and_times);
-    auto con_tk_s  = q10_compute_stats(con_topk_times);
-    auto con_tot_s = q10_compute_stats(con_total_times);
+    auto con_or_s  = bm_bench::compute_stats(con_or_times);
+    auto con_and_s = bm_bench::compute_stats(con_and_times);
+    auto con_tk_s  = bm_bench::compute_stats(con_topk_times);
+    auto con_tot_s = bm_bench::compute_stats(con_total_times);
 
     int measured = Q10_ITERATIONS - Q10_WARMUP;
 
@@ -1346,8 +1371,8 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         std::cout << "                  CB (ms)         CR (ms)        CRR (ms)        WAH (ms)        EW (ms)" << std::endl;
         std::cout << "  -----------------------------------------------------------------------------------------" << std::endl;
 
-        auto print_row = [](const char* label, Q10Stats& cb, Q10Stats& cr,
-                            Q10Stats& crr, Q10Stats& wah, Q10Stats& ew) {
+        auto print_row = [](const char* label, bm_bench::Stats& cb, bm_bench::Stats& cr,
+                            bm_bench::Stats& crr, bm_bench::Stats& wah, bm_bench::Stats& ew) {
             std::cout << "  " << std::left << std::setw(14) << label
                       << std::right
                       << std::setw(8) << cb.median  << " +/- " << std::setw(5) << cb.stddev
@@ -1382,8 +1407,8 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         std::cout << "                  BS (ms)         BSA (ms)        Concise (ms)     BS vs WAH   BSA vs WAH   CON vs WAH" << std::endl;
         std::cout << "  ----------------------------------------------------------------------------------------------" << std::endl;
 
-        auto print_baseline_row = [](const char* label, Q10Stats& w,
-                                     Q10Stats& b, Q10Stats& ba, Q10Stats& c) {
+        auto print_baseline_row = [](const char* label, bm_bench::Stats& w,
+                                     bm_bench::Stats& b, bm_bench::Stats& ba, bm_bench::Stats& c) {
             double bs_sp  = (b.median  > 0) ? w.median / b.median  : 0;
             double bsa_sp = (ba.median > 0) ? w.median / ba.median : 0;
             double con_sp = (c.median  > 0) ? w.median / c.median  : 0;
@@ -1407,7 +1432,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
                   << "  CON rows: " << con_rows << std::endl;
         std::cout << "================================================================\n" << std::endl;
     } else {
-        Q10Stats *sel_or = nullptr, *sel_and = nullptr, *sel_tk = nullptr, *sel_tot = nullptr;
+        bm_bench::Stats *sel_or = nullptr, *sel_and = nullptr, *sel_tk = nullptr, *sel_tot = nullptr;
         size_t sel_rows = 0;
         switch (Q10_BM) {
             case Q10BmType::WAH: sel_or = &wah_or_s; sel_and = &wah_and_s;
@@ -1443,7 +1468,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         std::cout << "================================================================" << std::endl;
         std::cout << "                  median(ms)   stddev    min      max" << std::endl;
         std::cout << "  -------------------------------------------------------------" << std::endl;
-        auto print_single = [](const char* label, Q10Stats& s) {
+        auto print_single = [](const char* label, bm_bench::Stats& s) {
             std::cout << "  " << std::left << std::setw(16) << label
                       << std::right << std::setw(9)  << s.median
                       << std::setw(10) << s.stddev
@@ -1481,9 +1506,9 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
                 << "concise_median_ms,concise_stddev_ms,concise_min_ms,concise_max_ms\n";
 
             auto csv_row = [&](const std::string& op,
-                               Q10Stats& cb, Q10Stats& cr, Q10Stats& crr,
-                               Q10Stats& wah, Q10Stats& ew,
-                               Q10Stats& b, Q10Stats& ba, Q10Stats& co) {
+                               bm_bench::Stats& cb, bm_bench::Stats& cr, bm_bench::Stats& crr,
+                               bm_bench::Stats& wah, bm_bench::Stats& ew,
+                               bm_bench::Stats& b, bm_bench::Stats& ba, bm_bench::Stats& co) {
                 csv << sf_label << "," << op << ","
                     << cb.median  << "," << cb.stddev  << "," << cb.min_val  << "," << cb.max_val  << ","
                     << cr.median  << "," << cr.stddev  << "," << cr.min_val  << "," << cr.max_val  << ","
