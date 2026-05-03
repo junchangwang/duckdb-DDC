@@ -213,6 +213,30 @@ public:
     }
     template <typename F>
     void for_each_key(F&& f) const { for (auto& [k, _] : index_) f(k); }
+
+    // K-way OR via roaring::Roaring::fastunion (priority-queue merge,
+    // O(total_cardinality * log K) instead of pairwise O(N * total_card)).
+    // This is the path that lets CRoaringRun beat plain CRoaring on
+    // multi-OR-heavy queries (Q5: 28k orderkey OR, Q1: 2437 day OR).
+    // Returns the union; callers AND the result with sibling bitmaps.
+    template <typename Iterable>
+    roaring::Roaring or_many(const Iterable& keys) const {
+        std::vector<const roaring::Roaring*> ptrs;
+        ptrs.reserve(index_.size());
+        for (auto& k : keys) {
+            auto it = index_.find(static_cast<int64_t>(k));
+            if (it != index_.end()) ptrs.push_back(&it->second);
+        }
+        if (ptrs.empty()) return roaring::Roaring();
+        return roaring::Roaring::fastunion(ptrs.size(), ptrs.data());
+    }
+    roaring::Roaring or_range(int64_t lo, int64_t hi) const {
+        std::vector<const roaring::Roaring*> ptrs;
+        for (auto& [k, r] : index_)
+            if (k >= lo && k <= hi) ptrs.push_back(&r);
+        if (ptrs.empty()) return roaring::Roaring();
+        return roaring::Roaring::fastunion(ptrs.size(), ptrs.data());
+    }
     size_t num_keys() const override { return index_.size(); }
     size_t num_rows() const override { return num_rows_; }
     size_t storage_bytes() const override {
@@ -331,6 +355,28 @@ public:
     }
     template <typename F>
     void for_each_key(F&& f) const { for (auto& [k, _] : index_) f(k); }
+
+    // K-way OR via ewah::fast_logicalor (priority-queue merge).  Always
+    // preferred over pairwise logicalor for multi-OR — it's the EWAH
+    // counterpart of CRR's fastunion.
+    template <typename Iterable>
+    EWBA or_many(const Iterable& keys) const {
+        std::vector<const EWBA*> ptrs;
+        ptrs.reserve(index_.size());
+        for (auto& k : keys) {
+            auto it = index_.find(static_cast<int64_t>(k));
+            if (it != index_.end()) ptrs.push_back(&it->second);
+        }
+        if (ptrs.empty()) return EWBA();
+        return ewah::fast_logicalor(ptrs.size(), ptrs.data());
+    }
+    EWBA or_range(int64_t lo, int64_t hi) const {
+        std::vector<const EWBA*> ptrs;
+        for (auto& [k, e] : index_)
+            if (k >= lo && k <= hi) ptrs.push_back(&e);
+        if (ptrs.empty()) return EWBA();
+        return ewah::fast_logicalor(ptrs.size(), ptrs.data());
+    }
     size_t num_keys() const override { return index_.size(); }
     size_t num_rows() const override { return num_rows_; }
     size_t storage_bytes() const override {
@@ -378,6 +424,27 @@ public:
     }
     template <typename F>
     void for_each_key(F&& f) const { for (auto& [k, _] : index_) f(k); }
+
+    // K-way OR via ConciseSet::fast_logicalor (priority-queue merge).
+    // Concise counterpart of CRR fastunion / EWAH fast_logicalor.
+    template <typename Iterable>
+    CS or_many(const Iterable& keys) const {
+        std::vector<const CS*> ptrs;
+        ptrs.reserve(index_.size());
+        for (auto& k : keys) {
+            auto it = index_.find(static_cast<int64_t>(k));
+            if (it != index_.end()) ptrs.push_back(&it->second);
+        }
+        if (ptrs.empty()) return CS();
+        return CS::fast_logicalor(ptrs.size(), ptrs.data());
+    }
+    CS or_range(int64_t lo, int64_t hi) const {
+        std::vector<const CS*> ptrs;
+        for (auto& [k, c] : index_)
+            if (k >= lo && k <= hi) ptrs.push_back(&c);
+        if (ptrs.empty()) return CS();
+        return CS::fast_logicalor(ptrs.size(), ptrs.data());
+    }
     size_t num_keys() const override { return index_.size(); }
     size_t num_rows() const override { return num_rows_; }
     size_t storage_bytes() const override {

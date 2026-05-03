@@ -247,19 +247,23 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
         q6_built.store(true);
         return;
     }
-    // ---- CRoaring / CRoaringRun ----
+    // ---- CRoaring (pairwise) / CRoaringRun (fastunion) ----
     if (auto* cr_ship = dynamic_cast<bm_index::IndexedCRoaring*>(idx_ship_ge)) {
         auto* cr_disc_x = dynamic_cast<bm_index::IndexedCRoaring*>(idx_disc);
         auto* cr_qty_x  = dynamic_cast<bm_index::IndexedCRoaring*>(idx_qty);
         if (!cr_disc_x || !cr_qty_x) { std::cerr << "[Q6] CR type mismatch.\n"; return; }
+        const bool use_fastunion = cr_ship->run_optimized();
 
         roaring::Roaring btv_ship, btv_disc, btv_qty;
         auto t_a = clk::now();
+        // shipdate is a single key (year=1994), no fastunion benefit; same call.
         cr_ship->apply_or_to(btv_ship, Q6_SHIPDATE_YEAR);
         auto t_b = clk::now();
-        cr_disc_x->apply_or_range_to(btv_disc, Q6_DISCOUNT_LO, Q6_DISCOUNT_HI);
+        if (use_fastunion) btv_disc = cr_disc_x->or_range(Q6_DISCOUNT_LO, Q6_DISCOUNT_HI);
+        else cr_disc_x->apply_or_range_to(btv_disc, Q6_DISCOUNT_LO, Q6_DISCOUNT_HI);
         auto t_c = clk::now();
-        cr_qty_x->apply_or_range_to(btv_qty, Q6_QUANTITY_LO, Q6_QUANTITY_HI_EXCL - 1);
+        if (use_fastunion) btv_qty = cr_qty_x->or_range(Q6_QUANTITY_LO, Q6_QUANTITY_HI_EXCL - 1);
+        else cr_qty_x->apply_or_range_to(btv_qty, Q6_QUANTITY_LO, Q6_QUANTITY_HI_EXCL - 1);
         auto t_d = clk::now();
         btv_ship &= btv_disc;
         btv_ship &= btv_qty;
@@ -327,7 +331,7 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
         q6_built.store(true);
         return;
     }
-    // ---- EWAH ----
+    // ---- EWAH (always fast_logicalor) ----
     if (auto* ew_ship = dynamic_cast<bm_index::IndexedEWAH*>(idx_ship_ge)) {
         auto* ew_disc_x = dynamic_cast<bm_index::IndexedEWAH*>(idx_disc);
         auto* ew_qty_x  = dynamic_cast<bm_index::IndexedEWAH*>(idx_qty);
@@ -337,9 +341,9 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
         auto t_a = clk::now();
         ew_ship->apply_or_to(btv_ship, Q6_SHIPDATE_YEAR);
         auto t_b = clk::now();
-        ew_disc_x->apply_or_range_to(btv_disc, Q6_DISCOUNT_LO, Q6_DISCOUNT_HI);
+        btv_disc = ew_disc_x->or_range(Q6_DISCOUNT_LO, Q6_DISCOUNT_HI);
         auto t_c = clk::now();
-        ew_qty_x->apply_or_range_to(btv_qty, Q6_QUANTITY_LO, Q6_QUANTITY_HI_EXCL - 1);
+        btv_qty  = ew_qty_x->or_range(Q6_QUANTITY_LO, Q6_QUANTITY_HI_EXCL - 1);
         auto t_d = clk::now();
         ewah::EWAHBoolArray<uint64_t> tmp1, btv_res;
         btv_ship.logicaland(btv_disc, tmp1);
@@ -368,7 +372,7 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
         q6_built.store(true);
         return;
     }
-    // ---- Concise ----
+    // ---- Concise (always fast_logicalor) ----
     if (auto* con_ship = dynamic_cast<bm_index::IndexedConcise*>(idx_ship_ge)) {
         auto* con_disc_x = dynamic_cast<bm_index::IndexedConcise*>(idx_disc);
         auto* con_qty_x  = dynamic_cast<bm_index::IndexedConcise*>(idx_qty);
@@ -378,9 +382,9 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
         auto t_a = clk::now();
         con_ship->apply_or_to(btv_ship, Q6_SHIPDATE_YEAR);
         auto t_b = clk::now();
-        con_disc_x->apply_or_range_to(btv_disc, Q6_DISCOUNT_LO, Q6_DISCOUNT_HI);
+        btv_disc = con_disc_x->or_range(Q6_DISCOUNT_LO, Q6_DISCOUNT_HI);
         auto t_c = clk::now();
-        con_qty_x->apply_or_range_to(btv_qty, Q6_QUANTITY_LO, Q6_QUANTITY_HI_EXCL - 1);
+        btv_qty  = con_qty_x->or_range(Q6_QUANTITY_LO, Q6_QUANTITY_HI_EXCL - 1);
         auto t_d = clk::now();
         ConciseSet<false> btv_res = btv_ship.logicaland(btv_disc).logicaland(btv_qty);
         auto t_e = clk::now();

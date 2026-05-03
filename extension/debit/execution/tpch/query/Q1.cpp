@@ -310,15 +310,20 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
                       << "  PhaseC=" << tC << "  Total=" << tot << std::endl;
             if (!warm) { tA_t.push_back(tA); tB_t.push_back(tB); tC_t.push_back(tC); tot_t.push_back(tot); }
         }
-        // ---- CRoaring / CRoaringRun ----
+        // ---- CRoaring (pairwise) / CRoaringRun (fastunion) ----
         else if (auto* cr_ship = dynamic_cast<bm_index::IndexedCRoaring*>(idx_ship)) {
             auto* cr_ls_x = dynamic_cast<bm_index::IndexedCRoaring*>(idx_ls);
             auto* cr_rf_x = dynamic_cast<bm_index::IndexedCRoaring*>(idx_rf);
             if (!cr_ls_x || !cr_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
+            const bool use_fastunion = cr_ship->run_optimized();
 
             auto t_a0 = clk::now();
             roaring::Roaring shipdate_filter;
-            cr_ship->apply_or_range_to(shipdate_filter, INT64_MIN, Q1_SHIPDATE_CUTOFF);
+            if (use_fastunion) {
+                shipdate_filter = cr_ship->or_range(INT64_MIN, Q1_SHIPDATE_CUTOFF);
+            } else {
+                cr_ship->apply_or_range_to(shipdate_filter, INT64_MIN, Q1_SHIPDATE_CUTOFF);
+            }
             auto t_a1 = clk::now();
 
             std::map<char, roaring::Roaring> ls_btv, rf_btv;
@@ -409,15 +414,15 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
                       << "  PhaseC=" << tC << "  Total=" << tot << std::endl;
             if (!warm) { tA_t.push_back(tA); tB_t.push_back(tB); tC_t.push_back(tC); tot_t.push_back(tot); }
         }
-        // ---- EWAH ----
+        // ---- EWAH (always fast_logicalor) ----
         else if (auto* ew_ship = dynamic_cast<bm_index::IndexedEWAH*>(idx_ship)) {
             auto* ew_ls_x = dynamic_cast<bm_index::IndexedEWAH*>(idx_ls);
             auto* ew_rf_x = dynamic_cast<bm_index::IndexedEWAH*>(idx_rf);
             if (!ew_ls_x || !ew_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
 
             auto t_a0 = clk::now();
-            ewah::EWAHBoolArray<uint64_t> shipdate_filter;
-            ew_ship->apply_or_range_to(shipdate_filter, INT64_MIN, Q1_SHIPDATE_CUTOFF);
+            ewah::EWAHBoolArray<uint64_t> shipdate_filter =
+                ew_ship->or_range(INT64_MIN, Q1_SHIPDATE_CUTOFF);
             auto t_a1 = clk::now();
 
             std::map<char, ewah::EWAHBoolArray<uint64_t>> ls_btv, rf_btv;
@@ -458,15 +463,15 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
                       << "  PhaseC=" << tC << "  Total=" << tot << std::endl;
             if (!warm) { tA_t.push_back(tA); tB_t.push_back(tB); tC_t.push_back(tC); tot_t.push_back(tot); }
         }
-        // ---- Concise ----
+        // ---- Concise (always fast_logicalor) ----
         else if (auto* con_ship = dynamic_cast<bm_index::IndexedConcise*>(idx_ship)) {
             auto* con_ls_x = dynamic_cast<bm_index::IndexedConcise*>(idx_ls);
             auto* con_rf_x = dynamic_cast<bm_index::IndexedConcise*>(idx_rf);
             if (!con_ls_x || !con_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
 
             auto t_a0 = clk::now();
-            ConciseSet<false> shipdate_filter;
-            con_ship->apply_or_range_to(shipdate_filter, INT64_MIN, Q1_SHIPDATE_CUTOFF);
+            ConciseSet<false> shipdate_filter =
+                con_ship->or_range(INT64_MIN, Q1_SHIPDATE_CUTOFF);
             auto t_a1 = clk::now();
 
             std::map<char, ConciseSet<false>> ls_btv, rf_btv;

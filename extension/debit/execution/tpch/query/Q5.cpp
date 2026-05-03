@@ -392,13 +392,25 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
             btv_or &= btv_supp;
             get_rowids(btv_or, ids);
         }
-        // ---- CRoaring / CRoaring+Run (same code path) ----
+        // ---- CRoaring (pairwise |=) / CRoaring+Run (fastunion) ----
+        // Same class; branch on run_optimized() so CRR uses the
+        // priority-queue merge (its publicised advantage).
         else if (auto* cr_okey = dynamic_cast<bm_index::IndexedCRoaring*>(idx_okey_base)) {
             auto* cr_skey = dynamic_cast<bm_index::IndexedCRoaring*>(idx_skey_base);
             if (!cr_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
             roaring::Roaring btv_or, btv_supp;
-            for (auto& [okey, _] : order_nation_map) cr_okey->apply_or_to(btv_or, okey);
-            for (auto& [skey, _] : supp_nation_map ) cr_skey->apply_or_to(btv_supp, skey);
+            std::vector<int64_t> okeys, skeys;
+            okeys.reserve(order_nation_map.size());
+            skeys.reserve(supp_nation_map.size());
+            for (auto& [k, _] : order_nation_map) okeys.push_back(k);
+            for (auto& [k, _] : supp_nation_map ) skeys.push_back(k);
+            if (cr_okey->run_optimized()) {
+                btv_or   = cr_okey->or_many(okeys);
+                btv_supp = cr_skey->or_many(skeys);
+            } else {
+                for (auto k : okeys) cr_okey->apply_or_to(btv_or,   k);
+                for (auto k : skeys) cr_skey->apply_or_to(btv_supp, k);
+            }
             roaring::Roaring filt = btv_or & btv_supp;
             get_rowids(filt, ids);
         }
@@ -412,23 +424,31 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
             ibis::bitvector filt; filt.copy(btv_or); filt &= btv_supp;
             get_rowids(filt, ids);
         }
-        // ---- EWAH ----
+        // ---- EWAH (always fast_logicalor — k-way priority-queue merge) ----
         else if (auto* ew_okey = dynamic_cast<bm_index::IndexedEWAH*>(idx_okey_base)) {
             auto* ew_skey = dynamic_cast<bm_index::IndexedEWAH*>(idx_skey_base);
             if (!ew_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
-            ewah::EWAHBoolArray<uint64_t> btv_or, btv_supp;
-            for (auto& [okey, _] : order_nation_map) ew_okey->apply_or_to(btv_or, okey);
-            for (auto& [skey, _] : supp_nation_map ) ew_skey->apply_or_to(btv_supp, skey);
+            std::vector<int64_t> okeys, skeys;
+            okeys.reserve(order_nation_map.size());
+            skeys.reserve(supp_nation_map.size());
+            for (auto& [k, _] : order_nation_map) okeys.push_back(k);
+            for (auto& [k, _] : supp_nation_map ) skeys.push_back(k);
+            auto btv_or   = ew_okey->or_many(okeys);
+            auto btv_supp = ew_skey->or_many(skeys);
             ewah::EWAHBoolArray<uint64_t> filt; btv_or.logicaland(btv_supp, filt);
             get_rowids(filt, ids);
         }
-        // ---- Concise ----
+        // ---- Concise (always fast_logicalor) ----
         else if (auto* con_okey = dynamic_cast<bm_index::IndexedConcise*>(idx_okey_base)) {
             auto* con_skey = dynamic_cast<bm_index::IndexedConcise*>(idx_skey_base);
             if (!con_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
-            ConciseSet<false> btv_or, btv_supp;
-            for (auto& [okey, _] : order_nation_map) con_okey->apply_or_to(btv_or, okey);
-            for (auto& [skey, _] : supp_nation_map ) con_skey->apply_or_to(btv_supp, skey);
+            std::vector<int64_t> okeys, skeys;
+            okeys.reserve(order_nation_map.size());
+            skeys.reserve(supp_nation_map.size());
+            for (auto& [k, _] : order_nation_map) okeys.push_back(k);
+            for (auto& [k, _] : supp_nation_map ) skeys.push_back(k);
+            auto btv_or   = con_okey->or_many(okeys);
+            auto btv_supp = con_skey->or_many(skeys);
             ConciseSet<false> filt = btv_or.logicaland(btv_supp);
             get_rowids(filt, ids);
         }
