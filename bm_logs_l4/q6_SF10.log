@@ -1,0 +1,201 @@
+
+================================================================
+  SYSTEM INFORMATION
+================================================================
+  CPU: INTEL(R) XEON(R) PLATINUM 8576C
+  CPU cores: 16
+  Memory: 61.4 GB
+  Compiler: 13.3.0
+  Optimization: enabled (-O)
+  AVX-512 VBMI2: enabled
+  Sizeof(void*): 8 (64-bit)
+
+================================================================
+  TPC-H Q6 Benchmark — ComBit vs WAH vs CRoaring vs EWAH (SF10, in DuckDB)
+  Equality encoding on ALL columns (publication-grade)
+  Bitmap dirs: tpch_q6_wah tpch_q6_combit tpch_q6_croaring tpch_q6_ewah
+  Iterations: 10 (first 2 = warm-up)
+  OR discount: 3 bitmaps
+  OR quantity: 23 bitmaps
+  OR shipdate: 365 bitmaps
+  TPC-H params: discount [0.05, 0.07], quantity < 24, shipdate [1994-01-01, 1995-01-01)
+================================================================
+
+[Load] Loading bitmaps (mode=ALL)...
+  WAH load:         321.6 ms (391 files)
+  ComBit load:      356.6 ms (391 files)
+  CRoaring load:    93.0 ms (391 files)
+  CRoar+Run load:   123.6 ms (391 files)
+  EWAH load:        188.0 ms (391 files)
+  Bitset load:      1508.7 ms (391 files, shared by BS / BSA)
+  Concise load:     966.9 ms (391 files)
+  WAH      on disk: 789.93 MiB
+  ComBit   on disk: 654.01 MiB
+  CRoaring on disk: 325.55 MiB (shared by CR / CRR)
+  EWAH     on disk: 1288.04 MiB
+  Bitset in mem:    2796.02 MiB (rebuilt from CRoaring at load)
+  Concise in mem:   147.14 MiB (rebuilt from CRoaring at load)
+
+================================================================
+  COMPRESSION RATIO (Q6-relevant bitmaps only)
+================================================================
+                 Count    Raw(MB)   ComBit(MB)  WAH(MB)  CRoar(MB)  EWAH(MB)  CB ratio  WAH ratio  CR ratio  EW ratio
+  ---------------------------------------------------------------------------------------------------------------
+  Discount          3      21.45       14.58    22.08     21.48     21.45      0.68      1.03      1.00      1.00
+  Quantity         23     164.47       43.05   121.25     52.79    152.08      0.26      0.74      0.32      0.92
+  Shipdate        365    2610.08       74.06    67.54     19.91    133.24      0.03      0.03      0.01      0.05
+  ---------------------------------------------------------------------------------------------------------------
+  TOTAL           391    2796.00      131.69   210.88     94.17    306.77      0.05      0.08      0.03      0.11
+
+
+--- Iteration 1/10 (warm-up) ---
+  WAH:  OR_disc=15.41  OR_qty=96.28  OR_ship=2449.36  AND=3.86  Decode=32.94  Total=2597.85  rows=1139264
+  CB:   OR_disc=2.31  OR_qty=11.82  OR_ship=85.42  AND=4.79  Decode=6.09  Total=110.44  rows=1139264
+  CR:   OR_disc=2.22  OR_qty=33.92  OR_ship=214.60  AND=12.00  Decode=2.21  Total=264.95  rows=1139264
+  CRR:  OR_disc=2.34  OR_qty=15.70  OR_ship=34.40  AND=11.41  Decode=4.28  Total=68.13  rows=1139264
+  EW:   OR_disc=9.40  OR_qty=221.85  OR_ship=864.95  AND=11.10  Decode=16.38  Total=1123.68  rows=1139264
+  BS:   OR_disc=3.20  OR_qty=23.34  OR_ship=387.90  AND=1.99  Decode=16.23  Total=432.66  rows=1139264
+  BSA:  OR_disc=2.70  OR_qty=15.82  OR_ship=239.88  AND=1.30  Decode=15.03  Total=274.74  rows=1139264
+  CON:  OR_disc=28.90  OR_qty=584.04  OR_ship=1144.10  AND=42.08  Decode=18.91  Total=1818.04  rows=1139264
+
+--- Iteration 2/10 (warm-up) ---
+  WAH:  OR_disc=11.23  OR_qty=93.51  OR_ship=2445.41  AND=3.74  Decode=33.07  Total=2586.96  rows=1139264
+  CB:   OR_disc=2.46  OR_qty=11.74  OR_ship=84.88  AND=4.78  Decode=5.56  Total=109.42  rows=1139264
+  CR:   OR_disc=2.21  OR_qty=34.41  OR_ship=214.06  AND=12.16  Decode=2.60  Total=265.44  rows=1139264
+  CRR:  OR_disc=2.33  OR_qty=15.74  OR_ship=34.38  AND=11.37  Decode=2.07  Total=65.89  rows=1139264
+  EW:   OR_disc=5.56  OR_qty=229.91  OR_ship=869.45  AND=10.74  Decode=13.86  Total=1129.53  rows=1139264
+  BS:   OR_disc=3.15  OR_qty=23.39  OR_ship=368.37  AND=1.99  Decode=9.94  Total=406.85  rows=1139264
+  BSA:  OR_disc=2.51  OR_qty=15.74  OR_ship=239.36  AND=1.32  Decode=9.79  Total=268.72  rows=1139264
+  CON:  OR_disc=22.32  OR_qty=588.75  OR_ship=1143.60  AND=41.82  Decode=19.03  Total=1815.53  rows=1139264
+
+--- Iteration 3/10 ---
+  WAH:  OR_disc=12.32  OR_qty=93.60  OR_ship=2438.18  AND=3.77  Decode=32.97  Total=2580.84  rows=1139264
+  CB:   OR_disc=2.43  OR_qty=11.80  OR_ship=86.59  AND=4.80  Decode=5.56  Total=111.19  rows=1139264
+  CR:   OR_disc=2.19  OR_qty=34.06  OR_ship=213.41  AND=11.86  Decode=2.17  Total=263.69  rows=1139264
+  CRR:  OR_disc=2.29  OR_qty=15.52  OR_ship=34.35  AND=11.50  Decode=2.06  Total=65.73  rows=1139264
+  EW:   OR_disc=8.09  OR_qty=220.55  OR_ship=872.39  AND=10.76  Decode=16.69  Total=1128.48  rows=1139264
+  BS:   OR_disc=3.18  OR_qty=23.46  OR_ship=368.41  AND=1.97  Decode=9.90  Total=406.93  rows=1139264
+  BSA:  OR_disc=2.51  OR_qty=15.77  OR_ship=240.45  AND=1.31  Decode=9.64  Total=269.68  rows=1139264
+  CON:  OR_disc=24.27  OR_qty=593.18  OR_ship=1146.41  AND=43.73  Decode=18.93  Total=1826.52  rows=1139264
+
+--- Iteration 4/10 ---
+  WAH:  OR_disc=11.85  OR_qty=93.60  OR_ship=2438.33  AND=3.77  Decode=33.00  Total=2580.55  rows=1139264
+  CB:   OR_disc=2.51  OR_qty=11.75  OR_ship=85.36  AND=4.81  Decode=5.56  Total=110.00  rows=1139264
+  CR:   OR_disc=2.22  OR_qty=33.92  OR_ship=214.06  AND=11.97  Decode=2.17  Total=264.33  rows=1139264
+  CRR:  OR_disc=2.30  OR_qty=15.71  OR_ship=34.49  AND=11.34  Decode=1.99  Total=65.84  rows=1139264
+  EW:   OR_disc=8.14  OR_qty=221.18  OR_ship=876.62  AND=10.98  Decode=16.79  Total=1133.72  rows=1139264
+  BS:   OR_disc=3.19  OR_qty=23.60  OR_ship=368.86  AND=1.96  Decode=9.91  Total=407.52  rows=1139264
+  BSA:  OR_disc=2.55  OR_qty=15.84  OR_ship=240.52  AND=1.32  Decode=9.64  Total=269.87  rows=1139264
+  CON:  OR_disc=24.76  OR_qty=590.17  OR_ship=1142.38  AND=44.22  Decode=18.91  Total=1820.45  rows=1139264
+
+--- Iteration 5/10 ---
+  WAH:  OR_disc=13.00  OR_qty=93.63  OR_ship=2444.44  AND=3.76  Decode=32.90  Total=2587.73  rows=1139264
+  CB:   OR_disc=2.52  OR_qty=11.77  OR_ship=85.33  AND=4.81  Decode=5.52  Total=109.96  rows=1139264
+  CR:   OR_disc=2.21  OR_qty=34.33  OR_ship=213.72  AND=12.24  Decode=2.61  Total=265.10  rows=1139264
+  CRR:  OR_disc=2.37  OR_qty=15.79  OR_ship=34.42  AND=11.52  Decode=1.98  Total=66.07  rows=1139264
+  EW:   OR_disc=10.86  OR_qty=222.53  OR_ship=867.23  AND=10.73  Decode=16.58  Total=1127.93  rows=1139264
+  BS:   OR_disc=3.15  OR_qty=23.44  OR_ship=368.93  AND=1.99  Decode=10.03  Total=407.54  rows=1139264
+  BSA:  OR_disc=2.56  OR_qty=15.83  OR_ship=240.38  AND=1.32  Decode=9.68  Total=269.76  rows=1139264
+  CON:  OR_disc=21.79  OR_qty=588.20  OR_ship=1144.60  AND=42.02  Decode=19.04  Total=1815.66  rows=1139264
+
+--- Iteration 6/10 ---
+  WAH:  OR_disc=12.40  OR_qty=93.56  OR_ship=2442.49  AND=3.81  Decode=32.97  Total=2585.23  rows=1139264
+  CB:   OR_disc=2.56  OR_qty=11.80  OR_ship=85.70  AND=4.81  Decode=5.58  Total=110.46  rows=1139264
+  CR:   OR_disc=2.21  OR_qty=34.17  OR_ship=213.77  AND=11.83  Decode=2.27  Total=264.25  rows=1139264
+  CRR:  OR_disc=2.29  OR_qty=15.58  OR_ship=34.51  AND=11.42  Decode=2.00  Total=65.80  rows=1139264
+  EW:   OR_disc=8.11  OR_qty=222.09  OR_ship=880.79  AND=10.80  Decode=16.71  Total=1138.51  rows=1139264
+  BS:   OR_disc=3.15  OR_qty=23.58  OR_ship=369.82  AND=2.01  Decode=9.97  Total=408.54  rows=1139264
+  BSA:  OR_disc=2.51  OR_qty=15.88  OR_ship=240.98  AND=1.31  Decode=9.62  Total=270.30  rows=1139264
+  CON:  OR_disc=24.18  OR_qty=589.97  OR_ship=1150.15  AND=52.23  Decode=19.00  Total=1835.53  rows=1139264
+
+--- Iteration 7/10 ---
+  WAH:  OR_disc=12.68  OR_qty=93.68  OR_ship=2440.58  AND=3.77  Decode=32.89  Total=2583.59  rows=1139264
+  CB:   OR_disc=2.58  OR_qty=11.88  OR_ship=85.91  AND=4.91  Decode=5.53  Total=110.80  rows=1139264
+  CR:   OR_disc=2.22  OR_qty=34.12  OR_ship=214.53  AND=12.36  Decode=2.19  Total=265.42  rows=1139264
+  CRR:  OR_disc=2.35  OR_qty=15.89  OR_ship=34.65  AND=11.34  Decode=2.02  Total=66.25  rows=1139264
+  EW:   OR_disc=8.24  OR_qty=221.68  OR_ship=881.46  AND=10.71  Decode=12.68  Total=1134.78  rows=1139264
+  BS:   OR_disc=3.15  OR_qty=23.59  OR_ship=370.29  AND=1.99  Decode=9.96  Total=408.98  rows=1139264
+  BSA:  OR_disc=2.55  OR_qty=15.80  OR_ship=239.39  AND=1.33  Decode=9.66  Total=268.73  rows=1139264
+  CON:  OR_disc=24.74  OR_qty=593.40  OR_ship=1146.82  AND=42.29  Decode=19.09  Total=1826.34  rows=1139264
+
+--- Iteration 8/10 ---
+  WAH:  OR_disc=12.57  OR_qty=93.50  OR_ship=2440.26  AND=3.77  Decode=32.92  Total=2583.03  rows=1139264
+  CB:   OR_disc=2.58  OR_qty=11.78  OR_ship=85.24  AND=4.88  Decode=5.55  Total=110.03  rows=1139264
+  CR:   OR_disc=2.22  OR_qty=34.25  OR_ship=213.34  AND=12.05  Decode=2.15  Total=264.01  rows=1139264
+  CRR:  OR_disc=2.37  OR_qty=15.68  OR_ship=34.41  AND=11.38  Decode=2.00  Total=65.84  rows=1139264
+  EW:   OR_disc=8.04  OR_qty=221.79  OR_ship=875.35  AND=10.76  Decode=12.78  Total=1128.73  rows=1139264
+  BS:   OR_disc=3.14  OR_qty=23.51  OR_ship=368.68  AND=1.97  Decode=10.00  Total=407.31  rows=1139264
+  BSA:  OR_disc=2.52  OR_qty=15.83  OR_ship=240.30  AND=1.35  Decode=9.62  Total=269.62  rows=1139264
+  CON:  OR_disc=24.18  OR_qty=590.05  OR_ship=1148.14  AND=42.15  Decode=19.00  Total=1823.52  rows=1139264
+
+--- Iteration 9/10 ---
+  WAH:  OR_disc=12.62  OR_qty=93.36  OR_ship=2478.09  AND=3.78  Decode=32.88  Total=2620.74  rows=1139264
+  CB:   OR_disc=2.58  OR_qty=11.89  OR_ship=85.76  AND=4.79  Decode=5.53  Total=110.54  rows=1139264
+  CR:   OR_disc=2.23  OR_qty=34.21  OR_ship=214.10  AND=12.05  Decode=2.17  Total=264.76  rows=1139264
+  CRR:  OR_disc=2.32  OR_qty=15.57  OR_ship=34.38  AND=11.47  Decode=1.98  Total=65.72  rows=1139264
+  EW:   OR_disc=8.00  OR_qty=220.87  OR_ship=875.41  AND=10.79  Decode=12.75  Total=1127.82  rows=1139264
+  BS:   OR_disc=3.15  OR_qty=23.64  OR_ship=368.96  AND=1.97  Decode=10.02  Total=407.74  rows=1139264
+  BSA:  OR_disc=2.54  OR_qty=15.76  OR_ship=239.77  AND=1.27  Decode=9.60  Total=268.95  rows=1139264
+  CON:  OR_disc=24.35  OR_qty=589.34  OR_ship=1144.26  AND=41.92  Decode=19.05  Total=1818.92  rows=1139264
+
+--- Iteration 10/10 ---
+  WAH:  OR_disc=12.32  OR_qty=93.59  OR_ship=2474.64  AND=3.75  Decode=32.92  Total=2617.23  rows=1139264
+  CB:   OR_disc=2.55  OR_qty=11.73  OR_ship=85.53  AND=4.82  Decode=5.55  Total=110.18  rows=1139264
+  CR:   OR_disc=2.22  OR_qty=34.51  OR_ship=214.29  AND=12.09  Decode=2.21  Total=265.32  rows=1139264
+  CRR:  OR_disc=2.39  OR_qty=15.70  OR_ship=34.31  AND=11.35  Decode=1.97  Total=65.72  rows=1139264
+  EW:   OR_disc=8.11  OR_qty=223.03  OR_ship=876.31  AND=10.75  Decode=12.77  Total=1130.96  rows=1139264
+  BS:   OR_disc=3.16  OR_qty=23.57  OR_ship=368.90  AND=1.95  Decode=9.89  Total=407.48  rows=1139264
+  BSA:  OR_disc=2.57  OR_qty=15.79  OR_ship=240.19  AND=1.33  Decode=9.65  Total=269.53  rows=1139264
+  CON:  OR_disc=24.67  OR_qty=590.71  OR_ship=1149.82  AND=42.11  Decode=19.07  Total=1826.38  rows=1139264
+
+[Baseline] DuckDB native SQL count(*) = 1139264  (single run: 504.90 ms)
+[OK] all active backends match DuckDB SQL ground truth (1139264 rows).
+
+================================================================
+  RESULTS (8 measured iterations, median ± stddev)
+================================================================
+                       WAH (ms)              ComBit (ms)         CRoaring (ms)      CRoar+Run (ms)       EWAH (ms)          CB vs WAH   CR vs WAH  CRR vs WAH   EW vs WAH
+  --------------------------------------------------------------------------------------------------------------------------------
+  OR discount        12.49 ±   0.32         2.56 ±   0.05         2.22 ±   0.01         2.34 ±   0.04         8.11 ±   0.91      4.88x      5.63x      5.35x      1.54x
+  OR quantity        93.59 ±   0.09        11.79 ±   0.05        34.19 ±   0.17        15.69 ±   0.11       221.74 ±   0.78      7.94x      2.74x      5.96x      0.42x
+  OR shipdate      2441.54 ±  15.58        85.62 ±   0.41       213.92 ±   0.39        34.41 ±   0.10       875.86 ±   4.23     28.52x     11.41x     70.94x      2.79x
+  AND (3-way)         3.77 ±   0.01         4.81 ±   0.04        12.05 ±   0.17        11.40 ±   0.07        10.76 ±   0.08      0.78x      0.31x      0.33x      0.35x
+  Decode             32.92 ±   0.04         5.55 ±   0.02         2.18 ±   0.14         1.99 ±   0.03        14.68 ±   1.97      5.93x     15.10x     16.51x      2.24x
+  --------------------------------------------------------------------------------------------------------------------------------
+  TOTAL            2584.41 ±  15.54       110.32 ±   0.41       264.55 ±   0.60        65.82 ±   0.18      1129.85 ±   3.67     23.43x      9.77x     39.26x      2.29x
+
+  WAH rows:        1139264
+  ComBit rows:     1139264
+  CRoaring rows:   1139264
+  CRoar+Run rows:  1139264
+  EWAH rows:       1139264
+================================================================
+
+
+================================================================
+  Q6 BASELINE BACKENDS (no compression / Concise)
+================================================================
+                       BS (ms)              BSA (ms)            Concise (ms)        BS vs WAH   BSA vs WAH   CON vs WAH
+  -------------------------------------------------------------------------------------------------------------
+  OR discount         3.15 ±   0.02         2.55 ±   0.02        24.31 ±   0.91      3.96x      4.90x      0.51x
+  OR quantity        23.58 ±   0.07        15.81 ±   0.04       590.11 ±   1.69      3.97x      5.92x      0.16x
+  OR shipdate       368.92 ±   0.58       240.34 ±   0.45      1146.62 ±   2.57      6.62x     10.16x      2.13x
+  AND (3-way)         1.97 ±   0.02         1.32 ±   0.02        42.22 ±   3.28      1.91x      2.86x      0.09x
+  Decode              9.97 ±   0.05         9.64 ±   0.02        19.02 ±   0.06      3.30x      3.41x      1.73x
+  -------------------------------------------------------------------------------------------------------------
+  TOTAL             407.53 ±   0.63       269.65 ±   0.47      1824.93 ±   5.68      6.34x      9.58x      1.42x
+
+  Bitset rows:         1139264
+  Bitset+AVX512 rows:  1139264
+  Concise rows:        1139264
+================================================================
+
+  [CSV] Results written to: q6_results_SF10.csv
+  [CSV] Compression written to: q6_compression_SF10.csv
+┌─────────────────┐
+│     revenue     │
+│  decimal(38,4)  │
+├─────────────────┤
+│ 1230113636.0101 │
+└─────────────────┘
+  [Breakdown] ComBit   L1=44.56 MiB  L2=26.02 MiB  L3=10.30 MiB  L4=5.46 MiB  total=86.33 MiB

@@ -1,0 +1,159 @@
+# cwd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev
+# cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(17);
+
+================================================================
+  TPC-H Q17 Benchmark — 8 backends (SF10)
+  Single-bitmap two-pass aggregation over is_q17_part.
+  TPC-H params: p_brand='Brand#23', p_container='MED BOX'
+  Bitmap dirs: tpch_q17_combit tpch_q17_croaring tpch_q17_wah tpch_q17_ewah
+  Iterations: 10 (first 2 = warm-up)
+================================================================
+
+[Pre-load] Loading 59986052 rows (partkey, quantity, extendedprice) ...
+[Pre-load] 59986052 rows in 1342.01 ms  (max_partkey=2000000)
+
+[Load] Loading is_q17_part bitmaps (mode=ALL)...
+  WAH load:      0.589 ms
+  ComBit load:   5.336 ms
+  CRoaring load: 0.22 ms
+  CRR load:      0.175 ms
+  EWAH load:     0.51 ms
+  Bitset load:   3.828 ms (shared by BS / BSA)
+  Concise load:  1.083 ms
+  WAH      on disk: 0.45 MiB
+  ComBit   on disk: 0.27 MiB
+  CRoaring on disk: 0.12 MiB (shared by CR / CRR)
+  EWAH     on disk: 0.88 MiB
+
+--- Iteration 1/10 (warm-up) ---
+  CB:   Pass1=12.88  Pass2=3.33  Total=16.21  avg_yearly=3295493.51
+  CR:   Pass1=5.94  Pass2=1.57  Total=7.51  avg_yearly=3295493.51
+  CRR:  Pass1=5.62  Pass2=1.52  Total=7.13  avg_yearly=3295493.51
+  WAH:  Pass1=6.92  Pass2=2.99  Total=9.91  avg_yearly=3295493.51
+  EW:   Pass1=5.72  Pass2=1.57  Total=7.30  avg_yearly=3295493.51
+  BS:   Pass1=6.79  Pass2=2.59  Total=9.38  avg_yearly=3295493.51
+  BSA:  Pass1=6.67  Pass2=2.51  Total=9.19  avg_yearly=3295493.51
+  CON:  Pass1=6.18  Pass2=1.98  Total=8.15  avg_yearly=3295493.51
+
+--- Iteration 2/10 (warm-up) ---
+  CB:   Pass1=6.10  Pass2=1.77  Total=7.87  avg_yearly=3295493.51
+  CR:   Pass1=5.47  Pass2=1.43  Total=6.90  avg_yearly=3295493.51
+  CRR:  Pass1=5.44  Pass2=1.43  Total=6.87  avg_yearly=3295493.51
+  WAH:  Pass1=6.81  Pass2=2.80  Total=9.62  avg_yearly=3295493.51
+  EW:   Pass1=5.66  Pass2=1.48  Total=7.14  avg_yearly=3295493.51
+  BS:   Pass1=6.61  Pass2=2.48  Total=9.09  avg_yearly=3295493.51
+  BSA:  Pass1=6.61  Pass2=2.48  Total=9.08  avg_yearly=3295493.51
+  CON:  Pass1=6.14  Pass2=1.96  Total=8.10  avg_yearly=3295493.51
+
+--- Iteration 3/10 ---
+  CB:   Pass1=5.97  Pass2=1.75  Total=7.72  avg_yearly=3295493.51
+  CR:   Pass1=5.46  Pass2=1.43  Total=6.89  avg_yearly=3295493.51
+  CRR:  Pass1=5.46  Pass2=1.41  Total=6.87  avg_yearly=3295493.51
+  WAH:  Pass1=6.76  Pass2=2.80  Total=9.56  avg_yearly=3295493.51
+  EW:   Pass1=5.65  Pass2=1.46  Total=7.12  avg_yearly=3295493.51
+  BS:   Pass1=6.62  Pass2=2.46  Total=9.07  avg_yearly=3295493.51
+  BSA:  Pass1=6.62  Pass2=2.46  Total=9.08  avg_yearly=3295493.51
+  CON:  Pass1=6.13  Pass2=1.97  Total=8.10  avg_yearly=3295493.51
+
+--- Iteration 4/10 ---
+  CB:   Pass1=5.96  Pass2=1.76  Total=7.71  avg_yearly=3295493.51
+  CR:   Pass1=5.45  Pass2=1.43  Total=6.87  avg_yearly=3295493.51
+  CRR:  Pass1=5.44  Pass2=1.42  Total=6.87  avg_yearly=3295493.51
+  WAH:  Pass1=6.74  Pass2=2.78  Total=9.52  avg_yearly=3295493.51
+  EW:   Pass1=5.64  Pass2=1.48  Total=7.12  avg_yearly=3295493.51
+  BS:   Pass1=6.59  Pass2=2.49  Total=9.08  avg_yearly=3295493.51
+  BSA:  Pass1=6.60  Pass2=2.48  Total=9.08  avg_yearly=3295493.51
+  CON:  Pass1=6.13  Pass2=1.97  Total=8.10  avg_yearly=3295493.51
+
+--- Iteration 5/10 ---
+  CB:   Pass1=5.98  Pass2=1.76  Total=7.74  avg_yearly=3295493.51
+  CR:   Pass1=5.45  Pass2=1.43  Total=6.87  avg_yearly=3295493.51
+  CRR:  Pass1=5.43  Pass2=1.42  Total=6.85  avg_yearly=3295493.51
+  WAH:  Pass1=6.76  Pass2=2.81  Total=9.57  avg_yearly=3295493.51
+  EW:   Pass1=5.63  Pass2=1.46  Total=7.09  avg_yearly=3295493.51
+  BS:   Pass1=6.59  Pass2=2.46  Total=9.05  avg_yearly=3295493.51
+  BSA:  Pass1=6.60  Pass2=2.55  Total=9.15  avg_yearly=3295493.51
+  CON:  Pass1=6.12  Pass2=1.97  Total=8.08  avg_yearly=3295493.51
+
+--- Iteration 6/10 ---
+  CB:   Pass1=5.94  Pass2=1.75  Total=7.70  avg_yearly=3295493.51
+  CR:   Pass1=5.45  Pass2=1.42  Total=6.86  avg_yearly=3295493.51
+  CRR:  Pass1=5.44  Pass2=1.43  Total=6.88  avg_yearly=3295493.51
+  WAH:  Pass1=6.74  Pass2=2.78  Total=9.52  avg_yearly=3295493.51
+  EW:   Pass1=5.63  Pass2=1.47  Total=7.09  avg_yearly=3295493.51
+  BS:   Pass1=6.59  Pass2=2.50  Total=9.10  avg_yearly=3295493.51
+  BSA:  Pass1=6.57  Pass2=2.47  Total=9.04  avg_yearly=3295493.51
+  CON:  Pass1=6.10  Pass2=1.96  Total=8.06  avg_yearly=3295493.51
+
+--- Iteration 7/10 ---
+  CB:   Pass1=5.95  Pass2=1.75  Total=7.70  avg_yearly=3295493.51
+  CR:   Pass1=5.44  Pass2=1.42  Total=6.86  avg_yearly=3295493.51
+  CRR:  Pass1=5.46  Pass2=1.42  Total=6.88  avg_yearly=3295493.51
+  WAH:  Pass1=6.76  Pass2=2.79  Total=9.55  avg_yearly=3295493.51
+  EW:   Pass1=5.64  Pass2=1.48  Total=7.12  avg_yearly=3295493.51
+  BS:   Pass1=6.60  Pass2=2.47  Total=9.07  avg_yearly=3295493.51
+  BSA:  Pass1=6.60  Pass2=2.46  Total=9.06  avg_yearly=3295493.51
+  CON:  Pass1=6.11  Pass2=1.97  Total=8.08  avg_yearly=3295493.51
+
+--- Iteration 8/10 ---
+  CB:   Pass1=5.95  Pass2=1.76  Total=7.71  avg_yearly=3295493.51
+  CR:   Pass1=5.43  Pass2=1.43  Total=6.87  avg_yearly=3295493.51
+  CRR:  Pass1=5.42  Pass2=1.43  Total=6.85  avg_yearly=3295493.51
+  WAH:  Pass1=6.75  Pass2=2.83  Total=9.57  avg_yearly=3295493.51
+  EW:   Pass1=5.63  Pass2=1.47  Total=7.10  avg_yearly=3295493.51
+  BS:   Pass1=6.60  Pass2=2.47  Total=9.07  avg_yearly=3295493.51
+  BSA:  Pass1=6.58  Pass2=2.48  Total=9.07  avg_yearly=3295493.51
+  CON:  Pass1=6.11  Pass2=1.97  Total=8.08  avg_yearly=3295493.51
+
+--- Iteration 9/10 ---
+  CB:   Pass1=5.95  Pass2=1.75  Total=7.69  avg_yearly=3295493.51
+  CR:   Pass1=5.44  Pass2=1.42  Total=6.86  avg_yearly=3295493.51
+  CRR:  Pass1=5.45  Pass2=1.42  Total=6.86  avg_yearly=3295493.51
+  WAH:  Pass1=6.78  Pass2=2.80  Total=9.57  avg_yearly=3295493.51
+  EW:   Pass1=5.62  Pass2=1.51  Total=7.13  avg_yearly=3295493.51
+  BS:   Pass1=6.60  Pass2=2.48  Total=9.09  avg_yearly=3295493.51
+  BSA:  Pass1=6.68  Pass2=2.47  Total=9.15  avg_yearly=3295493.51
+  CON:  Pass1=6.11  Pass2=1.97  Total=8.08  avg_yearly=3295493.51
+
+--- Iteration 10/10 ---
+  CB:   Pass1=5.97  Pass2=1.77  Total=7.74  avg_yearly=3295493.51
+  CR:   Pass1=5.43  Pass2=1.43  Total=6.86  avg_yearly=3295493.51
+  CRR:  Pass1=5.43  Pass2=1.43  Total=6.86  avg_yearly=3295493.51
+  WAH:  Pass1=6.71  Pass2=2.80  Total=9.52  avg_yearly=3295493.51
+  EW:   Pass1=5.63  Pass2=1.47  Total=7.09  avg_yearly=3295493.51
+  BS:   Pass1=6.65  Pass2=2.45  Total=9.10  avg_yearly=3295493.51
+  BSA:  Pass1=6.59  Pass2=2.45  Total=9.04  avg_yearly=3295493.51
+  CON:  Pass1=6.12  Pass2=1.97  Total=8.09  avg_yearly=3295493.51
+
+================================================================
+  Q17 Correctness Validation
+================================================================
+  Q17 Result (ComBit):
+    avg_yearly = 3295493.51   (sum_ep×100 = 2306845459)
+  Consistency: ALL MATCH
+
+[Baseline] DuckDB native SQL  (single run: 1312.19 ms)
+  SQL ground truth:  avg_yearly = 3295493.51
+[OK] all active backends match DuckDB SQL ground truth (avg_yearly within 0.00).
+
+================================================================
+  Q17 RESULTS (8 measured iterations, median +/- stddev)
+================================================================
+  CB    Pass1=5.95    +/- 0.01   Pass2=1.76    +/- 0.01   Total=7.71    +/- 0.02  (ms)
+  CR    Pass1=5.44    +/- 0.01   Pass2=1.43    +/- 0.01   Total=6.87    +/- 0.01  (ms)
+  CRR   Pass1=5.44    +/- 0.01   Pass2=1.42    +/- 0.01   Total=6.87    +/- 0.01  (ms)
+  WAH   Pass1=6.75    +/- 0.02   Pass2=2.80    +/- 0.01   Total=9.56    +/- 0.02  (ms)
+  EW    Pass1=5.63    +/- 0.01   Pass2=1.47    +/- 0.02   Total=7.11    +/- 0.01  (ms)
+  BS    Pass1=6.60    +/- 0.02   Pass2=2.47    +/- 0.02   Total=9.08    +/- 0.02  (ms)
+  BSA   Pass1=6.60    +/- 0.03   Pass2=2.47    +/- 0.03   Total=9.07    +/- 0.04  (ms)
+  CON   Pass1=6.11    +/- 0.01   Pass2=1.97    +/- 0.00   Total=8.08    +/- 0.01  (ms)
+================================================================
+
+  [CSV] Results written to: q17_results_SF10.csv
+┌───────────────────┐
+│    avg_yearly     │
+│      double       │
+├───────────────────┤
+│ 3295493.512857143 │
+└───────────────────┘
+  [Breakdown] ComBit   L1=0.08 MiB  L2=0.06 MiB  L3=0.09 MiB  total=0.22 MiB

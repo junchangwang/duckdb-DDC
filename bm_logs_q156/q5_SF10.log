@@ -1,0 +1,188 @@
+# cwd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev
+# pattern_qs_per_backend Q5
+
+# === Backend CB (DEBIT_BM=cb) ===
+# sql=
+PRAGMA load_bitmap('orderkey');
+PRAGMA load_bitmap('suppkey');
+PRAGMA bm_tpch(5);
+[load_bitmap] orderkey: scanned 59986052 rows in 633 ms
+[load_bitmap] orderkey: built ComBit index (15000000 keys, 4448.84 MB) in 12869 ms
+[load_bitmap] suppkey: scanned 59986052 rows in 283 ms
+[load_bitmap] suppkey: built ComBit index (100000 keys, 13176 MB) in 31724 ms
+
+================================================================
+  TPC-H Q5 (BitEngine pattern, BMFetch) — ComBit (SF10)
+  Pre-loaded auxiliary structures: bitmap_orderkey + bitmap_suppkey
+================================================================
+
+--- Iteration 1/5 (warm-up) ---
+  ComBit:  PhaseA=397.869  PhaseB=959.928  PhaseC=261.554  Total=1619.35  rows=72985  ids=366425
+
+--- Iteration 2/5 ---
+  ComBit:  PhaseA=308.612  PhaseB=888.119  PhaseC=123.656  Total=1320.39  rows=72985  ids=366425
+
+--- Iteration 3/5 ---
+  ComBit:  PhaseA=305.292  PhaseB=890.158  PhaseC=124.051  Total=1319.5  rows=72985  ids=366425
+
+--- Iteration 4/5 ---
+  ComBit:  PhaseA=306.154  PhaseB=890.56  PhaseC=123.396  Total=1320.11  rows=72985  ids=366425
+
+--- Iteration 5/5 ---
+  ComBit:  PhaseA=307.329  PhaseB=901.043  PhaseC=123.304  Total=1331.68  rows=72985  ids=366425
+
+[OK] ComBit matches DuckDB SQL ground truth (5 nations).
+
+  Q5 Top results (revenue DESC):
+  nation                     revenue
+  INDIA               536862587.9995
+  CHINA               535350829.9282
+  VIETNAM             532269388.7176
+  JAPAN               526766837.1444
+  INDONESIA           523176852.3189
+
+================================================================
+  Q5 RESULTS — ComBit only (4 measured iter, median +/- stddev)
+================================================================
+  PhaseA (small joins) : 306.7415 +/- 1.2496 ms
+  PhaseB (bitmap OR/AND): 890.3590 +/- 5.0354 ms
+  PhaseC (BMFetch+Agg) : 123.5260 +/- 0.2897 ms
+  TOTAL                : 1320.2495 +/- 5.0663 ms
+  rows: 72985
+================================================================
+
+  [CSV] q5_results_SF10.csv
+┌───────────┬────────────────┐
+│  n_name   │    revenue     │
+│  varchar  │ decimal(38,4)  │
+├───────────┼────────────────┤
+│ INDIA     │ 536862587.9995 │
+│ CHINA     │ 535350829.9282 │
+│ VIETNAM   │ 532269388.7176 │
+│ JAPAN     │ 526766837.1444 │
+│ INDONESIA │ 523176852.3189 │
+└───────────┴────────────────┘
+
+# === Backend CR (DEBIT_BM=cr) ===
+# sql=
+PRAGMA load_bitmap('orderkey');
+PRAGMA load_bitmap('suppkey');
+PRAGMA bm_tpch(5);
+[load_bitmap] orderkey: scanned 59986052 rows in 635 ms
+[load_bitmap] orderkey: built CRoaring index (15000000 keys, 359.978 MB) in 6481 ms
+[load_bitmap] suppkey: scanned 59986052 rows in 289 ms
+[load_bitmap] suppkey: built CRoaring index (100000 keys, 472.836 MB) in 6210 ms
+
+================================================================
+  TPC-H Q5 (BitEngine pattern, BMFetch) — CRoaring (SF10)
+  Pre-loaded auxiliary structures: bitmap_orderkey + bitmap_suppkey
+================================================================
+
+--- Iteration 1/5 (warm-up) ---
+  CRoaring:  PhaseA=380.628  PhaseB=2482.97  PhaseC=257.454  Total=3121.06  rows=72985  ids=366425
+
+--- Iteration 2/5 ---
+  CRoaring:  PhaseA=272.058  PhaseB=2393.03  PhaseC=120.609  Total=2785.7  rows=72985  ids=366425
+
+--- Iteration 3/5 ---
+  CRoaring:  PhaseA=271.765  PhaseB=2409.21  PhaseC=120.941  Total=2801.91  rows=72985  ids=366425
+
+--- Iteration 4/5 ---
+  CRoaring:  PhaseA=273.443  PhaseB=2387.43  PhaseC=120.642  Total=2781.51  rows=72985  ids=366425
+
+--- Iteration 5/5 ---
+  CRoaring:  PhaseA=276.507  PhaseB=2389.83  PhaseC=120.858  Total=2787.2  rows=72985  ids=366425
+
+[OK] CRoaring matches DuckDB SQL ground truth (5 nations).
+
+  Q5 Top results (revenue DESC):
+  nation                     revenue
+  INDIA               536862587.9995
+  CHINA               535350829.9282
+  VIETNAM             532269388.7176
+  JAPAN               526766837.1444
+  INDONESIA           523176852.3189
+
+================================================================
+  Q5 RESULTS — CRoaring only (4 measured iter, median +/- stddev)
+================================================================
+  PhaseA (small joins) : 272.7505 +/- 1.8790 ms
+  PhaseB (bitmap OR/AND): 2391.4310 +/- 8.5099 ms
+  PhaseC (BMFetch+Agg) : 120.7500 +/- 0.1406 ms
+  TOTAL                : 2786.4480 +/- 7.6955 ms
+  rows: 72985
+================================================================
+
+  [CSV] q5_results_SF10.csv
+┌───────────┬────────────────┐
+│  n_name   │    revenue     │
+│  varchar  │ decimal(38,4)  │
+├───────────┼────────────────┤
+│ INDIA     │ 536862587.9995 │
+│ CHINA     │ 535350829.9282 │
+│ VIETNAM   │ 532269388.7176 │
+│ JAPAN     │ 526766837.1444 │
+│ INDONESIA │ 523176852.3189 │
+└───────────┴────────────────┘
+
+# === Backend CRR (DEBIT_BM=crr) ===
+# sql=
+PRAGMA load_bitmap('orderkey');
+PRAGMA load_bitmap('suppkey');
+PRAGMA bm_tpch(5);
+[load_bitmap] orderkey: scanned 59986052 rows in 630 ms
+[load_bitmap] orderkey: built CRoaringRun index (15000000 keys, 257.154 MB) in 6790 ms
+[load_bitmap] suppkey: scanned 59986052 rows in 283 ms
+[load_bitmap] suppkey: built CRoaringRun index (100000 keys, 472.836 MB) in 6389 ms
+
+================================================================
+  TPC-H Q5 (BitEngine pattern, BMFetch) — CRoaring+Run (SF10)
+  Pre-loaded auxiliary structures: bitmap_orderkey + bitmap_suppkey
+================================================================
+
+--- Iteration 1/5 (warm-up) ---
+  CRoaringRun:  PhaseA=397.503  PhaseB=2754.41  PhaseC=263.156  Total=3415.07  rows=72985  ids=366425
+
+--- Iteration 2/5 ---
+  CRoaringRun:  PhaseA=308.572  PhaseB=2694.25  PhaseC=125.109  Total=3127.93  rows=72985  ids=366425
+
+--- Iteration 3/5 ---
+  CRoaringRun:  PhaseA=310.502  PhaseB=2679.86  PhaseC=125.365  Total=3115.73  rows=72985  ids=366425
+
+--- Iteration 4/5 ---
+  CRoaringRun:  PhaseA=307.233  PhaseB=2671.29  PhaseC=125.326  Total=3103.85  rows=72985  ids=366425
+
+--- Iteration 5/5 ---
+  CRoaringRun:  PhaseA=308.697  PhaseB=2693.57  PhaseC=125.108  Total=3127.37  rows=72985  ids=366425
+
+[OK] CRoaringRun matches DuckDB SQL ground truth (5 nations).
+
+  Q5 Top results (revenue DESC):
+  nation                     revenue
+  INDIA               536862587.9995
+  CHINA               535350829.9282
+  VIETNAM             532269388.7176
+  JAPAN               526766837.1444
+  INDONESIA           523176852.3189
+
+================================================================
+  Q5 RESULTS — CRoaringRun only (4 measured iter, median +/- stddev)
+================================================================
+  PhaseA (small joins) : 308.6345 +/- 1.1625 ms
+  PhaseB (bitmap OR/AND): 2686.7130 +/- 9.6588 ms
+  PhaseC (BMFetch+Agg) : 125.2175 +/- 0.1193 ms
+  TOTAL                : 3121.5495 +/- 9.8732 ms
+  rows: 72985
+================================================================
+
+  [CSV] q5_results_SF10.csv
+┌───────────┬────────────────┐
+│  n_name   │    revenue     │
+│  varchar  │ decimal(38,4)  │
+├───────────┼────────────────┤
+│ INDIA     │ 536862587.9995 │
+│ CHINA     │ 535350829.9282 │
+│ VIETNAM   │ 532269388.7176 │
+│ JAPAN     │ 526766837.1444 │
+│ INDONESIA │ 523176852.3189 │
+└───────────┴────────────────┘

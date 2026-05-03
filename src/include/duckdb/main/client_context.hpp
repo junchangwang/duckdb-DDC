@@ -119,6 +119,14 @@ public:
 	// 3-month / per-year group.
 	void* bitmap_shipdate_GE = nullptr;
 
+	// Bucketed Prefix-Encoded variants (range queries → O(1) AND_NOT).
+	// `bitmap_<col>_BPE` stores per-bucket cumulative bitmaps over the
+	// SAME single column as the equality-encoded variant (TPC-H 1.5.7
+	// allows multiple auxiliary structures over the same column).
+	void* bitmap_shipdate_BPE = nullptr;
+	void* bitmap_discount_BPE = nullptr;
+	void* bitmap_quantity_BPE = nullptr;
+
 public:
 	MetaTransaction &ActiveTransaction() {
 		return transaction.ActiveTransaction();

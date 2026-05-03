@@ -95,6 +95,9 @@ static ColInfo resolve_column(const std::string& col) {
     if (col == "partkey")     return {"lineitem", 1,  Q1ColKind::Int64};
     if (col == "shipdate")    return {"lineitem", 10, Q1ColKind::Int32};
     if (col == "shipdate_GE") return {"lineitem", 10, Q1ColKind::DateGEYear};
+    if (col == "shipdate_BPE") return {"lineitem", 10, Q1ColKind::Int32};   // BPE built from per-day raw values
+    if (col == "discount_BPE") return {"lineitem", 6,  Q1ColKind::Int64};
+    if (col == "quantity_BPE") return {"lineitem", 4,  Q1ColKind::Int64};
     if (col == "orderdate")   return {"orders",   4,  Q1ColKind::Int32};
     if (col == "linestatus")  return {"lineitem", 9,  Q1ColKind::VarChar};
     if (col == "returnflag")  return {"lineitem", 8,  Q1ColKind::VarChar};
@@ -111,6 +114,9 @@ static void** resolve_context_field(ClientContext& ctx, const std::string& col) 
     if (col == "partkey")     return &ctx.bitmap_partkey;
     if (col == "shipdate")    return &ctx.bitmap_shipdate;
     if (col == "shipdate_GE") return &ctx.bitmap_shipdate_GE;
+    if (col == "shipdate_BPE") return &ctx.bitmap_shipdate_BPE;
+    if (col == "discount_BPE") return &ctx.bitmap_discount_BPE;
+    if (col == "quantity_BPE") return &ctx.bitmap_quantity_BPE;
     if (col == "orderdate")   return &ctx.bitmap_orderdate;
     if (col == "linestatus")  return &ctx.bitmap_linestatus;
     if (col == "returnflag")  return &ctx.bitmap_returnflag;
@@ -203,6 +209,31 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
               << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()
               << " ms" << std::endl;
 
+    // BPE column → use Bucketed Prefix-Encoded class.  Per-column
+    // (lo_key, hi_key, bucket_size) tuned for the actual TPC-H column
+    // domain.  All BPE structures still reference exactly one base-table
+    // column (TPC-H 1.5.7 §5).
+    bool bpe_path = false;
+    int64_t bpe_lo = 0, bpe_hi = 0, bpe_bs = 1;
+    if (col == "shipdate_BPE") {
+        bpe_path = true;
+        bpe_lo = 8035;     // 1992-01-01 epoch days
+        bpe_hi = 10592;    // 1998-12-31 epoch days (covers TPC-H lineitem range)
+        bpe_bs = 100;      // 100-day buckets → ~26 buckets covering 1992-1999
+    } else if (col == "discount_BPE") {
+        bpe_path = true;
+        bpe_lo = 0;
+        bpe_hi = 10;       // l_discount raw (0.00..0.10 → raw 0..10)
+        bpe_bs = 1;        // per-value
+    } else if (col == "quantity_BPE") {
+        bpe_path = true;
+        bpe_lo = 0;
+        bpe_hi = 5000;     // l_quantity raw (1..50 → raw 100..5000)
+        bpe_bs = 500;      // 500-raw buckets (= 5 quantity values per bucket).
+                           // Cutoff raw=2399 falls in bucket 4 [2000,2499]; only
+                           // 1 boundary value (raw=2400) to subtract via per-value.
+    }
+
     // Backend selection via DEBIT_BM env (mirrors BMTPCH gating).
     auto backend = bm_bench::parse_backend("DEBIT_BM");
     bm_index::IBitmapIndex* idx = nullptr;
@@ -210,7 +241,11 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
     using B = bm_bench::Backend;
     switch (backend) {
         case B::CB: {
-            if (ge_path) {
+            if (bpe_path) {
+                auto* x = new bm_index::IndexedComBitBPE();
+                x->build(values, values.size(), bpe_lo, bpe_hi, bpe_bs);
+                idx = x;
+            } else if (ge_path) {
                 auto* x = new bm_index::IndexedComBitGE();
                 x->build(values, values.size());
                 idx = x;
@@ -222,30 +257,57 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
             break;
         }
         case B::CR: {
-            auto* x = new bm_index::IndexedCRoaring();
-            x->build(values, values.size(), false);
-            idx = x;
+            if (bpe_path) {
+                auto* x = new bm_index::IndexedCRoaringBPE();
+                x->build(values, values.size(), bpe_lo, bpe_hi, bpe_bs, false);
+                idx = x;
+            } else {
+                auto* x = new bm_index::IndexedCRoaring();
+                x->build(values, values.size(), false);
+                idx = x;
+            }
             break;
         }
         case B::CRR: {
-            auto* x = new bm_index::IndexedCRoaring();
-            x->build(values, values.size(), true);
-            idx = x;
+            if (bpe_path) {
+                auto* x = new bm_index::IndexedCRoaringBPE();
+                x->build(values, values.size(), bpe_lo, bpe_hi, bpe_bs, true);
+                idx = x;
+            } else {
+                auto* x = new bm_index::IndexedCRoaring();
+                x->build(values, values.size(), true);
+                idx = x;
+            }
             break;
         }
         case B::WAH: {
+            if (bpe_path) {
+                std::cerr << "[load_bitmap] " << col
+                          << ": WAH BPE not implemented; skipping (Q-dispatch will fall back to non-BPE path).\n";
+                return "";
+            }
             auto* x = new bm_index::IndexedWAH();
             x->build(values, values.size());
             idx = x;
             break;
         }
         case B::EW: {
+            if (bpe_path) {
+                std::cerr << "[load_bitmap] " << col
+                          << ": EWAH BPE not implemented; skipping.\n";
+                return "";
+            }
             auto* x = new bm_index::IndexedEWAH();
             x->build(values, values.size());
             idx = x;
             break;
         }
         case B::CON: {
+            if (bpe_path) {
+                std::cerr << "[load_bitmap] " << col
+                          << ": Concise BPE not implemented; skipping.\n";
+                return "";
+            }
             auto* x = new bm_index::IndexedConcise();
             x->build(values, values.size());
             idx = x;
@@ -253,9 +315,12 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
         }
         case B::ALL:
         default: {
-            // Default to ComBit when ALL/unspecified — for "ALL" semantics
-            // we'd need separate fields per backend; keep simple for now.
-            if (ge_path) {
+            // Default to ComBit when ALL/unspecified.
+            if (bpe_path) {
+                auto* x = new bm_index::IndexedComBitBPE();
+                x->build(values, values.size(), bpe_lo, bpe_hi, bpe_bs);
+                idx = x;
+            } else if (ge_path) {
                 auto* x = new bm_index::IndexedComBitGE();
                 x->build(values, values.size());
                 idx = x;

@@ -118,24 +118,6 @@ static const int Q15_WARMUP     = bm_bench::warmup_count(2);
 static std::once_flag q15_once_flag;
 
 // Statistics helper.
-struct Q15Stats {
-    double median = 0, stddev = 0, min_val = 0, max_val = 0;
-};
-static Q15Stats q15_compute_stats(std::vector<double>& v) {
-    Q15Stats s{};
-    if (v.empty()) return s;
-    std::sort(v.begin(), v.end());
-    size_t n = v.size();
-    s.median  = (n % 2 == 0) ? (v[n/2-1] + v[n/2]) / 2.0 : v[n/2];
-    s.min_val = v.front();
-    s.max_val = v.back();
-    double mean = std::accumulate(v.begin(), v.end(), 0.0) / n;
-    double sq = 0;
-    for (auto x : v) sq += (x - mean) * (x - mean);
-    s.stddev = std::sqrt(sq / n);
-    return s;
-}
-
 // Bitmap loaders (same set as Q1/Q12/Q14).
 static ComBit q15_load_cb(const std::string& p) {
     std::ifstream in(p, std::ios::binary);
@@ -168,19 +150,6 @@ static ewah::EWAHBoolArray<uint64_t> q15_load_ew(const std::string& p) {
 }
 
 // Byte-LUT for MSB-first bit extraction (same as Q1/Q14).
-struct Q15ByteEntry { uint8_t count; uint8_t pos[8]; };
-static Q15ByteEntry q15_byte_lut[256];
-static bool q15_byte_lut_init = []() {
-    for (int v = 0; v < 256; v++) {
-        uint8_t c = 0;
-        for (int b = 7; b >= 0; b--)
-            if (v & (1 << b))
-                q15_byte_lut[v].pos[c++] = 7 - b;
-        q15_byte_lut[v].count = c;
-    }
-    return true;
-}();
-
 // Q15 fused per-row contribution (units: hundredths-of-a-cent — both
 // `pp` and `dp` are stored ×100; the printed dollars value divides by
 // 1e4 at the end).  Cross-backend consistency is checked on the int64
@@ -497,7 +466,7 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
                 for (size_t bi = 0; bi < n; bi++) {
                     uint8_t b = data[bi];
                     if (b == 0) { row_base += 8; continue; }
-                    const auto& entry = q15_byte_lut[b];
+                    const auto& entry = bm_bench::byte_lut[b];
                     for (int k = 0; k < entry.count; k++) {
                         size_t r = row_base + entry.pos[k];
                         rev_buf[sp[r]] += Q15_REV_CONTRIB(pp, dp, r);
@@ -927,9 +896,9 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
     auto print_stats = [&](const char* lbl, std::vector<double>& or_t,
                            std::vector<double>& agg_t, std::vector<double>& tot_t) {
         if (or_t.empty()) return;
-        auto so = q15_compute_stats(or_t);
-        auto sa = q15_compute_stats(agg_t);
-        auto st = q15_compute_stats(tot_t);
+        auto so = bm_bench::compute_stats(or_t);
+        auto sa = bm_bench::compute_stats(agg_t);
+        auto st = bm_bench::compute_stats(tot_t);
         std::cout << "  " << std::left << std::setw(5) << lbl
                   << " OR="     << std::fixed << std::setprecision(2) << std::setw(7) << so.median
                   << " +/- "    << std::setw(5) << so.stddev
@@ -965,9 +934,9 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
             auto wrow = [&](const char* lbl, std::vector<double>& or_t,
                             std::vector<double>& agg_t, std::vector<double>& tot_t) {
                 if (or_t.empty()) return;
-                auto so = q15_compute_stats(or_t);
-                auto sa = q15_compute_stats(agg_t);
-                auto st = q15_compute_stats(tot_t);
+                auto so = bm_bench::compute_stats(or_t);
+                auto sa = bm_bench::compute_stats(agg_t);
+                auto st = bm_bench::compute_stats(tot_t);
                 csv << lbl << "," << so.median << "," << sa.median << "," << st.median << "\n";
             };
             wrow("CB",  cb_or_t,  cb_agg_t,  cb_tot_t);

@@ -1,0 +1,192 @@
+# cwd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev
+# cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(1);
+
+================================================================
+  TPC-H Q1 Benchmark — ComBit vs WAH vs CRoaring vs EWAH (SF10)
+  Complement approach: OR days 2437..max → NOT
+  TPC-H params: l_shipdate <= DATE '1998-12-01' - INTERVAL '90' DAY (= 1998-09-02)
+  Bitmap dirs: tpch_q1_wah tpch_q1_combit tpch_q1_croaring tpch_q1_ewah
+  Iterations: 10 (first 2 = warm-up)
+================================================================
+
+[Pre-load] Loading 59986052 rows (4 columns) ...
+[Pre-load] Done in 1448.34 ms
+
+[Load] Loading bitmaps (mode=ALL)...
+  Shipdate: cutoff=2436 max=2526 complement OR: 90 bitmaps (days 2437..2526)
+  WAH load:      50.713 ms
+  ComBit load:   85.427 ms
+  CRoaring load: 38.159 ms
+  CRR load:      39.221 ms
+  EWAH load:     30.763 ms
+  Bitset load:   715.467 ms (shared by BS / BSA)
+  Concise load:  1181.6 ms (incl. universe build)
+  WAH      on disk: 482.24 MiB
+  ComBit   on disk: 539.93 MiB
+  CRoaring on disk: 167.86 MiB (shared by CR / CRR)
+  EWAH     on disk: 914.50 MiB
+  Bitset in mem:    679.34 MiB (rebuilt from CRoaring at load)
+  Concise in mem:   40.13 MiB (rebuilt from CRoaring + universe)
+
+--- Iteration 1/10 (warm-up) ---
+  WAH:  OR_ship=3.94  NOT=0.30  AND+Agg=721.95  Total=726.19  rows=59142609
+  CB:   OR_ship=12.49  NOT=0.80  AND+Agg=419.93  Total=433.21  rows=59142609
+  CR:   OR_ship=31.88  NOT=1.46  AND+Agg=499.60  Total=532.95  rows=59142609
+  CRR:  OR_ship=7.48  NOT=1.32  AND+Agg=499.40  Total=508.20  rows=59142609
+  EW:   OR_ship=73.74  NOT=1.73  AND+Agg=421.51  Total=496.97  rows=59142609
+  BS:   OR_ship=89.45  NOT=0.34  AND+Agg=319.96  Total=409.75  rows=59142609
+  BSA:  OR_ship=58.95  NOT=0.30  AND+Agg=313.76  Total=373.01  rows=59142609
+  CON:  OR_ship=88.22  NOT=8.76  AND+Agg=534.87  Total=631.86  rows=59142609
+
+--- Iteration 2/10 (warm-up) ---
+  WAH:  OR_ship=4.05  NOT=0.30  AND+Agg=718.10  Total=722.45  rows=59142609
+  CB:   OR_ship=13.79  NOT=0.96  AND+Agg=415.90  Total=430.65  rows=59142609
+  CR:   OR_ship=32.32  NOT=1.68  AND+Agg=500.71  Total=534.71  rows=59142609
+  CRR:  OR_ship=7.51  NOT=1.29  AND+Agg=499.72  Total=508.53  rows=59142609
+  EW:   OR_ship=73.10  NOT=1.69  AND+Agg=411.15  Total=485.94  rows=59142609
+  BS:   OR_ship=89.20  NOT=0.35  AND+Agg=319.43  Total=408.99  rows=59142609
+  BSA:  OR_ship=58.92  NOT=0.29  AND+Agg=313.08  Total=372.29  rows=59142609
+  CON:  OR_ship=88.18  NOT=8.58  AND+Agg=530.31  Total=627.07  rows=59142609
+
+--- Iteration 3/10 ---
+  WAH:  OR_ship=4.19  NOT=0.30  AND+Agg=724.79  Total=729.28  rows=59142609
+  CB:   OR_ship=14.15  NOT=0.91  AND+Agg=420.84  Total=435.91  rows=59142609
+  CR:   OR_ship=32.34  NOT=1.68  AND+Agg=506.11  Total=540.12  rows=59142609
+  CRR:  OR_ship=7.94  NOT=1.35  AND+Agg=504.68  Total=513.98  rows=59142609
+  EW:   OR_ship=73.58  NOT=1.69  AND+Agg=415.35  Total=490.62  rows=59142609
+  BS:   OR_ship=89.47  NOT=0.34  AND+Agg=320.92  Total=410.72  rows=59142609
+  BSA:  OR_ship=58.86  NOT=0.29  AND+Agg=312.71  Total=371.86  rows=59142609
+  CON:  OR_ship=88.06  NOT=8.64  AND+Agg=529.93  Total=626.63  rows=59142609
+
+--- Iteration 4/10 ---
+  WAH:  OR_ship=3.71  NOT=0.32  AND+Agg=718.32  Total=722.35  rows=59142609
+  CB:   OR_ship=14.28  NOT=1.14  AND+Agg=415.99  Total=431.42  rows=59142609
+  CR:   OR_ship=32.33  NOT=1.63  AND+Agg=499.49  Total=533.45  rows=59142609
+  CRR:  OR_ship=7.50  NOT=1.29  AND+Agg=500.10  Total=508.89  rows=59142609
+  EW:   OR_ship=73.41  NOT=1.73  AND+Agg=411.46  Total=486.60  rows=59142609
+  BS:   OR_ship=89.50  NOT=0.34  AND+Agg=317.44  Total=407.28  rows=59142609
+  BSA:  OR_ship=58.96  NOT=0.29  AND+Agg=313.60  Total=372.85  rows=59142609
+  CON:  OR_ship=88.09  NOT=10.03  AND+Agg=530.92  Total=629.04  rows=59142609
+
+--- Iteration 5/10 ---
+  WAH:  OR_ship=3.69  NOT=0.32  AND+Agg=718.46  Total=722.47  rows=59142609
+  CB:   OR_ship=14.37  NOT=1.14  AND+Agg=415.81  Total=431.31  rows=59142609
+  CR:   OR_ship=32.27  NOT=1.65  AND+Agg=499.70  Total=533.62  rows=59142609
+  CRR:  OR_ship=7.89  NOT=1.36  AND+Agg=499.23  Total=508.48  rows=59142609
+  EW:   OR_ship=73.10  NOT=1.68  AND+Agg=412.50  Total=487.28  rows=59142609
+  BS:   OR_ship=89.78  NOT=0.34  AND+Agg=319.09  Total=409.22  rows=59142609
+  BSA:  OR_ship=59.16  NOT=0.29  AND+Agg=313.89  Total=373.33  rows=59142609
+  CON:  OR_ship=88.14  NOT=8.68  AND+Agg=529.13  Total=625.95  rows=59142609
+
+--- Iteration 6/10 ---
+  WAH:  OR_ship=3.94  NOT=0.32  AND+Agg=719.18  Total=723.44  rows=59142609
+  CB:   OR_ship=16.75  NOT=0.87  AND+Agg=415.71  Total=433.34  rows=59142609
+  CR:   OR_ship=32.29  NOT=1.59  AND+Agg=499.15  Total=533.03  rows=59142609
+  CRR:  OR_ship=7.50  NOT=1.32  AND+Agg=499.82  Total=508.64  rows=59142609
+  EW:   OR_ship=73.01  NOT=1.67  AND+Agg=411.76  Total=486.45  rows=59142609
+  BS:   OR_ship=89.28  NOT=0.35  AND+Agg=318.48  Total=408.11  rows=59142609
+  BSA:  OR_ship=59.15  NOT=0.30  AND+Agg=320.14  Total=379.59  rows=59142609
+  CON:  OR_ship=88.11  NOT=8.59  AND+Agg=537.49  Total=634.19  rows=59142609
+
+--- Iteration 7/10 ---
+  WAH:  OR_ship=4.03  NOT=0.30  AND+Agg=720.11  Total=724.45  rows=59142609
+  CB:   OR_ship=13.94  NOT=0.92  AND+Agg=416.17  Total=431.04  rows=59142609
+  CR:   OR_ship=33.16  NOT=1.70  AND+Agg=499.54  Total=534.40  rows=59142609
+  CRR:  OR_ship=7.64  NOT=1.35  AND+Agg=498.97  Total=507.97  rows=59142609
+  EW:   OR_ship=73.21  NOT=1.69  AND+Agg=411.83  Total=486.73  rows=59142609
+  BS:   OR_ship=89.39  NOT=0.34  AND+Agg=318.85  Total=408.57  rows=59142609
+  BSA:  OR_ship=59.22  NOT=0.30  AND+Agg=315.15  Total=374.67  rows=59142609
+  CON:  OR_ship=88.32  NOT=8.62  AND+Agg=530.46  Total=627.40  rows=59142609
+
+--- Iteration 8/10 ---
+  WAH:  OR_ship=3.85  NOT=0.32  AND+Agg=719.63  Total=723.80  rows=59142609
+  CB:   OR_ship=14.53  NOT=0.96  AND+Agg=414.30  Total=429.78  rows=59142609
+  CR:   OR_ship=32.19  NOT=1.62  AND+Agg=500.56  Total=534.37  rows=59142609
+  CRR:  OR_ship=7.83  NOT=1.33  AND+Agg=499.47  Total=508.64  rows=59142609
+  EW:   OR_ship=73.46  NOT=1.69  AND+Agg=415.82  Total=490.97  rows=59142609
+  BS:   OR_ship=92.12  NOT=0.34  AND+Agg=320.36  Total=412.83  rows=59142609
+  BSA:  OR_ship=58.81  NOT=0.30  AND+Agg=315.06  Total=374.18  rows=59142609
+  CON:  OR_ship=88.34  NOT=8.61  AND+Agg=532.75  Total=629.69  rows=59142609
+
+--- Iteration 9/10 ---
+  WAH:  OR_ship=3.56  NOT=0.31  AND+Agg=719.32  Total=723.18  rows=59142609
+  CB:   OR_ship=13.81  NOT=1.12  AND+Agg=414.97  Total=429.90  rows=59142609
+  CR:   OR_ship=32.19  NOT=1.65  AND+Agg=499.49  Total=533.33  rows=59142609
+  CRR:  OR_ship=7.40  NOT=1.29  AND+Agg=499.22  Total=507.91  rows=59142609
+  EW:   OR_ship=73.59  NOT=1.70  AND+Agg=415.49  Total=490.78  rows=59142609
+  BS:   OR_ship=91.82  NOT=0.35  AND+Agg=321.84  Total=414.01  rows=59142609
+  BSA:  OR_ship=58.98  NOT=0.30  AND+Agg=313.69  Total=372.98  rows=59142609
+  CON:  OR_ship=88.31  NOT=8.64  AND+Agg=535.64  Total=632.60  rows=59142609
+
+--- Iteration 10/10 ---
+  WAH:  OR_ship=3.47  NOT=0.32  AND+Agg=718.50  Total=722.28  rows=59142609
+  CB:   OR_ship=14.06  NOT=1.12  AND+Agg=415.38  Total=430.57  rows=59142609
+  CR:   OR_ship=32.18  NOT=1.69  AND+Agg=499.90  Total=533.78  rows=59142609
+  CRR:  OR_ship=7.92  NOT=1.34  AND+Agg=500.19  Total=509.45  rows=59142609
+  EW:   OR_ship=73.05  NOT=1.70  AND+Agg=411.53  Total=486.27  rows=59142609
+  BS:   OR_ship=89.57  NOT=0.34  AND+Agg=318.99  Total=408.90  rows=59142609
+  BSA:  OR_ship=58.96  NOT=0.29  AND+Agg=314.74  Total=373.99  rows=59142609
+  CON:  OR_ship=88.26  NOT=8.69  AND+Agg=530.20  Total=627.14  rows=59142609
+
+================================================================
+  Q1 Correctness Validation
+================================================================
+  Row counts: WAH=59142609 CB=59142609 CR=59142609 CRR=59142609 EW=59142609 BS=59142609 BSA=59142609 CON=59142609
+
+  Q1 Results (from ComBit):
+  rf ls  sum_qty       sum_base_price  sum_disc_price     sum_charge        avg_qty  avg_price  avg_disc  count
+  A  F  377518399.00  566065727797.25   537759104278.07     559276670892.12     25.50   38237.15      0.05  14804077
+  N  F    9851614.00  14767438399.17    14028805792.21      14590490998.37     25.52   38257.81      0.05  385998
+  N  O  743124873.00  1114302286901.88  1058580922144.96    1100937000170.59     25.50   38233.90      0.05  29144351
+  R  F  377732830.00  566431054976.00   538110922664.77     559634780885.09     25.51   38251.22      0.05  14808183
+  Consistency: ALL MATCH
+
+[Baseline] DuckDB native SQL count(*) = 59142609  (single run: 184.58 ms)
+[OK] all active backends match DuckDB SQL ground truth (59142609 rows).
+
+================================================================
+  Q1 RESULTS (8 measured iterations, median ± stddev)
+================================================================
+                       WAH (ms)              ComBit (ms)         CRoaring (ms)      CRoar+Run (ms)       EWAH (ms)          CB vs WAH   CR vs WAH  CRR vs WAH   EW vs WAH
+  --------------------------------------------------------------------------------------------------------------------------------
+  OR_ship             3.78 ±   0.23        14.22 ±   0.88        32.28 ±   0.31         7.74 ±   0.20        73.31 ±   0.22      0.27x      0.12x      0.49x      0.05x
+  NOT                 0.32 ±   0.01         1.04 ±   0.11         1.65 ±   0.04         1.34 ±   0.03         1.69 ±   0.02      0.31x      0.19x      0.24x      0.19x
+  AND+Agg           719.25 ±   1.98       415.76 ±   1.86       499.62 ±   2.16       499.64 ±   1.74       412.16 ±   1.84      1.73x      1.44x      1.44x      1.75x
+  --------------------------------------------------------------------------------------------------------------------------------
+  TOTAL             723.31 ±   2.15       431.17 ±   1.91       533.70 ±   2.17       508.64 ±   1.85       487.01 ±   2.02      1.68x      1.36x      1.42x      1.49x
+
+  WAH rows:        59142609
+  ComBit rows:     59142609
+  CRoaring rows:   59142609
+  CRoar+Run rows:  59142609
+  EWAH rows:       59142609
+================================================================
+
+
+================================================================
+  Q1 BASELINE BACKENDS (no compression / Concise)
+================================================================
+                       BS (ms)              BSA (ms)            Concise (ms)        BS vs WAH   BSA vs WAH   CON vs WAH
+  -------------------------------------------------------------------------------------------------------------
+  OR_ship            89.53 ±   1.08        58.97 ±   0.14        88.20 ±   0.11      0.04x      0.06x      0.04x
+  NOT                 0.34 ±   0.00         0.29 ±   0.01         8.64 ±   0.46      0.94x      1.07x      0.04x
+  AND+Agg           319.04 ±   1.34       314.31 ±   2.14       530.69 ±   2.81      2.25x      2.29x      1.36x
+  -------------------------------------------------------------------------------------------------------------
+  TOTAL             409.06 ±   2.22       373.66 ±   2.21       628.22 ±   2.77      1.77x      1.94x      1.15x
+
+  Bitset rows:         59142609
+  Bitset+AVX512 rows:  59142609
+  Concise rows:        59142609
+================================================================
+
+  [CSV] Results written to: q1_results_SF10.csv
+┌──────────────┬──────────────┬───────────────┬──────────────────┬────────────────────┬──────────────────────┬────────────────────┬────────────────────┬─────────────────────┬─────────────┐
+│ l_returnflag │ l_linestatus │    sum_qty    │  sum_base_price  │   sum_disc_price   │      sum_charge      │      avg_qty       │     avg_price      │      avg_disc       │ count_order │
+│   varchar    │   varchar    │ decimal(38,2) │  decimal(38,2)   │   decimal(38,4)    │    decimal(38,6)     │       double       │       double       │       double        │    int64    │
+├──────────────┼──────────────┼───────────────┼──────────────────┼────────────────────┼──────────────────────┼────────────────────┼────────────────────┼─────────────────────┼─────────────┤
+│ A            │ F            │  377518399.00 │  566065727797.25 │  537759104278.0656 │  559276670892.116819 │ 25.500975103007097 │  38237.15100895854 │  0.0500065745402432 │    14804077 │
+│ N            │ F            │    9851614.00 │   14767438399.17 │   14028805792.2114 │   14590490998.366737 │ 25.522448302840946 │  38257.81066008114 │ 0.04997336773765667 │      385998 │
+│ N            │ O            │  743124873.00 │ 1114302286901.88 │ 1058580922144.9638 │ 1100937000170.591854 │ 25.498075870689316 │  38233.90292348181 │ 0.05000081182113131 │    29144351 │
+│ R            │ F            │  377732830.00 │  566431054976.00 │  538110922664.7677 │  559634780885.086257 │  25.50838478968014 │ 38251.219273559764 │ 0.04999679231408742 │    14808183 │
+└──────────────┴──────────────┴───────────────┴──────────────────┴────────────────────┴──────────────────────┴────────────────────┴────────────────────┴─────────────────────┴─────────────┘
+  [Breakdown] ComBit   L1=29.51 MiB  L2=4.26 MiB  L3=9.67 MiB  L4=0.02 MiB  total=43.46 MiB

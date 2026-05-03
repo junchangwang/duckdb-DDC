@@ -155,6 +155,22 @@ inline void warn_if_sf1() {
     }
 }
 
+// --- Byte LUT: byte value → list of set-bit positions (0..7).
+// Shared across queries that walk for_each_literal output (Q1/Q3/Q5/Q10/Q14...).
+
+struct ByteLUT { uint8_t count; uint8_t pos[8]; };
+
+inline ByteLUT byte_lut[256];
+inline const bool byte_lut_init = []() {
+    for (int v = 0; v < 256; v++) {
+        uint8_t c = 0;
+        for (int b = 7; b >= 0; b--)
+            if (v & (1 << b)) byte_lut[v].pos[c++] = 7 - b;
+        byte_lut[v].count = c;
+    }
+    return true;
+}();
+
 // --- Stats helper (median / stddev / min / max) ---
 
 struct Stats { double median = 0, stddev = 0, min_val = 0, max_val = 0; };

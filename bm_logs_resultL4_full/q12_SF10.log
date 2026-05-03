@@ -1,0 +1,82 @@
+# cwd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev
+# cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(12);
+
+================================================================
+  TPC-H Q12 Benchmark — ComBit vs WAH vs CRoaring vs EWAH (SF10)
+  OR receiptdate days 731..1095 (365 bitmaps)
+  AND commit_lt_receipt, ship_lt_commit, then per-shipmode AND + 2x popcount_and
+  TPC-H params: shipmodes={MAIL, SHIP}, receiptdate [1994-01-01, 1995-01-01)
+  Bitmap dirs: tpch_q12_combit tpch_q12_croaring tpch_q12_wah tpch_q12_ewah
+  Iterations: 10 (first 2 = warm-up)
+================================================================
+[Build priority] high=24010385 low=35975667 in 2128.27 ms
+
+[Load] Loading bitmaps (mode=ALL)...
+  WAH load:      953.893 ms
+  ComBit load:   1858.94 ms
+  CRoaring load: 726.755 ms
+  CRR load:      341.717 ms
+  EWAH load:     1200.81 ms
+  Bitset load:   1585.43 ms (shared by BS / BSA)
+  Concise load:  1067.88 ms
+  WAH      on disk: 97.15 MiB
+  ComBit   on disk: 100.81 MiB
+  CRoaring on disk: 48.56 MiB (shared by CR / CRR)
+  EWAH     on disk: 162.00 MiB
+
+--- Iteration 1/10 (warm-up) ---
+  CB:   OR=79.53  AND_pred=2.05  AND+Pop=10.28  Total=91.86  MAIL=(62071,93045)  SHIP=(62426,93261)
+  CR:   OR=205.99  AND_pred=11.05  AND+Pop=5.25  Total=222.29
+  CRR:  OR=35.36  AND_pred=11.03  AND+Pop=5.12  Total=51.51
+  WAH:  OR=40.26  AND_pred=1.39  AND+Pop=15.07  Total=56.73
+  EW:   OR=876.93  AND_pred=13.87  AND+Pop=22.61  Total=913.42
+  BS:   OR=356.12  AND_pred=1.95  AND+Pop=8.32  Total=366.39
+  BSA:  OR=236.08  AND_pred=1.30  AND+Pop=6.28  Total=243.65
+  CON:  OR=982.83  AND_pred=71.28  AND+Pop=81.20  Total=1135.31
+
+--- Iteration 2/10 (warm-up) ---
+  CB:   OR=79.47  AND_pred=2.05  AND+Pop=10.29  Total=91.82  MAIL=(62071,93045)  SHIP=(62426,93261)
+  CR:   OR=206.16  AND_pred=11.04  AND+Pop=5.15  Total=222.36
+  CRR:  OR=35.26  AND_pred=11.03  AND+Pop=5.04  Total=51.33
+  WAH:  OR=38.09  AND_pred=1.40  AND+Pop=13.03  Total=52.52
+  EW:   OR=873.03  AND_pred=15.85  AND+Pop=22.52  Total=911.40
+  BS:   OR=355.62  AND_pred=1.96  AND+Pop=8.30  Total=365.89
+  BSA:  OR=235.35  AND_pred=1.29  AND+Pop=6.01  Total=242.65
+  CON:  OR=979.61  AND_pred=71.00  AND+Pop=81.67  Total=1132.28
+
+--- Iteration 3/10 ---
+  CB:   OR=79.09  AND_pred=2.04  AND+Pop=10.34  Total=91.47  MAIL=(62071,93045)  SHIP=(62426,93261)
+  CR:   OR=206.69  AND_pred=10.96  AND+Pop=5.18  Total=222.85
+  CRR:  OR=35.43  AND_pred=11.04  AND+Pop=5.03  Total=51.50
+  WAH:  OR=38.74  AND_pred=1.41  AND+Pop=13.06  Total=53.21
+  EW:   OR=875.32  AND_pred=12.16  AND+Pop=21.93  Total=909.42
+  BS:   OR=356.50  AND_pred=1.93  AND+Pop=11.24  Total=369.68
+  BSA:  OR=235.78  AND_pred=1.29  AND+Pop=6.09  Total=243.17
+  CON:  OR=981.92  AND_pred=70.19  AND+Pop=81.36  Total=1133.47
+
+--- Iteration 4/10 ---
+  CB:   OR=79.53  AND_pred=2.04  AND+Pop=10.36  Total=91.94  MAIL=(62071,93045)  SHIP=(62426,93261)
+  CR:   OR=206.36  AND_pred=11.04  AND+Pop=5.17  Total=222.57
+  CRR:  OR=35.42  AND_pred=11.06  AND+Pop=5.03  Total=51.50
+  WAH:  OR=38.17  AND_pred=1.40  AND+Pop=13.16  Total=52.74
+  EW:   OR=879.73  AND_pred=11.97  AND+Pop=21.81  Total=913.51
+  BS:   OR=355.96  AND_pred=1.94  AND+Pop=10.68  Total=368.58
+  BSA:  OR=236.42  AND_pred=1.29  AND+Pop=6.12  Total=243.84
+  CON:  OR=988.28  AND_pred=70.53  AND+Pop=81.17  Total=1139.98
+
+--- Iteration 5/10 ---
+  CB:   OR=79.80  AND_pred=2.04  AND+Pop=10.34  Total=92.18  MAIL=(62071,93045)  SHIP=(62426,93261)
+  CR:   OR=206.72  AND_pred=10.99  AND+Pop=5.17  Total=222.88
+  CRR:  OR=35.25  AND_pred=11.06  AND+Pop=5.08  Total=51.40
+  WAH:  OR=38.24  AND_pred=1.40  AND+Pop=13.17  Total=52.81
+  EW:   OR=878.86  AND_pred=12.02  AND+Pop=21.81  Total=912.70
+  BS:   OR=354.11  AND_pred=1.94  AND+Pop=11.03  Total=367.08
+  BSA:  OR=235.49  AND_pred=1.28  AND+Pop=5.96  Total=242.74
+  CON:  OR=984.98  AND_pred=70.66  AND+Pop=80.96  Total=1136.60
+
+--- Iteration 6/10 ---
+  CB:   OR=80.05  AND_pred=2.04  AND+Pop=10.43  Total=92.52  MAIL=(62071,93045)  SHIP=(62426,93261)
+  CR:   OR=206.73  AND_pred=11.11  AND+Pop=5.14  Total=222.98
+  CRR:  OR=35.47  AND_pred=11.05  AND+Pop=5.04  Total=51.56
+  WAH:  OR=38.11  AND_pred=1.39  AND+Pop=13.14  Total=52.65
+  EW:   OR=879.63  AND_pred=12.05  AND+Pop=21.89  Total=913.58

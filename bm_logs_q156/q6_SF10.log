@@ -1,0 +1,152 @@
+# cwd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev
+# pattern_qs_per_backend Q6
+
+# === Backend CB (DEBIT_BM=cb) ===
+# sql=
+PRAGMA load_bitmap('shipdate_GE');
+PRAGMA load_bitmap('discount');
+PRAGMA load_bitmap('quantity');
+PRAGMA bm_tpch(6);
+[load_bitmap] shipdate_GE: scanned 59986052 rows in 941 ms
+[load_bitmap] shipdate_GE: built ComBitGE index (7 keys, 48.8275 MB) in 2628 ms
+[load_bitmap] discount: scanned 59986052 rows in 584 ms
+[load_bitmap] discount: built ComBit index (11 keys, 89.912 MB) in 2588 ms
+[load_bitmap] quantity: scanned 59986052 rows in 562 ms
+[load_bitmap] quantity: built ComBit index (50 keys, 257.199 MB) in 3407 ms
+
+================================================================
+  TPC-H Q6 (BitEngine pattern, GE shipdate + range disc/qty)
+  Pre-loaded: bitmap_shipdate_GE + bitmap_discount + bitmap_quantity
+================================================================
+  [Q6 ComBit] ship_ge=2.032  disc_or=6.337  qty_or=23.861  AND=5.289  rowids=7.13  total=46.34  rows=1139264
+┌─────────────────┐
+│     revenue     │
+│  decimal(38,4)  │
+├─────────────────┤
+│ 1230113636.0101 │
+└─────────────────┘
+
+# === Backend CR (DEBIT_BM=cr) ===
+# sql=
+PRAGMA load_bitmap('shipdate_GE');
+PRAGMA load_bitmap('discount');
+PRAGMA load_bitmap('quantity');
+PRAGMA bm_tpch(6);
+[load_bitmap] shipdate_GE: scanned 59986052 rows in 935 ms
+[load_bitmap] shipdate_GE: built CRoaring index (7 keys, 52.5623 MB) in 811 ms
+[load_bitmap] discount: scanned 59986052 rows in 591 ms
+[load_bitmap] discount: built CRoaring index (11 keys, 82.5744 MB) in 776 ms
+[load_bitmap] quantity: scanned 59986052 rows in 590 ms
+[load_bitmap] quantity: built CRoaring index (50 keys, 120.339 MB) in 811 ms
+
+================================================================
+  TPC-H Q6 (BitEngine pattern, GE shipdate + range disc/qty)
+  Pre-loaded: bitmap_shipdate_GE + bitmap_discount + bitmap_quantity
+================================================================
+  [Q6 CRoaring] ship_ge=0.948  disc_or=2.337  qty_or=33.27  AND=13.301  rowids=5.76  total=55.624  rows=1139264
+┌─────────────────┐
+│     revenue     │
+│  decimal(38,4)  │
+├─────────────────┤
+│ 1230113636.0101 │
+└─────────────────┘
+
+# === Backend CRR (DEBIT_BM=crr) ===
+# sql=
+PRAGMA load_bitmap('shipdate_GE');
+PRAGMA load_bitmap('discount');
+PRAGMA load_bitmap('quantity');
+PRAGMA bm_tpch(6);
+[load_bitmap] shipdate_GE: scanned 59986052 rows in 939 ms
+[load_bitmap] shipdate_GE: built CRoaringRun index (7 keys, 52.5163 MB) in 827 ms
+[load_bitmap] discount: scanned 59986052 rows in 594 ms
+[load_bitmap] discount: built CRoaringRun index (11 keys, 82.5744 MB) in 775 ms
+[load_bitmap] quantity: scanned 59986052 rows in 590 ms
+[load_bitmap] quantity: built CRoaringRun index (50 keys, 120.339 MB) in 808 ms
+
+================================================================
+  TPC-H Q6 (BitEngine pattern, GE shipdate + range disc/qty)
+  Pre-loaded: bitmap_shipdate_GE + bitmap_discount + bitmap_quantity
+================================================================
+  [Q6 CRoaringRun] ship_ge=0.944  disc_or=2.372  qty_or=33.846  AND=13.523  rowids=5.767  total=56.461  rows=1139264
+┌─────────────────┐
+│     revenue     │
+│  decimal(38,4)  │
+├─────────────────┤
+│ 1230113636.0101 │
+└─────────────────┘
+
+# === Backend WAH (DEBIT_BM=wah) ===
+# sql=
+PRAGMA load_bitmap('shipdate_GE');
+PRAGMA load_bitmap('discount');
+PRAGMA load_bitmap('quantity');
+PRAGMA bm_tpch(6);
+[load_bitmap] shipdate_GE: scanned 59986052 rows in 934 ms
+[load_bitmap] shipdate_GE: built WAH index (7 keys, 50.853 MB) in 1393 ms
+[load_bitmap] discount: scanned 59986052 rows in 584 ms
+[load_bitmap] discount: built WAH index (11 keys, 84.9102 MB) in 1803 ms
+[load_bitmap] quantity: scanned 59986052 rows in 566 ms
+[load_bitmap] quantity: built WAH index (50 keys, 276.429 MB) in 4092 ms
+
+================================================================
+  TPC-H Q6 (BitEngine pattern, GE shipdate + range disc/qty)
+  Pre-loaded: bitmap_shipdate_GE + bitmap_discount + bitmap_quantity
+================================================================
+  [Q6 WAH] ship_ge=0.004  disc_or=11.102  qty_or=91.288  AND=3.711  rowids=33.955  total=140.07  rows=1139264
+┌─────────────────┐
+│     revenue     │
+│  decimal(38,4)  │
+├─────────────────┤
+│ 1230113636.0101 │
+└─────────────────┘
+
+# === Backend EW (DEBIT_BM=ew) ===
+# sql=
+PRAGMA load_bitmap('shipdate_GE');
+PRAGMA load_bitmap('discount');
+PRAGMA load_bitmap('quantity');
+PRAGMA bm_tpch(6);
+[load_bitmap] shipdate_GE: scanned 59986052 rows in 940 ms
+[load_bitmap] shipdate_GE: built EWAH index (7 keys, 52.2642 MB) in 745 ms
+[load_bitmap] discount: scanned 59986052 rows in 586 ms
+[load_bitmap] discount: built EWAH index (11 keys, 82.4806 MB) in 729 ms
+[load_bitmap] quantity: scanned 59986052 rows in 564 ms
+[load_bitmap] quantity: built EWAH index (50 keys, 346.692 MB) in 1141 ms
+
+================================================================
+  TPC-H Q6 (BitEngine pattern, GE shipdate + range disc/qty)
+  Pre-loaded: bitmap_shipdate_GE + bitmap_discount + bitmap_quantity
+================================================================
+  [Q6 EWAH] ship_ge=2.689  disc_or=7.969  qty_or=143.904  AND=12.235  rowids=12.077  total=178.886  rows=1139264
+┌─────────────────┐
+│     revenue     │
+│  decimal(38,4)  │
+├─────────────────┤
+│ 1230113636.0101 │
+└─────────────────┘
+
+# === Backend CON (DEBIT_BM=con) ===
+# sql=
+PRAGMA load_bitmap('shipdate_GE');
+PRAGMA load_bitmap('discount');
+PRAGMA load_bitmap('quantity');
+PRAGMA bm_tpch(6);
+[load_bitmap] shipdate_GE: scanned 59986052 rows in 948 ms
+[load_bitmap] shipdate_GE: built Concise index (7 keys, 239.944 MB) in 976 ms
+[load_bitmap] discount: scanned 59986052 rows in 594 ms
+[load_bitmap] discount: built Concise index (11 keys, 239.944 MB) in 1030 ms
+[load_bitmap] quantity: scanned 59986052 rows in 599 ms
+[load_bitmap] quantity: built Concise index (50 keys, 239.944 MB) in 1622 ms
+
+================================================================
+  TPC-H Q6 (BitEngine pattern, GE shipdate + range disc/qty)
+  Pre-loaded: bitmap_shipdate_GE + bitmap_discount + bitmap_quantity
+================================================================
+  [Q6 Concise] ship_ge=1.177  disc_or=25.209  qty_or=454.653  AND=66.225  rowids=15.161  total=562.443  rows=1139264
+┌─────────────────┐
+│     revenue     │
+│  decimal(38,4)  │
+├─────────────────┤
+│ 1230113636.0101 │
+└─────────────────┘

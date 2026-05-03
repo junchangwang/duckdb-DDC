@@ -1,0 +1,170 @@
+# cwd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev
+# cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(14);
+
+================================================================
+  TPC-H Q14 Benchmark — 8 backends (SF10)
+  OR shipdate days 1339..1368 (30 bitmaps), AND is_promo, then per-row revenue aggregation
+  TPC-H params: l_shipdate [1995-09-01, 1995-10-01), p_type LIKE 'PROMO%'
+  Bitmap dirs: tpch_q14_combit tpch_q14_croaring tpch_q14_wah tpch_q14_ewah
+  Iterations: 10 (first 2 = warm-up)
+================================================================
+
+[Pre-load] Loading 59986052 rows (price, discount) ...
+[Pre-load] Done in 782.894 ms
+
+[Load] Loading bitmaps (mode=ALL)...
+  WAH load:      13.708 ms
+  ComBit load:   32.123 ms
+  CRoaring load: 12.295 ms
+  CRR load:      13.301 ms
+  EWAH load:     11.207 ms
+  Bitset load:   145.806 ms (shared by BS / BSA)
+  Concise load:  115.498 ms
+  WAH      on disk: 7.38 MiB
+  ComBit   on disk: 6.43 MiB
+  CRoaring on disk: 7.16 MiB (shared by CR / CRR)
+  EWAH     on disk: 7.15 MiB
+
+--- Iteration 1/10 (warm-up) ---
+  CB:   OR=8.27  AND_pro=4.35  Agg=37.13  Total=49.75  promo=16.65%
+  CR:   OR=15.47  AND_pro=1.10  Agg=17.70  Total=34.27  promo=16.65%
+  CRR:  OR=6.35  AND_pro=1.12  Agg=13.25  Total=20.72  promo=16.65%
+  WAH:  OR=3.76  AND_pro=4.07  Agg=30.18  Total=38.01  promo=16.65%
+  EW:   OR=53.72  AND_pro=6.55  Agg=13.51  Total=73.78  promo=16.65%
+  BS:   OR=32.09  AND_pro=4.46  Agg=10.70  Total=47.24  promo=16.65%
+  BSA:  OR=20.02  AND_pro=1.72  Agg=10.70  Total=32.44  promo=16.65%
+  CON:  OR=67.60  AND_pro=18.37  Agg=16.95  Total=102.92  promo=16.65%
+
+--- Iteration 2/10 (warm-up) ---
+  CB:   OR=8.29  AND_pro=1.47  Agg=20.67  Total=30.43  promo=16.65%
+  CR:   OR=15.67  AND_pro=1.09  Agg=9.24  Total=26.00  promo=16.65%
+  CRR:  OR=7.41  AND_pro=1.13  Agg=8.66  Total=17.20  promo=16.65%
+  WAH:  OR=5.44  AND_pro=3.77  Agg=29.07  Total=38.29  promo=16.65%
+  EW:   OR=55.22  AND_pro=6.56  Agg=12.91  Total=74.69  promo=16.65%
+  BS:   OR=32.18  AND_pro=4.50  Agg=10.65  Total=47.34  promo=16.65%
+  BSA:  OR=19.87  AND_pro=1.79  Agg=10.56  Total=32.22  promo=16.65%
+  CON:  OR=67.40  AND_pro=18.39  Agg=15.98  Total=101.78  promo=16.65%
+
+--- Iteration 3/10 ---
+  CB:   OR=7.91  AND_pro=1.54  Agg=19.71  Total=29.16  promo=16.65%
+  CR:   OR=15.73  AND_pro=1.09  Agg=8.87  Total=25.70  promo=16.65%
+  CRR:  OR=6.32  AND_pro=1.14  Agg=8.77  Total=16.23  promo=16.65%
+  WAH:  OR=3.65  AND_pro=2.10  Agg=29.41  Total=35.16  promo=16.65%
+  EW:   OR=55.17  AND_pro=6.60  Agg=16.48  Total=78.25  promo=16.65%
+  BS:   OR=32.98  AND_pro=4.54  Agg=11.37  Total=48.90  promo=16.65%
+  BSA:  OR=19.91  AND_pro=1.83  Agg=11.18  Total=32.92  promo=16.65%
+  CON:  OR=67.59  AND_pro=18.47  Agg=19.46  Total=105.52  promo=16.65%
+
+--- Iteration 4/10 ---
+  CB:   OR=7.95  AND_pro=1.52  Agg=21.67  Total=31.14  promo=16.65%
+  CR:   OR=15.70  AND_pro=1.09  Agg=9.34  Total=26.12  promo=16.65%
+  CRR:  OR=6.38  AND_pro=1.12  Agg=8.63  Total=16.14  promo=16.65%
+  WAH:  OR=3.60  AND_pro=2.14  Agg=29.11  Total=34.85  promo=16.65%
+  EW:   OR=55.03  AND_pro=6.55  Agg=13.17  Total=74.75  promo=16.65%
+  BS:   OR=32.78  AND_pro=4.55  Agg=10.71  Total=48.04  promo=16.65%
+  BSA:  OR=19.87  AND_pro=1.71  Agg=10.77  Total=32.35  promo=16.65%
+  CON:  OR=67.49  AND_pro=18.43  Agg=15.70  Total=101.62  promo=16.65%
+
+--- Iteration 5/10 ---
+  CB:   OR=7.92  AND_pro=1.51  Agg=19.89  Total=29.32  promo=16.65%
+  CR:   OR=15.71  AND_pro=1.08  Agg=9.05  Total=25.84  promo=16.65%
+  CRR:  OR=6.38  AND_pro=1.12  Agg=8.69  Total=16.18  promo=16.65%
+  WAH:  OR=3.64  AND_pro=3.03  Agg=29.09  Total=35.76  promo=16.65%
+  EW:   OR=54.87  AND_pro=6.52  Agg=14.14  Total=75.54  promo=16.65%
+  BS:   OR=32.20  AND_pro=4.54  Agg=10.89  Total=47.63  promo=16.65%
+  BSA:  OR=19.79  AND_pro=1.66  Agg=10.74  Total=32.20  promo=16.65%
+  CON:  OR=67.75  AND_pro=18.47  Agg=17.22  Total=103.45  promo=16.65%
+
+--- Iteration 6/10 ---
+  CB:   OR=7.96  AND_pro=1.48  Agg=20.78  Total=30.22  promo=16.65%
+  CR:   OR=15.71  AND_pro=1.09  Agg=9.58  Total=26.39  promo=16.65%
+  CRR:  OR=6.37  AND_pro=1.11  Agg=8.93  Total=16.41  promo=16.65%
+  WAH:  OR=3.79  AND_pro=2.17  Agg=29.14  Total=35.11  promo=16.65%
+  EW:   OR=55.10  AND_pro=6.57  Agg=13.02  Total=74.70  promo=16.65%
+  BS:   OR=32.17  AND_pro=4.52  Agg=10.78  Total=47.47  promo=16.65%
+  BSA:  OR=20.02  AND_pro=1.74  Agg=10.68  Total=32.44  promo=16.65%
+  CON:  OR=67.58  AND_pro=18.47  Agg=15.88  Total=101.93  promo=16.65%
+
+--- Iteration 7/10 ---
+  CB:   OR=7.93  AND_pro=1.48  Agg=19.85  Total=29.27  promo=16.65%
+  CR:   OR=15.75  AND_pro=1.09  Agg=8.69  Total=25.54  promo=16.65%
+  CRR:  OR=6.35  AND_pro=1.11  Agg=8.51  Total=15.97  promo=16.65%
+  WAH:  OR=3.62  AND_pro=2.13  Agg=28.99  Total=34.74  promo=16.65%
+  EW:   OR=54.81  AND_pro=6.57  Agg=14.44  Total=75.82  promo=16.65%
+  BS:   OR=32.17  AND_pro=5.12  Agg=10.82  Total=48.11  promo=16.65%
+  BSA:  OR=19.85  AND_pro=1.77  Agg=10.78  Total=32.40  promo=16.65%
+  CON:  OR=67.50  AND_pro=18.43  Agg=17.86  Total=103.79  promo=16.65%
+
+--- Iteration 8/10 ---
+  CB:   OR=8.02  AND_pro=1.52  Agg=21.30  Total=30.84  promo=16.65%
+  CR:   OR=15.75  AND_pro=1.09  Agg=9.58  Total=26.43  promo=16.65%
+  CRR:  OR=6.32  AND_pro=1.12  Agg=8.71  Total=16.14  promo=16.65%
+  WAH:  OR=3.61  AND_pro=2.10  Agg=29.10  Total=34.82  promo=16.65%
+  EW:   OR=55.19  AND_pro=6.55  Agg=13.08  Total=74.82  promo=16.65%
+  BS:   OR=32.11  AND_pro=4.46  Agg=10.62  Total=47.19  promo=16.65%
+  BSA:  OR=19.84  AND_pro=1.72  Agg=10.76  Total=32.31  promo=16.65%
+  CON:  OR=67.61  AND_pro=18.41  Agg=15.56  Total=101.58  promo=16.65%
+
+--- Iteration 9/10 ---
+  CB:   OR=7.87  AND_pro=1.52  Agg=19.75  Total=29.14  promo=16.65%
+  CR:   OR=15.72  AND_pro=1.09  Agg=8.84  Total=25.65  promo=16.65%
+  CRR:  OR=6.32  AND_pro=1.13  Agg=8.62  Total=16.07  promo=16.65%
+  WAH:  OR=3.63  AND_pro=2.13  Agg=29.18  Total=34.95  promo=16.65%
+  EW:   OR=55.13  AND_pro=6.59  Agg=13.29  Total=75.02  promo=16.65%
+  BS:   OR=32.04  AND_pro=4.48  Agg=10.68  Total=47.21  promo=16.65%
+  BSA:  OR=19.86  AND_pro=1.72  Agg=10.57  Total=32.15  promo=16.65%
+  CON:  OR=67.49  AND_pro=18.44  Agg=15.96  Total=101.90  promo=16.65%
+
+--- Iteration 10/10 ---
+  CB:   OR=8.07  AND_pro=1.52  Agg=20.12  Total=29.71  promo=16.65%
+  CR:   OR=15.68  AND_pro=1.09  Agg=8.80  Total=25.57  promo=16.65%
+  CRR:  OR=6.32  AND_pro=1.13  Agg=8.56  Total=16.02  promo=16.65%
+  WAH:  OR=3.62  AND_pro=2.03  Agg=28.88  Total=34.53  promo=16.65%
+  EW:   OR=55.23  AND_pro=6.55  Agg=13.56  Total=75.33  promo=16.65%
+  BS:   OR=32.18  AND_pro=4.62  Agg=10.78  Total=47.58  promo=16.65%
+  BSA:  OR=19.80  AND_pro=1.73  Agg=10.66  Total=32.19  promo=16.65%
+  CON:  OR=67.48  AND_pro=18.38  Agg=15.86  Total=101.72  promo=16.65%
+
+================================================================
+  Q14 Correctness Validation
+================================================================
+  Q14 Result (ComBit):
+    promo_revenue = 16.6476  %  (promo_rev=45330799274176 total_rev=272296385352695)
+  Consistency: ALL MATCH
+
+[Baseline] DuckDB native SQL  (single run: 889.99 ms)
+  SQL ground truth:  promo_revenue = 16.6476 %
+[OK] all active backends match DuckDB SQL ground truth (promo_revenue within 0.0000).
+
+================================================================
+  Q14 RESULTS (8 measured iterations, median +/- stddev)
+================================================================
+                  CB (ms)         CR (ms)        CRR (ms)        WAH (ms)        EW (ms)
+  -----------------------------------------------------------------------------------------
+  OR_date           7.94 +/-  0.06     15.72 +/-  0.03      6.33 +/-  0.03      3.63 +/-  0.06     55.12 +/-  0.14
+  AND_pro           1.52 +/-  0.02      1.09 +/-  0.00      1.12 +/-  0.01      2.13 +/-  0.31      6.56 +/-  0.02
+  Agg              20.00 +/-  0.72      8.96 +/-  0.33      8.66 +/-  0.12     29.10 +/-  0.14     13.43 +/-  1.09
+  -----------------------------------------------------------------------------------------
+  TOTAL            29.52 +/-  0.74     25.77 +/-  0.34     16.14 +/-  0.13     34.90 +/-  0.35     75.18 +/-  1.10
+================================================================
+
+================================================================
+  Q14 BASELINE BACKENDS (no compression / Concise)
+================================================================
+                  BS (ms)         BSA (ms)        Concise (ms)     BS vs WAH   BSA vs WAH   CON vs WAH
+  ----------------------------------------------------------------------------------------------
+  OR_date          32.18 +/-  0.32     19.85 +/-  0.07     67.54 +/-  0.09      0.11x      0.18x      0.05x
+  AND_pro           4.54 +/-  0.20      1.73 +/-  0.05     18.44 +/-  0.03      0.47x      1.23x      0.12x
+  Agg              10.78 +/-  0.22     10.75 +/-  0.17     15.92 +/-  1.30      2.70x      2.71x      1.83x
+  ----------------------------------------------------------------------------------------------
+  TOTAL            47.60 +/-  0.53     32.33 +/-  0.23    101.91 +/-  1.34      0.73x      1.08x      0.34x
+================================================================
+
+  [CSV] Results written to: q14_results_SF10.csv
+┌────────────────────┐
+│   promo_revenue    │
+│       double       │
+├────────────────────┤
+│ 16.647594941615097 │
+└────────────────────┘
+  [Breakdown] ComBit   L1=6.19 MiB  L2=1.48 MiB  L3=3.46 MiB  L4=0.01 MiB  total=11.14 MiB

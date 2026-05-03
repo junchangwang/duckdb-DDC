@@ -1,0 +1,179 @@
+# cwd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev
+# cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(8);
+
+================================================================
+  TPC-H Q8 Benchmark — ComBit vs WAH vs CRoaring vs EWAH (SF10)
+  OR orderdate days 1096..1826 (731 bitmaps)
+  AND join_result, then per-year split (1995, 1996), aggregate revenue
+  TPC-H params: r_name='AMERICA', p_type='ECONOMY ANODIZED STEEL', BRAZIL nation numerator
+  Bitmap dirs: tpch_q8_combit tpch_q8_croaring tpch_q8_wah tpch_q8_ewah
+  Iterations: 10 (first 2 = warm-up)
+================================================================
+
+[Pre-load] Loading 59986052 rows (l_extendedprice, l_discount) ...
+[Pre-load] Done in 798.032 ms
+
+[Load] Loading bitmaps (mode=ALL)...
+  WAH load:      79.531 ms
+  ComBit load:   1671.42 ms (incl. year/brazil decompress+flatten)
+  CRoaring load: 86.726 ms
+  CRR load:      107.043 ms
+  EWAH load:     58.244 ms
+  Bitset load:   2672.92 ms (shared by BS / BSA)
+  Concise load:  641.349 ms
+  WAH      on disk: 57.41 MiB
+  ComBit   on disk: 135.17 MiB
+  CRoaring on disk: 42.86 MiB (shared by CR / CRR)
+  EWAH     on disk: 93.17 MiB
+
+--- Iteration 1/10 (warm-up) ---
+  CB:   OR_date=76.75  AND+Agg=3.01  Total=79.75  rows=24254
+  CR:   OR_date=1039.88  AND+Agg=4.74  Total=1044.63  rows=24254
+  CRR:  OR_date=36.26  AND+Agg=4.37  Total=40.63  rows=24254
+  WAH:  OR_date=18.36  AND+Agg=27.94  Total=46.29  rows=24254
+  EW:   OR_date=620.28  AND+Agg=9.03  Total=629.31  rows=24254
+  BS:   OR_date=732.88  AND+Agg=24.92  Total=757.81  rows=24254
+  BSA:  OR_date=479.74  AND+Agg=20.29  Total=500.03  rows=24254
+  CON:  OR_date=889.44  AND+Agg=66.65  Total=956.08  rows=24254
+
+--- Iteration 2/10 (warm-up) ---
+  CB:   OR_date=76.02  AND+Agg=2.99  Total=79.01  rows=24254
+  CR:   OR_date=1023.36  AND+Agg=4.55  Total=1027.91  rows=24254
+  CRR:  OR_date=34.81  AND+Agg=4.37  Total=39.18  rows=24254
+  WAH:  OR_date=17.69  AND+Agg=28.09  Total=45.78  rows=24254
+  EW:   OR_date=617.32  AND+Agg=8.88  Total=626.20  rows=24254
+  BS:   OR_date=722.73  AND+Agg=17.25  Total=739.99  rows=24254
+  BSA:  OR_date=476.80  AND+Agg=14.41  Total=491.21  rows=24254
+  CON:  OR_date=873.59  AND+Agg=62.30  Total=935.89  rows=24254
+
+--- Iteration 3/10 ---
+  CB:   OR_date=75.74  AND+Agg=2.98  Total=78.72  rows=24254
+  CR:   OR_date=1039.30  AND+Agg=4.57  Total=1043.87  rows=24254
+  CRR:  OR_date=35.12  AND+Agg=4.40  Total=39.52  rows=24254
+  WAH:  OR_date=17.76  AND+Agg=24.48  Total=42.24  rows=24254
+  EW:   OR_date=625.82  AND+Agg=8.88  Total=634.70  rows=24254
+  BS:   OR_date=722.00  AND+Agg=17.00  Total=739.00  rows=24254
+  BSA:  OR_date=485.74  AND+Agg=14.42  Total=500.16  rows=24254
+  CON:  OR_date=877.12  AND+Agg=62.40  Total=939.52  rows=24254
+
+--- Iteration 4/10 ---
+  CB:   OR_date=77.11  AND+Agg=2.98  Total=80.09  rows=24254
+  CR:   OR_date=1028.06  AND+Agg=4.64  Total=1032.70  rows=24254
+  CRR:  OR_date=35.72  AND+Agg=4.39  Total=40.11  rows=24254
+  WAH:  OR_date=18.10  AND+Agg=24.06  Total=42.16  rows=24254
+  EW:   OR_date=629.23  AND+Agg=8.94  Total=638.17  rows=24254
+  BS:   OR_date=732.62  AND+Agg=16.94  Total=749.57  rows=24254
+  BSA:  OR_date=486.10  AND+Agg=14.61  Total=500.70  rows=24254
+  CON:  OR_date=872.86  AND+Agg=62.13  Total=935.00  rows=24254
+
+--- Iteration 5/10 ---
+  CB:   OR_date=77.08  AND+Agg=3.01  Total=80.09  rows=24254
+  CR:   OR_date=1028.81  AND+Agg=4.75  Total=1033.56  rows=24254
+  CRR:  OR_date=35.92  AND+Agg=4.44  Total=40.37  rows=24254
+  WAH:  OR_date=18.13  AND+Agg=24.86  Total=42.99  rows=24254
+  EW:   OR_date=641.75  AND+Agg=9.28  Total=651.03  rows=24254
+  BS:   OR_date=732.63  AND+Agg=20.35  Total=752.98  rows=24254
+  BSA:  OR_date=485.54  AND+Agg=14.95  Total=500.48  rows=24254
+  CON:  OR_date=878.42  AND+Agg=62.25  Total=940.67  rows=24254
+
+--- Iteration 6/10 ---
+  CB:   OR_date=77.33  AND+Agg=2.99  Total=80.32  rows=24254
+  CR:   OR_date=1027.95  AND+Agg=4.65  Total=1032.60  rows=24254
+  CRR:  OR_date=35.49  AND+Agg=4.35  Total=39.84  rows=24254
+  WAH:  OR_date=18.47  AND+Agg=24.69  Total=43.16  rows=24254
+  EW:   OR_date=623.36  AND+Agg=9.02  Total=632.38  rows=24254
+  BS:   OR_date=733.28  AND+Agg=17.65  Total=750.93  rows=24254
+  BSA:  OR_date=485.35  AND+Agg=14.82  Total=500.17  rows=24254
+  CON:  OR_date=872.71  AND+Agg=63.10  Total=935.80  rows=24254
+
+--- Iteration 7/10 ---
+  CB:   OR_date=82.52  AND+Agg=3.02  Total=85.53  rows=24254
+  CR:   OR_date=1028.40  AND+Agg=4.64  Total=1033.04  rows=24254
+  CRR:  OR_date=35.49  AND+Agg=4.37  Total=39.86  rows=24254
+  WAH:  OR_date=18.42  AND+Agg=24.16  Total=42.58  rows=24254
+  EW:   OR_date=621.13  AND+Agg=9.34  Total=630.48  rows=24254
+  BS:   OR_date=731.98  AND+Agg=17.60  Total=749.58  rows=24254
+  BSA:  OR_date=484.70  AND+Agg=14.66  Total=499.37  rows=24254
+  CON:  OR_date=899.12  AND+Agg=62.43  Total=961.55  rows=24254
+
+--- Iteration 8/10 ---
+  CB:   OR_date=76.89  AND+Agg=3.00  Total=79.89  rows=24254
+  CR:   OR_date=1029.31  AND+Agg=4.63  Total=1033.94  rows=24254
+  CRR:  OR_date=35.74  AND+Agg=4.32  Total=40.06  rows=24254
+  WAH:  OR_date=18.48  AND+Agg=24.24  Total=42.72  rows=24254
+  EW:   OR_date=621.82  AND+Agg=9.08  Total=630.90  rows=24254
+  BS:   OR_date=731.78  AND+Agg=17.67  Total=749.45  rows=24254
+  BSA:  OR_date=484.84  AND+Agg=14.86  Total=499.70  rows=24254
+  CON:  OR_date=878.64  AND+Agg=62.75  Total=941.39  rows=24254
+
+--- Iteration 9/10 ---
+  CB:   OR_date=77.97  AND+Agg=3.07  Total=81.04  rows=24254
+  CR:   OR_date=1035.46  AND+Agg=4.63  Total=1040.09  rows=24254
+  CRR:  OR_date=35.49  AND+Agg=4.32  Total=39.80  rows=24254
+  WAH:  OR_date=18.44  AND+Agg=24.13  Total=42.58  rows=24254
+  EW:   OR_date=622.11  AND+Agg=9.09  Total=631.21  rows=24254
+  BS:   OR_date=732.90  AND+Agg=16.74  Total=749.64  rows=24254
+  BSA:  OR_date=484.60  AND+Agg=14.52  Total=499.12  rows=24254
+  CON:  OR_date=878.42  AND+Agg=62.44  Total=940.86  rows=24254
+
+--- Iteration 10/10 ---
+  CB:   OR_date=77.53  AND+Agg=3.00  Total=80.52  rows=24254
+  CR:   OR_date=1029.29  AND+Agg=4.70  Total=1033.98  rows=24254
+  CRR:  OR_date=36.07  AND+Agg=4.41  Total=40.48  rows=24254
+  WAH:  OR_date=18.42  AND+Agg=24.34  Total=42.75  rows=24254
+  EW:   OR_date=619.25  AND+Agg=9.10  Total=628.35  rows=24254
+  BS:   OR_date=730.05  AND+Agg=17.74  Total=747.78  rows=24254
+  BSA:  OR_date=483.88  AND+Agg=14.85  Total=498.72  rows=24254
+  CON:  OR_date=877.17  AND+Agg=61.79  Total=938.96  rows=24254
+
+================================================================
+  Q8 Correctness Validation
+================================================================
+  Row counts: WAH=24254 CB=24254 CR=24254 CRR=24254 EW=24254 BS=24254 BSA=24254 CON=24254
+
+  Q8 Results (mkt_share = sum(BRAZIL volume) / sum(volume), per year, ComBit values):
+  year  mkt_share
+  1995   0.038820
+  1996   0.039490
+  Consistency: ALL MATCH
+
+[Baseline] DuckDB native SQL: 24254 rows total  (single run: 1986.44 ms)
+  SQL ground truth mkt_share: 1995=0.038820  1996=0.039490
+[OK] all active backends match DuckDB SQL ground truth (24254 rows total, mkt_share within 1e-6).
+
+================================================================
+  Q8 RESULTS (8 measured iterations, median +/- stddev)
+================================================================
+                  CB (ms)         CR (ms)        CRR (ms)        WAH (ms)        EW (ms)
+  -----------------------------------------------------------------------------------------
+  OR_date          77.22 +/-  1.89   1029.05 +/-  3.93     35.60 +/-  0.28     18.42 +/-  0.24    622.74 +/-  6.76
+  AND+Agg           3.00 +/-  0.03      4.64 +/-  0.05      4.38 +/-  0.04     24.29 +/-  0.27      9.09 +/-  0.15
+  -----------------------------------------------------------------------------------------
+  TOTAL            80.20 +/-  1.90   1033.75 +/-  3.90     39.96 +/-  0.29     42.65 +/-  0.32    631.79 +/-  6.79
+
+  CB rows:  24254  CR rows:  24254  CRR rows: 24254  WAH rows: 24254  EW rows:  24254
+================================================================
+
+
+================================================================
+  Q8 BASELINE BACKENDS (no compression / Concise)
+================================================================
+                  BS (ms)         BSA (ms)        Concise (ms)     BS vs WAH   BSA vs WAH   CON vs WAH
+  ----------------------------------------------------------------------------------------------
+  OR_date         732.30 +/-  3.49    485.09 +/-  0.67    877.79 +/-  7.82      0.03x      0.04x      0.02x
+  AND+Agg          17.62 +/-  1.06     14.74 +/-  0.18     62.41 +/-  0.37      1.38x      1.65x      0.39x
+  ----------------------------------------------------------------------------------------------
+  TOTAL           749.58 +/-  3.89    499.93 +/-  0.65    940.10 +/-  7.81      0.06x      0.09x      0.05x
+
+  BS rows:  24254  BSA rows: 24254  CON rows: 24254
+================================================================
+
+  [CSV] Results written to: q8_results_SF10.csv
+┌────────┬─────────────────────┐
+│ o_year │      mkt_share      │
+│ int64  │       double        │
+├────────┼─────────────────────┤
+│   1995 │  0.0388201425143322 │
+│   1996 │ 0.03948968749183992 │
+└────────┴─────────────────────┘
+  [Breakdown] ComBit   L1=13.18 MiB  L2=7.10 MiB  L3=82.12 MiB  total=102.41 MiB

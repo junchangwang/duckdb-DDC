@@ -180,6 +180,101 @@ private:
 };
 
 // -----------------------------------------------------------------------
+// IndexedComBitBPE — Bucketed Prefix-Encoded ComBit.
+//
+// Stores a cumulative bitmap per bucket: `bitmaps_pe_[b]` = rows where
+// value ≤ bucket_b's upper boundary.  Range query `lo ≤ value ≤ hi`
+// reduces to `bitmaps_pe_[hi_bucket] AND NOT bitmaps_pe_[lo_bucket - 1]`
+// — O(1) bitmap ops regardless of range cardinality.
+//
+// For non-bucket-aligned ranges, the caller composes the result with
+// boundary OR over the matching per-value IndexedComBit (also loaded
+// over the same column).  Boundary cost ≤ bucket_size per side.
+//
+// TPC-H 1.5.7 §5: same column, separate auxiliary structure — allowed.
+// Build is amortised over all subsequent queries; not in Q latency.
+// -----------------------------------------------------------------------
+class IndexedComBitBPE : public IBitmapIndex {
+public:
+    IndexedComBitBPE() = default;
+
+    // Build cumulative PE bitmaps for [lo_key, hi_key] in `bucket_size`
+    // increments.  Bucket b covers raw values
+    //   [lo_key + b*bucket_size, lo_key + (b+1)*bucket_size - 1]
+    // and `bitmaps_pe_[b]` = rows where value ≤ bucket_max(b).
+    void build(const std::vector<int64_t>& values, size_t num_rows,
+               int64_t lo_key, int64_t hi_key, int64_t bucket_size,
+               size_t segment_bits = 4096) {
+        num_rows_     = num_rows;
+        lo_key_       = lo_key;
+        hi_key_       = hi_key;
+        bucket_size_  = bucket_size;
+        segment_bits_ = segment_bits;
+        size_t num_buckets = static_cast<size_t>((hi_key - lo_key) / bucket_size + 1);
+
+        // Bucket positions (per-bucket equality position lists).
+        std::vector<std::vector<uint32_t>> per_bucket_pos(num_buckets);
+        for (size_t i = 0; i < num_rows; i++) {
+            int64_t v = values[i];
+            if (v < lo_key || v > hi_key) continue;
+            size_t b = static_cast<size_t>((v - lo_key) / bucket_size);
+            if (b < num_buckets) per_bucket_pos[b].push_back(static_cast<uint32_t>(i));
+        }
+
+        // Cumulative OR — bitmaps_pe_[b] = bitmaps_pe_[b-1] | bucket_eq[b].
+        bitmaps_pe_.reserve(num_buckets);
+        ComBit cum = ComBit::from_sparse_positions({}, num_rows, segment_bits);
+        for (size_t b = 0; b < num_buckets; b++) {
+            std::sort(per_bucket_pos[b].begin(), per_bucket_pos[b].end());
+            ComBit bucket_eq = ComBit::from_sparse_positions(
+                per_bucket_pos[b], num_rows, segment_bits);
+            cum |= bucket_eq;
+            bitmaps_pe_.push_back(cum);  // copy of cumulative state
+        }
+    }
+
+    int bucket_of(int64_t key) const {
+        if (key < lo_key_)         return -1;
+        if (key > hi_key_)         return static_cast<int>(bitmaps_pe_.size()) - 1;
+        return static_cast<int>((key - lo_key_) / bucket_size_);
+    }
+    int64_t bucket_max(int b)  const { return lo_key_ + (b + 1) * bucket_size_ - 1; }
+    int64_t bucket_min(int b)  const { return lo_key_ + b * bucket_size_; }
+    int64_t lo_key()           const { return lo_key_; }
+    int64_t hi_key()           const { return hi_key_; }
+    int64_t bucket_size_int()  const { return bucket_size_; }
+    size_t  segment_bits()     const { return segment_bits_; }
+
+    // Cumulative bitmap "rows where value ≤ bucket_max(b)".
+    // `b == -1` returns an empty bitmap (no rows).
+    // `b ≥ num_buckets` returns the all-rows bitmap (cap to last).
+    const ComBit* prefix_at_bucket(int b) const {
+        if (b < 0) return nullptr;
+        size_t idx = std::min<size_t>(static_cast<size_t>(b), bitmaps_pe_.size() - 1);
+        return &bitmaps_pe_[idx];
+    }
+
+    size_t num_keys() const override { return bitmaps_pe_.size(); }
+    size_t num_rows() const override { return num_rows_; }
+    size_t storage_bytes() const override {
+        size_t t = 0;
+        for (const auto& bm : bitmaps_pe_)
+            for (const auto& seg : bm.segments())
+                t += seg.compressed_size_bytes();
+        return t;
+    }
+    const char* backend_name() const override { return "ComBitBPE"; }
+
+private:
+    size_t   num_rows_     = 0;
+    int64_t  lo_key_       = 0;
+    int64_t  hi_key_       = 0;
+    int64_t  bucket_size_  = 1;
+    size_t   segment_bits_ = 4096;
+    std::vector<ComBit> bitmaps_pe_;
+};
+
+// -----------------------------------------------------------------------
 // IndexedCRoaring — uses roaring::Roaring per value.
 // -----------------------------------------------------------------------
 class IndexedCRoaring : public IBitmapIndex {
@@ -253,6 +348,91 @@ private:
     std::unordered_map<int64_t, roaring::Roaring> index_;
 public:
     void mark_run_optimized() { run_optimized_ = true; }
+};
+
+// -----------------------------------------------------------------------
+// IndexedCRoaringBPE — Bucketed Prefix-Encoded CRoaring.
+//
+// Same data layout as IndexedComBitBPE but per-bucket bitmap is a
+// roaring::Roaring.  Build always applies runOptimize on the prefix
+// bitmaps (they're typically dense → run-encoded).
+//
+// We expect minimal speed-up over plain IndexedCRoaring + fastunion
+// for Q6 (CR's container layout already amortises k-way OR via 64Ki-bit
+// chunks) — but the structure is added for fair apples-to-apples
+// comparison vs ComBit BPE.
+// -----------------------------------------------------------------------
+class IndexedCRoaringBPE : public IBitmapIndex {
+public:
+    IndexedCRoaringBPE() = default;
+
+    void build(const std::vector<int64_t>& values, size_t num_rows,
+               int64_t lo_key, int64_t hi_key, int64_t bucket_size,
+               bool run_optimize = true) {
+        num_rows_     = num_rows;
+        lo_key_       = lo_key;
+        hi_key_       = hi_key;
+        bucket_size_  = bucket_size;
+        run_optimized_ = run_optimize;
+        size_t num_buckets = static_cast<size_t>((hi_key - lo_key) / bucket_size + 1);
+
+        std::vector<std::vector<uint32_t>> per_bucket_pos(num_buckets);
+        for (size_t i = 0; i < num_rows; i++) {
+            int64_t v = values[i];
+            if (v < lo_key || v > hi_key) continue;
+            size_t b = static_cast<size_t>((v - lo_key) / bucket_size);
+            if (b < num_buckets) per_bucket_pos[b].push_back(static_cast<uint32_t>(i));
+        }
+
+        bitmaps_pe_.reserve(num_buckets);
+        roaring::Roaring cum;
+        for (size_t b = 0; b < num_buckets; b++) {
+            roaring::Roaring bucket_eq;
+            if (!per_bucket_pos[b].empty())
+                bucket_eq.addMany(per_bucket_pos[b].size(), per_bucket_pos[b].data());
+            cum |= bucket_eq;
+            roaring::Roaring snap = cum;
+            if (run_optimize) snap.runOptimize();
+            bitmaps_pe_.push_back(std::move(snap));
+        }
+    }
+
+    int bucket_of(int64_t key) const {
+        if (key < lo_key_) return -1;
+        if (key > hi_key_) return static_cast<int>(bitmaps_pe_.size()) - 1;
+        return static_cast<int>((key - lo_key_) / bucket_size_);
+    }
+    int64_t bucket_max(int b) const { return lo_key_ + (b + 1) * bucket_size_ - 1; }
+    int64_t bucket_min(int b) const { return lo_key_ + b * bucket_size_; }
+    int64_t lo_key()         const { return lo_key_; }
+    int64_t hi_key()         const { return hi_key_; }
+    int64_t bucket_size_int() const { return bucket_size_; }
+    bool    run_optimized()  const { return run_optimized_; }
+
+    const roaring::Roaring* prefix_at_bucket(int b) const {
+        if (b < 0) return nullptr;
+        size_t idx = std::min<size_t>(static_cast<size_t>(b), bitmaps_pe_.size() - 1);
+        return &bitmaps_pe_[idx];
+    }
+
+    size_t num_keys() const override { return bitmaps_pe_.size(); }
+    size_t num_rows() const override { return num_rows_; }
+    size_t storage_bytes() const override {
+        size_t t = 0;
+        for (auto& r : bitmaps_pe_) t += r.getSizeInBytes();
+        return t;
+    }
+    const char* backend_name() const override {
+        return run_optimized_ ? "CRoaringBPE" : "CRoaringBPE";  // same label
+    }
+
+private:
+    size_t  num_rows_      = 0;
+    int64_t lo_key_        = 0;
+    int64_t hi_key_        = 0;
+    int64_t bucket_size_   = 1;
+    bool    run_optimized_ = true;
+    std::vector<roaring::Roaring> bitmaps_pe_;
 };
 
 // -----------------------------------------------------------------------

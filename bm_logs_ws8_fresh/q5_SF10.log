@@ -1,0 +1,187 @@
+# cwd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev
+# cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(5);
+
+================================================================
+  TPC-H Q5 Benchmark — ComBit vs WAH vs CRoaring vs EWAH (SF10)
+  OR orderdate days 731..1095 (365 bitmaps)
+  Then AND each nation_join bitmap -> Aggregate revenue
+  TPC-H params: r_name = 'ASIA', orderdate [1994-01-01, 1995-01-01)
+  Bitmap dirs: tpch_q5_combit tpch_q5_croaring tpch_q5_wah tpch_q5_ewah
+  Iterations: 10 (first 2 = warm-up)
+================================================================
+  Nations: INDIA(8) INDONESIA(9) JAPAN(12) CHINA(18) VIETNAM(21) 
+
+[Pre-load] Loading 59986052 rows (l_extendedprice, l_discount) ...
+[Pre-load] Done in 786.705 ms
+
+[Load] Loading bitmaps (mode=ALL)...
+  WAH load:      31.869 ms
+  ComBit load:   159.332 ms
+  CRoaring load: 42.223 ms
+  CRR load:      91.208 ms
+  EWAH load:     27.275 ms
+  Bitset load:   1263.1 ms (shared by BS / BSA)
+  Concise load:  147.715 ms
+  WAH      on disk: 122.88 MiB
+  ComBit   on disk: 412.28 MiB
+  CRoaring on disk: 132.19 MiB (shared by CR / CRR)
+  EWAH     on disk: 238.96 MiB
+  Bitset in mem:    2645.85 MiB (rebuilt from CRoaring at load)
+  Concise in mem:   18.50 MiB (rebuilt from CRoaring at load)
+
+--- Iteration 1/10 (warm-up) ---
+  CB:   OR_date=45.93  AND+Agg=11.19  Total=57.12  rows=72985
+  CR:   OR_date=153.15  AND+Agg=4.30  Total=157.46  rows=72985
+  CRR:  OR_date=17.61  AND+Agg=4.05  Total=21.67  rows=72985
+  WAH:  OR_date=12.19  AND+Agg=26.90  Total=39.09  rows=72985
+  EW:   OR_date=311.10  AND+Agg=15.90  Total=327.00  rows=72985
+  BS:   OR_date=366.22  AND+Agg=28.22  Total=394.45  rows=72985
+  BSA:  OR_date=238.59  AND+Agg=20.80  Total=259.40  rows=72985
+  CON:  OR_date=430.52  AND+Agg=60.24  Total=490.76  rows=72985
+
+--- Iteration 2/10 (warm-up) ---
+  CB:   OR_date=40.17  AND+Agg=10.55  Total=50.72  rows=72985
+  CR:   OR_date=151.28  AND+Agg=4.46  Total=155.74  rows=72985
+  CRR:  OR_date=17.71  AND+Agg=4.08  Total=21.80  rows=72985
+  WAH:  OR_date=9.19  AND+Agg=23.71  Total=32.90  rows=72985
+  EW:   OR_date=304.23  AND+Agg=15.53  Total=319.76  rows=72985
+  BS:   OR_date=363.52  AND+Agg=25.11  Total=388.64  rows=72985
+  BSA:  OR_date=238.33  AND+Agg=21.07  Total=259.40  rows=72985
+  CON:  OR_date=423.68  AND+Agg=60.24  Total=483.92  rows=72985
+
+--- Iteration 3/10 ---
+  CB:   OR_date=39.88  AND+Agg=10.49  Total=50.38  rows=72985
+  CR:   OR_date=151.34  AND+Agg=4.48  Total=155.82  rows=72985
+  CRR:  OR_date=17.78  AND+Agg=4.10  Total=21.87  rows=72985
+  WAH:  OR_date=9.40  AND+Agg=23.29  Total=32.70  rows=72985
+  EW:   OR_date=298.61  AND+Agg=15.35  Total=313.96  rows=72985
+  BS:   OR_date=362.12  AND+Agg=24.35  Total=386.48  rows=72985
+  BSA:  OR_date=238.42  AND+Agg=20.90  Total=259.31  rows=72985
+  CON:  OR_date=448.60  AND+Agg=60.95  Total=509.55  rows=72985
+
+--- Iteration 4/10 ---
+  CB:   OR_date=39.65  AND+Agg=10.44  Total=50.09  rows=72985
+  CR:   OR_date=157.46  AND+Agg=4.37  Total=161.83  rows=72985
+  CRR:  OR_date=17.63  AND+Agg=4.09  Total=21.72  rows=72985
+  WAH:  OR_date=11.23  AND+Agg=25.70  Total=36.94  rows=72985
+  EW:   OR_date=302.07  AND+Agg=15.32  Total=317.39  rows=72985
+  BS:   OR_date=366.42  AND+Agg=27.90  Total=394.31  rows=72985
+  BSA:  OR_date=237.68  AND+Agg=20.88  Total=258.56  rows=72985
+  CON:  OR_date=429.85  AND+Agg=59.97  Total=489.81  rows=72985
+
+--- Iteration 5/10 ---
+  CB:   OR_date=39.38  AND+Agg=10.53  Total=49.92  rows=72985
+  CR:   OR_date=151.27  AND+Agg=4.61  Total=155.88  rows=72985
+  CRR:  OR_date=18.40  AND+Agg=4.25  Total=22.66  rows=72985
+  WAH:  OR_date=9.54  AND+Agg=26.88  Total=36.42  rows=72985
+  EW:   OR_date=316.74  AND+Agg=15.34  Total=332.08  rows=72985
+  BS:   OR_date=365.94  AND+Agg=24.45  Total=390.39  rows=72985
+  BSA:  OR_date=237.94  AND+Agg=20.88  Total=258.82  rows=72985
+  CON:  OR_date=422.12  AND+Agg=60.01  Total=482.13  rows=72985
+
+--- Iteration 6/10 ---
+  CB:   OR_date=39.68  AND+Agg=10.41  Total=50.09  rows=72985
+  CR:   OR_date=151.23  AND+Agg=4.37  Total=155.60  rows=72985
+  CRR:  OR_date=17.58  AND+Agg=4.05  Total=21.63  rows=72985
+  WAH:  OR_date=9.33  AND+Agg=23.04  Total=32.36  rows=72985
+  EW:   OR_date=303.05  AND+Agg=15.83  Total=318.87  rows=72985
+  BS:   OR_date=360.89  AND+Agg=25.12  Total=386.01  rows=72985
+  BSA:  OR_date=238.05  AND+Agg=20.24  Total=258.29  rows=72985
+  CON:  OR_date=422.62  AND+Agg=60.09  Total=482.71  rows=72985
+
+--- Iteration 7/10 ---
+  CB:   OR_date=39.34  AND+Agg=10.16  Total=49.50  rows=72985
+  CR:   OR_date=150.96  AND+Agg=4.30  Total=155.27  rows=72985
+  CRR:  OR_date=17.68  AND+Agg=3.99  Total=21.67  rows=72985
+  WAH:  OR_date=9.46  AND+Agg=23.09  Total=32.55  rows=72985
+  EW:   OR_date=301.25  AND+Agg=15.50  Total=316.75  rows=72985
+  BS:   OR_date=361.46  AND+Agg=25.07  Total=386.52  rows=72985
+  BSA:  OR_date=237.86  AND+Agg=20.27  Total=258.14  rows=72985
+  CON:  OR_date=429.43  AND+Agg=60.20  Total=489.63  rows=72985
+
+--- Iteration 8/10 ---
+  CB:   OR_date=40.45  AND+Agg=10.40  Total=50.85  rows=72985
+  CR:   OR_date=151.33  AND+Agg=4.57  Total=155.90  rows=72985
+  CRR:  OR_date=17.77  AND+Agg=4.14  Total=21.91  rows=72985
+  WAH:  OR_date=9.38  AND+Agg=23.33  Total=32.71  rows=72985
+  EW:   OR_date=301.62  AND+Agg=15.33  Total=316.95  rows=72985
+  BS:   OR_date=362.03  AND+Agg=24.67  Total=386.70  rows=72985
+  BSA:  OR_date=237.22  AND+Agg=20.62  Total=257.84  rows=72985
+  CON:  OR_date=431.30  AND+Agg=60.65  Total=491.95  rows=72985
+
+--- Iteration 9/10 ---
+  CB:   OR_date=40.44  AND+Agg=10.58  Total=51.02  rows=72985
+  CR:   OR_date=153.16  AND+Agg=4.50  Total=157.66  rows=72985
+  CRR:  OR_date=17.85  AND+Agg=4.16  Total=22.01  rows=72985
+  WAH:  OR_date=9.30  AND+Agg=23.47  Total=32.76  rows=72985
+  EW:   OR_date=303.82  AND+Agg=15.40  Total=319.22  rows=72985
+  BS:   OR_date=362.72  AND+Agg=22.81  Total=385.53  rows=72985
+  BSA:  OR_date=238.09  AND+Agg=20.49  Total=258.58  rows=72985
+  CON:  OR_date=422.13  AND+Agg=60.33  Total=482.46  rows=72985
+
+--- Iteration 10/10 ---
+  CB:   OR_date=39.34  AND+Agg=10.40  Total=49.74  rows=72985
+  CR:   OR_date=155.64  AND+Agg=4.38  Total=160.03  rows=72985
+  CRR:  OR_date=17.63  AND+Agg=4.05  Total=21.68  rows=72985
+  WAH:  OR_date=10.50  AND+Agg=25.45  Total=35.94  rows=72985
+  EW:   OR_date=302.14  AND+Agg=15.19  Total=317.33  rows=72985
+  BS:   OR_date=365.73  AND+Agg=23.61  Total=389.34  rows=72985
+  BSA:  OR_date=237.78  AND+Agg=20.18  Total=257.96  rows=72985
+  CON:  OR_date=422.37  AND+Agg=60.13  Total=482.50  rows=72985
+
+================================================================
+  Q5 Correctness Validation
+================================================================
+  Row counts: WAH=72985 CB=72985 CR=72985 CRR=72985 EW=72985 BS=72985 BSA=72985 CON=72985
+
+  Q5 Results (revenue = SUM(l_extendedprice * (1 - l_discount)), sorted by ComBit):
+  nation                     CB_revenue            CR_revenue           CRR_revenue           WAH_revenue            EW_revenue            BS_revenue           BSA_revenue           CON_revenue
+  INDIA                  536862587.9995        536862587.9995        536862587.9995        536862587.9995        536862587.9995        536862587.9995        536862587.9995        536862587.9995
+  CHINA                  535350829.9282        535350829.9282        535350829.9282        535350829.9282        535350829.9282        535350829.9282        535350829.9282        535350829.9282
+  VIETNAM                532269388.7176        532269388.7176        532269388.7176        532269388.7176        532269388.7176        532269388.7176        532269388.7176        532269388.7176
+  JAPAN                  526766837.1444        526766837.1444        526766837.1444        526766837.1444        526766837.1444        526766837.1444        526766837.1444        526766837.1444
+  INDONESIA              523176852.3189        523176852.3189        523176852.3189        523176852.3189        523176852.3189        523176852.3189        523176852.3189        523176852.3189
+  Consistency: ALL MATCH
+
+[Baseline] DuckDB native SQL count(*) = 72985  (single run: 164.46 ms)
+[OK] all active backends match DuckDB SQL ground truth (72985 rows).
+
+================================================================
+  Q5 RESULTS (8 measured iterations, median +/- stddev)
+================================================================
+                  CB (ms)         CR (ms)        CRR (ms)        WAH (ms)        EW (ms)
+  -----------------------------------------------------------------------------------------
+  OR_date          39.66 +/-  0.43    151.33 +/-  2.30     17.72 +/-  0.25      9.43 +/-  0.66    302.10 +/-  5.14
+  AND+Agg          10.42 +/-  0.12      4.43 +/-  0.10      4.10 +/-  0.08     23.40 +/-  1.40     15.35 +/-  0.18
+  -----------------------------------------------------------------------------------------
+  TOTAL            50.09 +/-  0.49    155.89 +/-  2.27     21.80 +/-  0.31     32.74 +/-  1.87    317.36 +/-  5.14
+
+  CB rows:  72985  CR rows:  72985  CRR rows: 72985  WAH rows: 72985  EW rows:  72985
+================================================================
+
+
+================================================================
+  Q5 BASELINE BACKENDS (no compression / Concise)
+================================================================
+                  BS (ms)         BSA (ms)        Concise (ms)     BS vs WAH   BSA vs WAH   CON vs WAH
+  ----------------------------------------------------------------------------------------------
+  OR_date         362.42 +/-  2.09    237.90 +/-  0.33    426.03 +/-  8.43      0.03x      0.04x      0.02x
+  AND+Agg          24.56 +/-  1.39     20.56 +/-  0.29     60.17 +/-  0.32      0.95x      1.14x      0.39x
+  ----------------------------------------------------------------------------------------------
+  TOTAL           386.61 +/-  2.81    258.42 +/-  0.45    486.17 +/-  8.69      0.08x      0.13x      0.07x
+
+  BS rows:  72985  BSA rows: 72985  CON rows: 72985
+================================================================
+
+  [CSV] Results written to: q5_results_SF10.csv
+┌───────────┬────────────────┐
+│  n_name   │    revenue     │
+│  varchar  │ decimal(38,4)  │
+├───────────┼────────────────┤
+│ INDIA     │ 536862587.9995 │
+│ CHINA     │ 535350829.9282 │
+│ VIETNAM   │ 532269388.7176 │
+│ JAPAN     │ 526766837.1444 │
+│ INDONESIA │ 523176852.3189 │
+└───────────┴────────────────┘
+  [Breakdown] ComBit   L1=3.42 MiB  L2=2.67 MiB  L3=41.34 MiB  total=47.43 MiB

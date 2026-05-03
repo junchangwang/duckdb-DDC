@@ -10,12 +10,17 @@
 
 #include "bitset_simple.h"
 #include "Concise/concise.h"
+#include "fastbit/bitvector.h"
 #include "roaring.hh"
 
 #include <cstdint>
 #include <fstream>
 #include <string>
 #include <vector>
+
+#ifdef __AVX512F__
+#include <immintrin.h>
+#endif
 
 namespace duckdb {
 namespace bm_bench {
@@ -62,6 +67,27 @@ inline ConciseSet<false> load_concise_from_croaring(const std::string& path) {
     // monotone fast path of ConciseSet::add().
     for (uint32_t p : pos) cs.add(p);
     return cs;
+}
+
+// In-place bitwise NOT for ibis::bitvector (AVX-512 fast path + scalar
+// fallback).  Used by Q1, Q3, ... wherever WAH needs a complement.
+inline void wah_flip(ibis::bitvector* btv) {
+#if defined(__AVX512F__)
+    auto* it = btv->m_vec.begin();
+    while (it + 15 < btv->m_vec.end()) {
+        _mm512_storeu_epi32(it, _mm512_andnot_epi32(
+            _mm512_loadu_epi32(it), _mm512_set1_epi32(0x7fffffff)));
+        it += 16;
+    }
+    for (; it < btv->m_vec.end(); it++) *it ^= ibis::bitvector::ALLONES;
+    if (btv->active.nbits > 0)
+        btv->active.val ^= ((1u << btv->active.nbits) - 1);
+#else
+    for (auto* it = btv->m_vec.begin(); it < btv->m_vec.end(); ++it)
+        *it ^= ibis::bitvector::ALLONES;
+    if (btv->active.nbits > 0)
+        btv->active.val ^= ((1u << btv->active.nbits) - 1);
+#endif
 }
 
 } // namespace bm_bench

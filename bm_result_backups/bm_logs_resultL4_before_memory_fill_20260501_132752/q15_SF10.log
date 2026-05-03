@@ -1,0 +1,164 @@
+# cwd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev
+# cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(15);
+
+================================================================
+  TPC-H Q15 Benchmark — 8 backends (SF10)
+  OR shipdate days 1461..1551 (91 bitmaps), then per-row revenue aggregation grouped by l_suppkey
+  TPC-H params: l_shipdate [1996-01-01, 1996-04-01)
+  Bitmap dirs: tpch_q15_combit tpch_q15_croaring tpch_q15_wah tpch_q15_ewah
+  Iterations: 10 (first 2 = warm-up)
+================================================================
+
+[Pre-load] Streaming lineitem (suppkey, price, discount) ...
+[Pre-load] 59986052 rows in 1067.48 ms  (max_suppkey=100000)
+
+[Load] Loading shipdate bitmaps (mode=ALL)...
+  WAH load:      21.742 ms
+  ComBit load:   117.304 ms
+  CRoaring load: 9.089 ms
+  CRR load:      11.884 ms
+  EWAH load:     20.827 ms
+  Bitset load:   316.983 ms (shared by BS / BSA)
+  Concise load:  38.462 ms
+  WAH      on disk: 0.00 MiB
+  ComBit   on disk: 0.00 MiB
+  CRoaring on disk: 0.00 MiB (shared by CR / CRR)
+  EWAH     on disk: 0.00 MiB
+
+--- Iteration 1/10 (warm-up) ---
+  CB:   OR=26.38  Agg=45.33  Total=71.71  max=2194132.82  ties=1
+  CR:   OR=84.73  Agg=56.60  Total=141.32  max=2194132.82  ties=1
+  CRR:  OR=14.23  Agg=56.59  Total=70.82  max=2194132.82  ties=1
+  WAH:  OR=12.37  Agg=74.54  Total=86.91  max=2194132.82  ties=1
+  EW:   OR=207.63  Agg=53.65  Total=261.28  max=2194132.82  ties=1
+  BS:   OR=96.06  Agg=29.88  Total=125.94  max=2194132.82  ties=1
+  BSA:  OR=60.44  Agg=30.03  Total=90.47  max=2194132.82  ties=1
+  CON:  OR=249.16  Agg=61.20  Total=310.36  max=2194132.82  ties=1
+
+--- Iteration 2/10 (warm-up) ---
+  CB:   OR=24.84  Agg=44.96  Total=69.81  max=2194132.82  ties=1
+  CR:   OR=82.03  Agg=56.40  Total=138.43  max=2194132.82  ties=1
+  CRR:  OR=12.16  Agg=56.01  Total=68.17  max=2194132.82  ties=1
+  WAH:  OR=10.29  Agg=74.52  Total=84.81  max=2194132.82  ties=1
+  EW:   OR=204.74  Agg=53.71  Total=258.44  max=2194132.82  ties=1
+  BS:   OR=93.56  Agg=29.96  Total=123.52  max=2194132.82  ties=1
+  BSA:  OR=60.35  Agg=29.87  Total=90.22  max=2194132.82  ties=1
+  CON:  OR=249.06  Agg=61.35  Total=310.41  max=2194132.82  ties=1
+
+--- Iteration 3/10 ---
+  CB:   OR=24.75  Agg=44.94  Total=69.69  max=2194132.82  ties=1
+  CR:   OR=82.24  Agg=56.73  Total=138.97  max=2194132.82  ties=1
+  CRR:  OR=12.13  Agg=56.47  Total=68.61  max=2194132.82  ties=1
+  WAH:  OR=11.67  Agg=74.65  Total=86.32  max=2194132.82  ties=1
+  EW:   OR=209.34  Agg=54.08  Total=263.43  max=2194132.82  ties=1
+  BS:   OR=95.03  Agg=29.89  Total=124.92  max=2194132.82  ties=1
+  BSA:  OR=60.26  Agg=29.99  Total=90.25  max=2194132.82  ties=1
+  CON:  OR=246.37  Agg=61.26  Total=307.63  max=2194132.82  ties=1
+
+--- Iteration 4/10 ---
+  CB:   OR=24.38  Agg=45.23  Total=69.61  max=2194132.82  ties=1
+  CR:   OR=82.04  Agg=56.70  Total=138.74  max=2194132.82  ties=1
+  CRR:  OR=12.33  Agg=56.65  Total=68.98  max=2194132.82  ties=1
+  WAH:  OR=10.28  Agg=74.53  Total=84.82  max=2194132.82  ties=1
+  EW:   OR=205.04  Agg=53.76  Total=258.80  max=2194132.82  ties=1
+  BS:   OR=93.84  Agg=29.77  Total=123.61  max=2194132.82  ties=1
+  BSA:  OR=60.47  Agg=29.79  Total=90.26  max=2194132.82  ties=1
+  CON:  OR=245.45  Agg=61.45  Total=306.91  max=2194132.82  ties=1
+
+--- Iteration 5/10 ---
+  CB:   OR=23.56  Agg=45.17  Total=68.73  max=2194132.82  ties=1
+  CR:   OR=82.24  Agg=56.66  Total=138.90  max=2194132.82  ties=1
+  CRR:  OR=12.29  Agg=56.13  Total=68.42  max=2194132.82  ties=1
+  WAH:  OR=10.41  Agg=74.89  Total=85.30  max=2194132.82  ties=1
+  EW:   OR=201.56  Agg=53.90  Total=255.46  max=2194132.82  ties=1
+  BS:   OR=91.48  Agg=29.83  Total=121.31  max=2194132.82  ties=1
+  BSA:  OR=60.68  Agg=29.87  Total=90.55  max=2194132.82  ties=1
+  CON:  OR=245.02  Agg=61.97  Total=306.99  max=2194132.82  ties=1
+
+--- Iteration 6/10 ---
+  CB:   OR=23.12  Agg=45.20  Total=68.32  max=2194132.82  ties=1
+  CR:   OR=82.22  Agg=56.47  Total=138.69  max=2194132.82  ties=1
+  CRR:  OR=12.12  Agg=56.62  Total=68.74  max=2194132.82  ties=1
+  WAH:  OR=11.11  Agg=74.21  Total=85.33  max=2194132.82  ties=1
+  EW:   OR=199.76  Agg=53.90  Total=253.66  max=2194132.82  ties=1
+  BS:   OR=91.21  Agg=29.85  Total=121.06  max=2194132.82  ties=1
+  BSA:  OR=60.32  Agg=29.83  Total=90.15  max=2194132.82  ties=1
+  CON:  OR=245.41  Agg=61.32  Total=306.74  max=2194132.82  ties=1
+
+--- Iteration 7/10 ---
+  CB:   OR=23.66  Agg=45.49  Total=69.15  max=2194132.82  ties=1
+  CR:   OR=82.25  Agg=56.46  Total=138.71  max=2194132.82  ties=1
+  CRR:  OR=12.17  Agg=56.27  Total=68.45  max=2194132.82  ties=1
+  WAH:  OR=10.70  Agg=74.69  Total=85.39  max=2194132.82  ties=1
+  EW:   OR=200.38  Agg=53.55  Total=253.93  max=2194132.82  ties=1
+  BS:   OR=91.86  Agg=29.84  Total=121.70  max=2194132.82  ties=1
+  BSA:  OR=60.59  Agg=29.93  Total=90.52  max=2194132.82  ties=1
+  CON:  OR=245.45  Agg=61.98  Total=307.43  max=2194132.82  ties=1
+
+--- Iteration 8/10 ---
+  CB:   OR=23.27  Agg=45.01  Total=68.28  max=2194132.82  ties=1
+  CR:   OR=82.13  Agg=57.17  Total=139.30  max=2194132.82  ties=1
+  CRR:  OR=12.25  Agg=56.61  Total=68.86  max=2194132.82  ties=1
+  WAH:  OR=10.84  Agg=74.49  Total=85.32  max=2194132.82  ties=1
+  EW:   OR=202.06  Agg=53.73  Total=255.79  max=2194132.82  ties=1
+  BS:   OR=91.82  Agg=29.84  Total=121.66  max=2194132.82  ties=1
+  BSA:  OR=60.39  Agg=30.08  Total=90.47  max=2194132.82  ties=1
+  CON:  OR=244.40  Agg=61.27  Total=305.67  max=2194132.82  ties=1
+
+--- Iteration 9/10 ---
+  CB:   OR=23.27  Agg=45.02  Total=68.29  max=2194132.82  ties=1
+  CR:   OR=82.13  Agg=57.03  Total=139.16  max=2194132.82  ties=1
+  CRR:  OR=12.14  Agg=56.29  Total=68.44  max=2194132.82  ties=1
+  WAH:  OR=10.12  Agg=74.77  Total=84.89  max=2194132.82  ties=1
+  EW:   OR=202.84  Agg=53.73  Total=256.56  max=2194132.82  ties=1
+  BS:   OR=91.90  Agg=29.87  Total=121.77  max=2194132.82  ties=1
+  BSA:  OR=60.53  Agg=30.03  Total=90.56  max=2194132.82  ties=1
+  CON:  OR=243.88  Agg=62.05  Total=305.93  max=2194132.82  ties=1
+
+--- Iteration 10/10 ---
+  CB:   OR=23.27  Agg=45.02  Total=68.29  max=2194132.82  ties=1
+  CR:   OR=82.20  Agg=56.80  Total=139.00  max=2194132.82  ties=1
+  CRR:  OR=12.19  Agg=56.25  Total=68.44  max=2194132.82  ties=1
+  WAH:  OR=10.19  Agg=74.86  Total=85.06  max=2194132.82  ties=1
+  EW:   OR=202.17  Agg=54.28  Total=256.45  max=2194132.82  ties=1
+  BS:   OR=92.01  Agg=29.88  Total=121.89  max=2194132.82  ties=1
+  BSA:  OR=60.47  Agg=30.02  Total=90.49  max=2194132.82  ties=1
+  CON:  OR=244.39  Agg=61.06  Total=305.45  max=2194132.82  ties=1
+
+================================================================
+  Q15 Correctness Validation
+================================================================
+  Q15 Result (ComBit):
+    max total_revenue = 2194132.82   (fp=21941328166)   ties=1
+    suppkey(s): 69998
+  Consistency: ALL MATCH
+
+  Tied supplier rows (bitmap pipeline):
+    69998  Supplier#000069998  total_revenue=2194132.82
+
+[Baseline] DuckDB native SQL  (single run: 560.84 ms)
+  SQL ground truth rows: 1
+    69998  Supplier#000069998  total_revenue=2194132.82
+[OK] all active backends match DuckDB SQL ground truth (1 row(s), revenue within 0.01).
+
+================================================================
+  Q15 RESULTS (8 measured iterations, median +/- stddev)
+================================================================
+  CB    OR=23.42   +/- 0.56   Agg=45.09   +/- 0.17   Total=68.52   +/- 0.57  (ms)
+  CR    OR=82.21   +/- 0.07   Agg=56.72   +/- 0.23   Total=138.94  +/- 0.20  (ms)
+  CRR   OR=12.18   +/- 0.07   Agg=56.38   +/- 0.19   Total=68.53   +/- 0.21  (ms)
+  WAH   OR=10.55   +/- 0.50   Agg=74.67   +/- 0.21   Total=85.31   +/- 0.44  (ms)
+  EW    OR=202.11  +/- 2.86   Agg=53.83   +/- 0.21   Total=256.12  +/- 2.94  (ms)
+  BS    OR=91.88   +/- 1.24   Agg=29.85   +/- 0.04   Total=121.74  +/- 1.24  (ms)
+  BSA   OR=60.47   +/- 0.13   Agg=29.96   +/- 0.10   Total=90.48   +/- 0.15  (ms)
+  CON   OR=245.22  +/- 0.74   Agg=61.39   +/- 0.37   Total=306.82  +/- 0.76  (ms)
+================================================================
+
+  [CSV] Results written to: q15_results_SF10.csv
+┌───────────┬────────────────────┬──────────────────────────────────────────┬─────────────────┬───────────────┐
+│ s_suppkey │       s_name       │                s_address                 │     s_phone     │ total_revenue │
+│   int64   │      varchar       │                 varchar                  │     varchar     │ decimal(38,4) │
+├───────────┼────────────────────┼──────────────────────────────────────────┼─────────────────┼───────────────┤
+│     69998 │ Supplier#000069998 │ 117W54YtKASNfzkZRS8P32856BMj0HKf895vdukw │ 16-386-278-9829 │  2194132.8166 │
+└───────────┴────────────────────┴──────────────────────────────────────────┴─────────────────┴───────────────┘
+  [Breakdown] ComBit   L1=2.13 MiB  L2=2.10 MiB  L3=1.92 MiB  L4=1.27 MiB  total=7.43 MiB

@@ -83,6 +83,7 @@
 #include <iomanip>
 #include <sstream>
 #include <cstring>
+#include <unordered_set>
 
 namespace duckdb {
 
@@ -117,24 +118,6 @@ static const int Q17_WARMUP     = bm_bench::warmup_count(2);
 static std::once_flag q17_once_flag;
 
 // --- Stats helper ---
-struct Q17Stats {
-    double median = 0, stddev = 0, min_val = 0, max_val = 0;
-};
-static Q17Stats q17_compute_stats(std::vector<double>& v) {
-    Q17Stats s{};
-    if (v.empty()) return s;
-    std::sort(v.begin(), v.end());
-    size_t n = v.size();
-    s.median  = (n % 2 == 0) ? (v[n/2-1] + v[n/2]) / 2.0 : v[n/2];
-    s.min_val = v.front();
-    s.max_val = v.back();
-    double mean = std::accumulate(v.begin(), v.end(), 0.0) / n;
-    double sq = 0;
-    for (auto x : v) sq += (x - mean) * (x - mean);
-    s.stddev = std::sqrt(sq / n);
-    return s;
-}
-
 // Bitmap loaders (same set as Q14/Q15).
 static ComBit q17_load_cb(const std::string& p) {
     std::ifstream in(p, std::ios::binary);
@@ -167,19 +150,6 @@ static ewah::EWAHBoolArray<uint64_t> q17_load_ew(const std::string& p) {
 }
 
 // Byte-LUT for MSB-first bit extraction (same convention as Q1/Q14/Q15).
-struct Q17ByteEntry { uint8_t count; uint8_t pos[8]; };
-static Q17ByteEntry q17_byte_lut[256];
-static bool q17_byte_lut_init = []() {
-    for (int v = 0; v < 256; v++) {
-        uint8_t c = 0;
-        for (int b = 7; b >= 0; b--)
-            if (v & (1 << b))
-                q17_byte_lut[v].pos[c++] = 7 - b;
-        q17_byte_lut[v].count = c;
-    }
-    return true;
-}();
-
 // --- Per-partkey accumulator for Pass1 + threshold computation ---
 //
 //   sum_qty[pk]  : sum of l_quantity (stored ×100) over rows where
@@ -318,7 +288,37 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
     const size_t   pk_dim = static_cast<size_t>(max_partkey) + 1;
 
     // ============================================================
-    // 2. Load is_q17_part bitmaps (one bitmap per backend)
+    // 1.5 Build is_q17_part bitmap dynamically (TPC-H 1.5.7 compliance).
+    //     Single-table SQL probe on `part` for the brand+container filter,
+    //     then walk lineitem.l_partkey + FK lookup against part flag array.
+    //     No multi-table aux structure stored on disk.
+    // ============================================================
+    std::vector<uint32_t> q17_pos;
+    {
+        auto t0 = std::chrono::high_resolution_clock::now();
+        std::unordered_set<int64_t> q17_pk;
+        {
+            Connection con(*context.client.db);
+            auto r = con.Query(
+                "SELECT p_partkey FROM part WHERE p_brand='Brand#23' AND p_container='MED BOX'");
+            if (r && !r->HasError()) {
+                q17_pk.reserve(r->RowCount());
+                for (idx_t i = 0; i < r->RowCount(); i++)
+                    q17_pk.insert(r->GetValue(0, i).GetValue<int64_t>());
+            }
+        }
+        q17_pos.reserve(num_rows / 50);
+        for (size_t i = 0; i < num_rows; i++) {
+            if (q17_pk.count(pk_p[i]))
+                q17_pos.push_back(static_cast<uint32_t>(i));
+        }
+        std::cout << "[Build is_q17_part] " << q17_pos.size() << " set / "
+                  << num_rows << " rows in "
+                  << ms(t0, std::chrono::high_resolution_clock::now()) << " ms" << std::endl;
+    }
+
+    // ============================================================
+    // 2. Build per-backend is_q17_part bitmaps from q17_pos
     // ============================================================
     std::cout << "\n[Load] Loading is_q17_part bitmaps (mode=" << q17_bm_label() << ")..." << std::endl;
 
@@ -335,38 +335,50 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
 
     if (run_cb()) {
         auto t0 = std::chrono::high_resolution_clock::now();
-        cb_part = q17_load_cb(Q17_CB_DIR + "/is_q17_part/0.bm");
+        std::vector<bool> jm(num_rows, false);
+        for (uint32_t p : q17_pos) jm[p] = true;
+        cb_part = ComBit::compress(jm, false);
         cb_load_ms = ms(t0, std::chrono::high_resolution_clock::now());
     }
     if (run_cr()) {
         auto t0 = std::chrono::high_resolution_clock::now();
-        cr_part = q17_load_cr(Q17_CR_DIR + "/is_q17_part/0.bm");
+        if (!q17_pos.empty()) cr_part.addMany(q17_pos.size(), q17_pos.data());
         cr_load_ms = ms(t0, std::chrono::high_resolution_clock::now());
     }
     if (run_crr()) {
         auto t0 = std::chrono::high_resolution_clock::now();
-        crr_part = q17_load_cr(Q17_CR_DIR + "/is_q17_part/0.bm");
+        if (!q17_pos.empty()) crr_part.addMany(q17_pos.size(), q17_pos.data());
         crr_part.runOptimize();
         crr_load_ms = ms(t0, std::chrono::high_resolution_clock::now());
     }
     if (run_wah()) {
         auto t0 = std::chrono::high_resolution_clock::now();
-        wah_part = q17_load_wah(Q17_WAH_DIR + "/is_q17_part/0.bm");
+        size_t k = 0;
+        for (size_t i = 0; i < num_rows; i++) {
+            bool b = (k < q17_pos.size() && q17_pos[k] == i);
+            if (b) k++;
+            wah_part += (b ? 1 : 0);
+        }
+        wah_part.compress();
         wah_load_ms = ms(t0, std::chrono::high_resolution_clock::now());
     }
     if (run_ew()) {
         auto t0 = std::chrono::high_resolution_clock::now();
-        ew_part = q17_load_ew(Q17_EW_DIR + "/is_q17_part/0.bm");
+        for (uint32_t p : q17_pos) ew_part.set(p);
+        if (ew_part.sizeInBits() < num_rows)
+            ew_part.padWithZeroes(num_rows);
         ew_load_ms = ms(t0, std::chrono::high_resolution_clock::now());
     }
     if (run_bs() || run_bsa()) {
         auto t0 = std::chrono::high_resolution_clock::now();
-        bs_part = bm_bench::load_bitmap_from_croaring(Q17_CR_DIR + "/is_q17_part/0.bm");
+        bs_part.alloc_for_bits(num_rows);
+        for (uint32_t p : q17_pos)
+            bs_part.words[p / 64] |= uint64_t(1) << (p % 64);
         bs_load_ms = ms(t0, std::chrono::high_resolution_clock::now());
     }
     if (run_con()) {
         auto t0 = std::chrono::high_resolution_clock::now();
-        con_part = bm_bench::load_concise_from_croaring(Q17_CR_DIR + "/is_q17_part/0.bm");
+        for (uint32_t p : q17_pos) con_part.add(p);
         con_load_ms = ms(t0, std::chrono::high_resolution_clock::now());
     }
 
@@ -453,7 +465,7 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
             reset_acc();
             cb_part.for_each_literal([&](size_t word_off, uint8_t b) {
                 if (b == 0) return;
-                const auto& entry = q17_byte_lut[b];
+                const auto& entry = bm_bench::byte_lut[b];
                 size_t base = word_off * 8;
                 for (int k = 0; k < entry.count; k++) {
                     size_t r = base + entry.pos[k];
@@ -470,7 +482,7 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
             int64_t sum_ep = 0;
             cb_part.for_each_literal([&](size_t word_off, uint8_t b) {
                 if (b == 0) return;
-                const auto& entry = q17_byte_lut[b];
+                const auto& entry = bm_bench::byte_lut[b];
                 size_t base = word_off * 8;
                 for (int k = 0; k < entry.count; k++) {
                     size_t r = base + entry.pos[k];
@@ -872,9 +884,9 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
     auto print_stats = [&](const char* lbl, std::vector<double>& p1_t,
                            std::vector<double>& p2_t, std::vector<double>& tot_t) {
         if (p1_t.empty()) return;
-        auto sa = q17_compute_stats(p1_t);
-        auto sb = q17_compute_stats(p2_t);
-        auto st = q17_compute_stats(tot_t);
+        auto sa = bm_bench::compute_stats(p1_t);
+        auto sb = bm_bench::compute_stats(p2_t);
+        auto st = bm_bench::compute_stats(tot_t);
         std::cout << "  " << std::left << std::setw(5) << lbl
                   << " Pass1="  << std::fixed << std::setprecision(2) << std::setw(7) << sa.median
                   << " +/- "    << std::setw(5) << sa.stddev
@@ -910,9 +922,9 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
             auto wrow = [&](const char* lbl, std::vector<double>& p1_t,
                             std::vector<double>& p2_t, std::vector<double>& tot_t) {
                 if (p1_t.empty()) return;
-                auto sa = q17_compute_stats(p1_t);
-                auto sb = q17_compute_stats(p2_t);
-                auto st = q17_compute_stats(tot_t);
+                auto sa = bm_bench::compute_stats(p1_t);
+                auto sb = bm_bench::compute_stats(p2_t);
+                auto st = bm_bench::compute_stats(tot_t);
                 csv << lbl << "," << sa.median << "," << sb.median << "," << st.median << "\n";
             };
             wrow("CB",  cb_p1_t,  cb_p2_t,  cb_tot_t);

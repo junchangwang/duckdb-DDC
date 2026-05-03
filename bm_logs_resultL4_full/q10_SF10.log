@@ -1,0 +1,221 @@
+# cwd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev
+# cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(10);
+
+================================================================
+  TPC-H Q10 Benchmark — ComBit vs WAH vs CRoaring vs EWAH (SF10)
+  OR orderdate days 639..730 (92 bitmaps)
+  Then AND returnflag='R' (index 2) -> aggregate revenue per c_custkey -> Top-20
+  TPC-H params: o_orderdate [1993-10-01, 1994-01-01), l_returnflag = 'R'
+  Bitmap dirs:
+    orderdate: tpch_q5_combit  returnflag: tpch_q1_combit
+    orderdate: tpch_q5_croaring  returnflag: tpch_q1_croaring
+    orderdate: tpch_q5_wah  returnflag: tpch_q1_wah
+    orderdate: tpch_q5_ewah  returnflag: tpch_q1_ewah
+  Iterations: 10 (first 2 = warm-up)
+================================================================
+
+[Side-load] nation: 25 rows in 0.312 ms
+[Side-load] customer: 1500000 rows (max_custkey=1500000) in 1024.24 ms
+[Side-load] orders:   15000000 rows (max_orderkey=60000000; flat vector 457 MiB) in 321.537 ms
+[Pre-load] lineitem:  59986052 rows (l_orderkey, l_extendedprice, l_discount) in 507.297 ms
+[Build Q10 orderdate] 59986052 lineitems scanned in 7780.52 ms (counted in Total)
+
+[Load] Loading bitmaps (mode=ALL)...
+  WAH load:      6149.48 ms
+  ComBit load:   21384.8 ms
+  CRoaring load: 50.144 ms
+  CRR load:      48.106 ms
+  EWAH load:     36.475 ms
+  Bitset load:   349.76 ms (shared by BS / BSA)
+  Concise load:  140.288 ms
+  WAH      on disk: 482.24 MiB (q5+q1)
+  ComBit   on disk: 539.93 MiB (q5+q1)
+  CRoaring on disk: 167.86 MiB (q5+q1, shared by CR / CRR)
+  EWAH     on disk: 914.50 MiB (q5+q1)
+  Bitset in mem:    665.04 MiB (rebuilt from CRoaring at load)
+  Concise in mem:   11.58 MiB (rebuilt from CRoaring at load)
+
+--- Iteration 1/10 (warm-up) ---
+  CB:   OR=13.15  AND+Agg=39.48  TopK=4.78  Total=7837.94  rows=1147084
+  CR:   OR=57.39  AND+Agg=50.39  TopK=4.80  Total=7893.10  rows=1147084
+  CRR:  OR=8.07  AND+Agg=49.83  TopK=4.80  Total=7843.21  rows=1147084
+  WAH:  OR=2.79  AND+Agg=71.44  TopK=4.83  Total=7859.59  rows=1147084
+  EW:   OR=68.60  AND+Agg=51.99  TopK=4.82  Total=7905.93  rows=1147084
+  BS:   OR=90.57  AND+Agg=26.91  TopK=4.82  Total=7902.83  rows=1147084
+  BSA:  OR=59.43  AND+Agg=26.65  TopK=4.90  Total=7871.51  rows=1147084
+  CON:  OR=80.72  AND+Agg=79.62  TopK=4.78  Total=7945.64  rows=1147084
+
+--- Iteration 2/10 (warm-up) ---
+  CB:   OR=11.01  AND+Agg=36.99  TopK=4.81  Total=7833.33  rows=1147084
+  CR:   OR=57.81  AND+Agg=47.07  TopK=4.81  Total=7890.21  rows=1147084
+  CRR:  OR=8.05  AND+Agg=46.58  TopK=4.85  Total=7840.01  rows=1147084
+  WAH:  OR=2.68  AND+Agg=67.08  TopK=4.80  Total=7855.08  rows=1147084
+  EW:   OR=63.16  AND+Agg=46.93  TopK=4.77  Total=7895.38  rows=1147084
+  BS:   OR=90.31  AND+Agg=24.84  TopK=4.82  Total=7900.49  rows=1147084
+  BSA:  OR=59.53  AND+Agg=24.42  TopK=4.81  Total=7869.28  rows=1147084
+  CON:  OR=80.40  AND+Agg=75.26  TopK=4.77  Total=7940.96  rows=1147084
+
+--- Iteration 3/10 ---
+  CB:   OR=11.01  AND+Agg=34.24  TopK=4.82  Total=7830.59  rows=1147084
+  CR:   OR=58.11  AND+Agg=41.71  TopK=4.78  Total=7885.12  rows=1147084
+  CRR:  OR=7.95  AND+Agg=41.31  TopK=4.79  Total=7834.57  rows=1147084
+  WAH:  OR=2.81  AND+Agg=65.95  TopK=4.81  Total=7854.10  rows=1147084
+  EW:   OR=64.42  AND+Agg=48.11  TopK=4.79  Total=7897.83  rows=1147084
+  BS:   OR=89.94  AND+Agg=24.83  TopK=4.81  Total=7900.10  rows=1147084
+  BSA:  OR=59.47  AND+Agg=24.80  TopK=4.85  Total=7869.64  rows=1147084
+  CON:  OR=80.74  AND+Agg=75.20  TopK=4.79  Total=7941.25  rows=1147084
+
+--- Iteration 4/10 ---
+  CB:   OR=9.96  AND+Agg=34.26  TopK=4.75  Total=7829.50  rows=1147084
+  CR:   OR=57.86  AND+Agg=43.50  TopK=4.76  Total=7886.63  rows=1147084
+  CRR:  OR=8.05  AND+Agg=43.42  TopK=4.84  Total=7836.84  rows=1147084
+  WAH:  OR=2.90  AND+Agg=64.96  TopK=4.82  Total=7853.21  rows=1147084
+  EW:   OR=63.26  AND+Agg=46.54  TopK=4.81  Total=7895.13  rows=1147084
+  BS:   OR=90.00  AND+Agg=24.49  TopK=4.80  Total=7899.81  rows=1147084
+  BSA:  OR=59.29  AND+Agg=24.21  TopK=4.84  Total=7868.86  rows=1147084
+  CON:  OR=80.56  AND+Agg=74.24  TopK=4.85  Total=7940.17  rows=1147084
+
+--- Iteration 5/10 ---
+  CB:   OR=9.93  AND+Agg=33.56  TopK=4.76  Total=7828.77  rows=1147084
+  CR:   OR=57.85  AND+Agg=39.83  TopK=4.79  Total=7882.99  rows=1147084
+  CRR:  OR=7.97  AND+Agg=39.68  TopK=4.75  Total=7832.93  rows=1147084
+  WAH:  OR=2.99  AND+Agg=60.58  TopK=4.80  Total=7848.89  rows=1147084
+  EW:   OR=63.31  AND+Agg=44.20  TopK=4.78  Total=7892.82  rows=1147084
+  BS:   OR=90.73  AND+Agg=23.32  TopK=4.80  Total=7899.38  rows=1147084
+  BSA:  OR=59.37  AND+Agg=23.20  TopK=4.88  Total=7867.97  rows=1147084
+  CON:  OR=80.70  AND+Agg=71.64  TopK=4.79  Total=7937.65  rows=1147084
+
+--- Iteration 6/10 ---
+  CB:   OR=10.20  AND+Agg=31.88  TopK=4.83  Total=7827.43  rows=1147084
+  CR:   OR=58.04  AND+Agg=39.29  TopK=4.80  Total=7882.66  rows=1147084
+  CRR:  OR=7.95  AND+Agg=39.05  TopK=4.82  Total=7832.34  rows=1147084
+  WAH:  OR=2.97  AND+Agg=59.80  TopK=4.78  Total=7848.07  rows=1147084
+  EW:   OR=63.46  AND+Agg=43.76  TopK=4.77  Total=7892.51  rows=1147084
+  BS:   OR=90.02  AND+Agg=22.85  TopK=4.86  Total=7898.25  rows=1147084
+  BSA:  OR=59.59  AND+Agg=22.42  TopK=4.92  Total=7867.46  rows=1147084
+  CON:  OR=80.73  AND+Agg=70.67  TopK=4.79  Total=7936.72  rows=1147084
+
+--- Iteration 7/10 ---
+  CB:   OR=10.17  AND+Agg=31.23  TopK=4.79  Total=7826.70  rows=1147084
+  CR:   OR=58.19  AND+Agg=36.98  TopK=4.79  Total=7880.49  rows=1147084
+  CRR:  OR=7.93  AND+Agg=36.73  TopK=4.82  Total=7830.00  rows=1147084
+  WAH:  OR=2.99  AND+Agg=56.65  TopK=4.82  Total=7844.98  rows=1147084
+  EW:   OR=63.27  AND+Agg=41.95  TopK=4.76  Total=7890.50  rows=1147084
+  BS:   OR=89.95  AND+Agg=22.10  TopK=4.83  Total=7897.40  rows=1147084
+  BSA:  OR=59.51  AND+Agg=22.04  TopK=4.83  Total=7866.89  rows=1147084
+  CON:  OR=80.63  AND+Agg=69.38  TopK=4.79  Total=7935.32  rows=1147084
+
+--- Iteration 8/10 ---
+  CB:   OR=10.49  AND+Agg=30.49  TopK=4.85  Total=7826.35  rows=1147084
+  CR:   OR=58.14  AND+Agg=38.13  TopK=4.77  Total=7881.56  rows=1147084
+  CRR:  OR=7.98  AND+Agg=37.98  TopK=4.79  Total=7831.27  rows=1147084
+  WAH:  OR=2.98  AND+Agg=58.10  TopK=4.85  Total=7846.45  rows=1147084
+  EW:   OR=63.02  AND+Agg=42.52  TopK=4.79  Total=7890.85  rows=1147084
+  BS:   OR=90.64  AND+Agg=22.33  TopK=4.80  Total=7898.30  rows=1147084
+  BSA:  OR=59.35  AND+Agg=22.27  TopK=4.79  Total=7866.93  rows=1147084
+  CON:  OR=80.60  AND+Agg=70.76  TopK=4.87  Total=7936.76  rows=1147084
+
+--- Iteration 9/10 ---
+  CB:   OR=10.32  AND+Agg=31.20  TopK=4.77  Total=7826.80  rows=1147084
+  CR:   OR=58.24  AND+Agg=38.48  TopK=4.77  Total=7882.01  rows=1147084
+  CRR:  OR=8.03  AND+Agg=38.69  TopK=4.76  Total=7832.00  rows=1147084
+  WAH:  OR=3.00  AND+Agg=59.77  TopK=4.80  Total=7848.09  rows=1147084
+  EW:   OR=63.14  AND+Agg=45.85  TopK=4.80  Total=7894.30  rows=1147084
+  BS:   OR=90.21  AND+Agg=23.92  TopK=4.81  Total=7899.46  rows=1147084
+  BSA:  OR=59.61  AND+Agg=23.82  TopK=4.84  Total=7868.79  rows=1147084
+  CON:  OR=80.79  AND+Agg=75.50  TopK=4.84  Total=7941.65  rows=1147084
+
+--- Iteration 10/10 ---
+  CB:   OR=10.11  AND+Agg=34.14  TopK=4.86  Total=7829.63  rows=1147084
+  CR:   OR=58.09  AND+Agg=49.09  TopK=4.90  Total=7892.59  rows=1147084
+  CRR:  OR=8.07  AND+Agg=47.52  TopK=4.82  Total=7840.94  rows=1147084
+  WAH:  OR=3.27  AND+Agg=69.43  TopK=4.78  Total=7858.00  rows=1147084
+  EW:   OR=63.01  AND+Agg=50.56  TopK=4.80  Total=7898.90  rows=1147084
+  BS:   OR=90.13  AND+Agg=26.15  TopK=4.85  Total=7901.64  rows=1147084
+  BSA:  OR=59.64  AND+Agg=25.83  TopK=4.87  Total=7870.86  rows=1147084
+  CON:  OR=80.73  AND+Agg=78.19  TopK=4.80  Total=7944.25  rows=1147084
+
+[Baseline] DuckDB native SQL Top-20  (single run: 1809.76 ms)
+[OK] all active backends match DuckDB SQL ground truth (Top-20, revenue within 0.01).
+
+  Q10 Top-20 (revenue = SUM(l_extendedprice * (1 - l_discount)), sorted DESC, source=ComBit):
+  c_custkey c_name                         revenue     c_acctbal  n_name          c_address                                 c_phone            c_comment
+  1237537   Customer#001237537         884989.6657     7840.1700  RUSSIA          mdkU4LpZECCtt20RHa76sA6b4WC               32-367-120-4327    yly regular accounts boost. requests need to nag evenly
+  1116802   Customer#001116802         830214.1117      772.1700  JORDAN          iBka7YijCCLApX1f 8 sKp 5ldP               23-199-655-3770    y carefully regular deposits. packages nod ironic packages
+  508954    Customer#000508954         826167.5138     3072.0700  ETHIOPIA        tKQLmGq3MOqXiTmNZQRp                      15-880-510-9487    t the quickly pending deposits. carefully express dependencies detect. blithely regular
+  1487503   Customer#001487503         825996.5903     5398.1100  IRAN            D tOJIC0rcVO                              20-271-234-4401    ithely quiet deposits about the slyly final dolphins hinder carefully about the slyly ironic accounts. carefully ir
+  1461247   Customer#001461247         775992.0820     3205.9300  SAUDI ARABIA    Ia1gHwdAyyFo,pCKhCkqX6                    30-137-949-5375    beans. furiously ironic realms after the slyly ironic sentiments are requests. courts was carefully about t
+  1316338   Customer#001316338         765063.7003     8682.9500  INDIA           QLsXlkrrAQ7fz5TDIoDUVsUMsH1pBOG           18-793-610-3832    olites sleep furiously ironic instructions. final, final ideas wake carefully after the slyly iron
+  817849    Customer#000817849         737664.7232     -380.3000  MOROCCO         UKsTjQdC5d9PwYXz u                        25-111-847-3201    ts after the slyly regular excuses wake pending accounts. deposits wake? carefully ironic foxes wa
+  1335394   Customer#001335394         731259.8675     3978.5300  VIETNAM         FNdEi9tP 5eQib8C                          31-760-271-2302    ly ironic, final foxes. slyly bold instructions 
+  102358    Customer#000102358         715001.8825     3564.9000  BRAZIL          3BnBw0 bZWmVue6bPGn513kOeitBl5VHj         12-941-212-8350     furiously furiously dogged deposits. regular accounts are furiously furiously pending instructions. carefu
+  1432624   Customer#001432624         713512.6431      205.0800  FRANCE          e7o5TBwh,bLO6flPI05Nrp0,1Q8m19ODDs0       16-550-232-2774    y ironic packages. slyly silent instructions cajole about the a
+  160528    Customer#000160528         710673.3317     3425.5200  INDONESIA       VrYJ,qyK75m PkPLTQT7KocfwMwPYQTlcEYBz     19-670-600-6340    blithely even deposits sleep until the even accounts
+  1345237   Customer#001345237         707735.5745     6905.2200  FRANCE          QJxZWEukcxoDYlFOgUGIOuGay                 16-133-279-4001    symptotes integrate according to the sl
+  839816    Customer#000839816         705643.2854     2110.2500  UNITED STATES   r9c CDy,MgOouA                            34-453-282-7925    sly sly pinto beans wake quickly slyly final packages. express deposit
+  1136716   Customer#001136716         695043.5606     5886.0100  CHINA           yqiALHYT6gaiip1g6wgnM6ctJ                 28-729-762-5783    out the fluffily pending requests. furiously ironic forges integrate. quickly bold theod
+  1439413   Customer#001439413         690161.9783     8808.6500  ETHIOPIA        5vMec8OoAWrStjng                          15-432-961-8772    boost across the regular, ironic packages. final instructions 
+  1392475   Customer#001392475         685464.4086      593.2600  SAUDI ARABIA    sbjxdO1xOzy1wBIhAOzp6b2,9sHMj8q1f         30-640-220-2095    c accounts. always final instructions boost according to the final 
+  616909    Customer#000616909         684978.1044     2660.8400  EGYPT           Jg9FiC98BUWmlBb3WTN                       14-185-768-2185    s about the busy ideas affix f
+  314272    Customer#000314272         682212.6365     5127.9200  UNITED STATES    LKR3R5VStcAlT4D,qGBJLWYkmJU              34-674-752-5199    ng to the slyly express instructions sleep fluffily even foxes. special id
+  1472980   Customer#001472980         677765.9180     6003.3600  IRAQ            JIMreXGvswrve5rkBww                       21-506-776-4657    e. packages according to the instructions are among the even, regular th
+  1486201   Customer#001486201         674878.4539     -276.9200  JORDAN          8hJKgyMlv Ay3fyNDJFvszoYd                 23-611-797-4750    es nag. silent accounts are blithely daring packages. 
+
+================================================================
+  Q10 RESULTS (8 measured iterations, median +/- stddev)
+================================================================
+                  CB (ms)         CR (ms)        CRR (ms)        WAH (ms)        EW (ms)
+  -----------------------------------------------------------------------------------------
+  OR_date        10.1810 +/- 0.3251   58.0990 +/- 0.1351    7.9740 +/- 0.0508    2.9825 +/- 0.1213   63.2650 +/- 0.4240
+  AND+Agg        32.7185 +/- 1.4824   39.5580 +/- 3.6577   39.3650 +/- 3.2620   60.1915 +/- 4.1096   45.0265 +/- 2.7329
+  TopK            4.8030 +/- 0.0379    4.7805 +/- 0.0426    4.8070 +/- 0.0299    4.8045 +/- 0.0220    4.7870 +/- 0.0157
+  -----------------------------------------------------------------------------------------
+  TOTAL         7828.1010 +/- 1.5004  7882.8215 +/- 3.6502  7832.6310 +/- 3.3118  7848.4880 +/- 4.1401  7893.5605 +/- 2.8665
+
+  CB rows:  1147084  CR rows:  1147084  CRR rows: 1147084  WAH rows: 1147084  EW rows:  1147084
+================================================================
+
+
+================================================================
+  Q10 BASELINE BACKENDS (no compression / Concise)
+================================================================
+                  BS (ms)         BSA (ms)        Concise (ms)     BS vs WAH   BSA vs WAH   CON vs WAH
+  ----------------------------------------------------------------------------------------------
+  OR_date        90.0730 +/- 0.2929   59.4895 +/- 0.1248   80.7135 +/- 0.0747     0.0331x     0.0501x     0.0370x
+  AND+Agg        23.6210 +/- 1.2855   23.5090 +/- 1.2537   72.9385 +/- 2.8415     2.5482x     2.5604x     0.8252x
+  TopK            4.8090 +/- 0.0217    4.8495 +/- 0.0356    4.8000 +/- 0.0304     0.9991x     0.9907x     1.0009x
+  ----------------------------------------------------------------------------------------------
+  TOTAL         7899.4200 +/- 1.2317  7868.3815 +/- 1.2971  7938.9100 +/- 2.8756     0.9936x     0.9975x     0.9886x
+
+  BS rows:  1147084  BSA rows: 1147084  CON rows: 1147084
+================================================================
+
+  [CSV] Results written to: q10_results_SF10.csv
+┌───────────┬────────────────────┬───────────────┬───────────────┬───────────────┬───────────────────────────────────────┬─────────────────┬─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ c_custkey │       c_name       │    revenue    │   c_acctbal   │    n_name     │               c_address               │     c_phone     │                                                      c_comment                                                      │
+│   int64   │      varchar       │ decimal(38,4) │ decimal(15,2) │    varchar    │                varchar                │     varchar     │                                                       varchar                                                       │
+├───────────┼────────────────────┼───────────────┼───────────────┼───────────────┼───────────────────────────────────────┼─────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│   1237537 │ Customer#001237537 │   884989.6657 │       7840.17 │ RUSSIA        │ mdkU4LpZECCtt20RHa76sA6b4WC           │ 32-367-120-4327 │ yly regular accounts boost. requests need to nag evenly                                                             │
+│   1116802 │ Customer#001116802 │   830214.1117 │        772.17 │ JORDAN        │ iBka7YijCCLApX1f 8 sKp 5ldP           │ 23-199-655-3770 │ y carefully regular deposits. packages nod ironic packages                                                          │
+│    508954 │ Customer#000508954 │   826167.5138 │       3072.07 │ ETHIOPIA      │ tKQLmGq3MOqXiTmNZQRp                  │ 15-880-510-9487 │ t the quickly pending deposits. carefully express dependencies detect. blithely regular                             │
+│   1487503 │ Customer#001487503 │   825996.5903 │       5398.11 │ IRAN          │ D tOJIC0rcVO                          │ 20-271-234-4401 │ ithely quiet deposits about the slyly final dolphins hinder carefully about the slyly ironic accounts. carefully ir │
+│   1461247 │ Customer#001461247 │   775992.0820 │       3205.93 │ SAUDI ARABIA  │ Ia1gHwdAyyFo,pCKhCkqX6                │ 30-137-949-5375 │ beans. furiously ironic realms after the slyly ironic sentiments are requests. courts was carefully about t         │
+│   1316338 │ Customer#001316338 │   765063.7003 │       8682.95 │ INDIA         │ QLsXlkrrAQ7fz5TDIoDUVsUMsH1pBOG       │ 18-793-610-3832 │ olites sleep furiously ironic instructions. final, final ideas wake carefully after the slyly iron                  │
+│    817849 │ Customer#000817849 │   737664.7232 │       -380.30 │ MOROCCO       │ UKsTjQdC5d9PwYXz u                    │ 25-111-847-3201 │ ts after the slyly regular excuses wake pending accounts. deposits wake? carefully ironic foxes wa                  │
+│   1335394 │ Customer#001335394 │   731259.8675 │       3978.53 │ VIETNAM       │ FNdEi9tP 5eQib8C                      │ 31-760-271-2302 │ ly ironic, final foxes. slyly bold instructions                                                                     │
+│    102358 │ Customer#000102358 │   715001.8825 │       3564.90 │ BRAZIL        │ 3BnBw0 bZWmVue6bPGn513kOeitBl5VHj     │ 12-941-212-8350 │  furiously furiously dogged deposits. regular accounts are furiously furiously pending instructions. carefu         │
+│   1432624 │ Customer#001432624 │   713512.6431 │        205.08 │ FRANCE        │ e7o5TBwh,bLO6flPI05Nrp0,1Q8m19ODDs0   │ 16-550-232-2774 │ y ironic packages. slyly silent instructions cajole about the a                                                     │
+│    160528 │ Customer#000160528 │   710673.3317 │       3425.52 │ INDONESIA     │ VrYJ,qyK75m PkPLTQT7KocfwMwPYQTlcEYBz │ 19-670-600-6340 │ blithely even deposits sleep until the even accounts                                                                │
+│   1345237 │ Customer#001345237 │   707735.5745 │       6905.22 │ FRANCE        │ QJxZWEukcxoDYlFOgUGIOuGay             │ 16-133-279-4001 │ symptotes integrate according to the sl                                                                             │
+│    839816 │ Customer#000839816 │   705643.2854 │       2110.25 │ UNITED STATES │ r9c CDy,MgOouA                        │ 34-453-282-7925 │ sly sly pinto beans wake quickly slyly final packages. express deposit                                              │
+│   1136716 │ Customer#001136716 │   695043.5606 │       5886.01 │ CHINA         │ yqiALHYT6gaiip1g6wgnM6ctJ             │ 28-729-762-5783 │ out the fluffily pending requests. furiously ironic forges integrate. quickly bold theod                            │
+│   1439413 │ Customer#001439413 │   690161.9783 │       8808.65 │ ETHIOPIA      │ 5vMec8OoAWrStjng                      │ 15-432-961-8772 │ boost across the regular, ironic packages. final instructions                                                       │
+│   1392475 │ Customer#001392475 │   685464.4086 │        593.26 │ SAUDI ARABIA  │ sbjxdO1xOzy1wBIhAOzp6b2,9sHMj8q1f     │ 30-640-220-2095 │ c accounts. always final instructions boost according to the final                                                  │
+│    616909 │ Customer#000616909 │   684978.1044 │       2660.84 │ EGYPT         │ Jg9FiC98BUWmlBb3WTN                   │ 14-185-768-2185 │ s about the busy ideas affix f                                                                                      │
+│    314272 │ Customer#000314272 │   682212.6365 │       5127.92 │ UNITED STATES │  LKR3R5VStcAlT4D,qGBJLWYkmJU          │ 34-674-752-5199 │ ng to the slyly express instructions sleep fluffily even foxes. special id                                          │
+│   1472980 │ Customer#001472980 │   677765.9180 │       6003.36 │ IRAQ          │ JIMreXGvswrve5rkBww                   │ 21-506-776-4657 │ e. packages according to the instructions are among the even, regular th                                            │
+│   1486201 │ Customer#001486201 │   674878.4539 │       -276.92 │ JORDAN        │ 8hJKgyMlv Ay3fyNDJFvszoYd             │ 23-611-797-4750 │ es nag. silent accounts are blithely daring packages.                                                               │
+├───────────┴────────────────────┴───────────────┴───────────────┴───────────────┴───────────────────────────────────────┴─────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 20 rows                                                                                                                                                                                                                                              8 columns │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  [Breakdown] ComBit   L1=5.32 MiB  L2=0.79 MiB  L3=0.07 MiB  L4=0.01 MiB  total=6.19 MiB

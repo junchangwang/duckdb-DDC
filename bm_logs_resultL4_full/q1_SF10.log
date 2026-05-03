@@ -1,0 +1,185 @@
+# cwd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev
+# pattern_qs_per_backend Q1
+
+# === Backend CB (DEBIT_BM=cb) ===
+# sql=
+PRAGMA load_bitmap('shipdate');
+PRAGMA load_bitmap('linestatus');
+PRAGMA load_bitmap('returnflag');
+PRAGMA bm_tpch(1);
+[load_bitmap] shipdate: scanned 59986052 rows in 698 ms
+[load_bitmap] shipdate: built ComBit index (2526 keys, 6586.64 MB) in 23427 ms
+[load_bitmap] linestatus: scanned 59986052 rows in 879 ms
+[load_bitmap] linestatus: built ComBit index (2 keys, 20.6325 MB) in 2328 ms
+[load_bitmap] returnflag: scanned 59986052 rows in 861 ms
+[load_bitmap] returnflag: built ComBit index (3 keys, 29.7765 MB) in 2406 ms
+
+================================================================
+  TPC-H Q1 (BitEngine pattern, BMFetch) — ComBit (SF10)
+  Pre-loaded auxiliary structures: bitmap_shipdate + bitmap_linestatus + bitmap_returnflag
+================================================================
+
+--- Iteration 1/5 (warm-up) ---
+  ComBit:  PhaseA=1673.51  PhaseB=594.566  PhaseC=3058.74  Total=5326.81
+
+--- Iteration 2/5 ---
+  ComBit:  PhaseA=1673.91  PhaseB=590.401  PhaseC=2873.77  Total=5138.09
+
+--- Iteration 3/5 ---
+  ComBit:  PhaseA=1672.53  PhaseB=591.737  PhaseC=2865.68  Total=5129.95
+
+--- Iteration 4/5 ---
+  ComBit:  PhaseA=1673.72  PhaseB=589.235  PhaseC=2860.78  Total=5123.74
+
+--- Iteration 5/5 ---
+  ComBit:  PhaseA=1672.8  PhaseB=586.2  PhaseC=2862.37  Total=5121.37
+
+[OK] ComBit matches DuckDB SQL ground truth (4 (rf,ls) groups).
+
+  Q1 group results (rf,ls): qty / base_price / disc_price / charge / discount / count
+  (A,F): 377518399.00  566065727797.25  537759104278.07  559276670892.12  740301.18  14804077
+  (N,F): 9851614.00  14767438399.17  14028805792.21  14590490998.37  19289.62  385998
+  (N,O): 743124873.00  1114302286901.88  1058580922144.96  1100937000170.59  1457241.21  29144351
+  (R,F): 377732830.00  566431054976.00  538110922664.77  559634780885.09  740361.65  14808183
+
+================================================================
+  Q1 RESULTS — ComBit only (4 measured iter, median +/- stddev)
+================================================================
+  PhaseA (shipdate range OR): 1673.26 +/- 0.59 ms
+  PhaseB (per-group AND)    : 589.82 +/- 2.05 ms
+  PhaseC (BMFetch+Agg)      : 2864.02 +/- 5.01 ms
+  TOTAL                     : 5126.84 +/- 6.47 ms
+================================================================
+
+  [CSV] q1_results_SF10.csv
+┌──────────────┬──────────────┬───────────────┬──────────────────┬────────────────────┬──────────────────────┬────────────────────┬────────────────────┬─────────────────────┬─────────────┐
+│ l_returnflag │ l_linestatus │    sum_qty    │  sum_base_price  │   sum_disc_price   │      sum_charge      │      avg_qty       │     avg_price      │      avg_disc       │ count_order │
+│   varchar    │   varchar    │ decimal(38,2) │  decimal(38,2)   │   decimal(38,4)    │    decimal(38,6)     │       double       │       double       │       double        │    int64    │
+├──────────────┼──────────────┼───────────────┼──────────────────┼────────────────────┼──────────────────────┼────────────────────┼────────────────────┼─────────────────────┼─────────────┤
+│ A            │ F            │  377518399.00 │  566065727797.25 │  537759104278.0656 │  559276670892.116819 │ 25.500975103007097 │  38237.15100895854 │  0.0500065745402432 │    14804077 │
+│ N            │ F            │    9851614.00 │   14767438399.17 │   14028805792.2114 │   14590490998.366737 │ 25.522448302840946 │  38257.81066008114 │ 0.04997336773765667 │      385998 │
+│ N            │ O            │  743124873.00 │ 1114302286901.88 │ 1058580922144.9638 │ 1100937000170.591854 │ 25.498075870689316 │  38233.90292348181 │ 0.05000081182113131 │    29144351 │
+│ R            │ F            │  377732830.00 │  566431054976.00 │  538110922664.7677 │  559634780885.086257 │  25.50838478968014 │ 38251.219273559764 │ 0.04999679231408742 │    14808183 │
+└──────────────┴──────────────┴───────────────┴──────────────────┴────────────────────┴──────────────────────┴────────────────────┴────────────────────┴─────────────────────┴─────────────┘
+
+# === Backend CR (DEBIT_BM=cr) ===
+# sql=
+PRAGMA load_bitmap('shipdate');
+PRAGMA load_bitmap('linestatus');
+PRAGMA load_bitmap('returnflag');
+PRAGMA bm_tpch(1);
+[load_bitmap] shipdate: scanned 59986052 rows in 685 ms
+[load_bitmap] shipdate: built CRoaring index (2526 keys, 138.443 MB) in 1381 ms
+[load_bitmap] linestatus: scanned 59986052 rows in 875 ms
+[load_bitmap] linestatus: built CRoaring index (2 keys, 15.0224 MB) in 740 ms
+[load_bitmap] returnflag: scanned 59986052 rows in 862 ms
+[load_bitmap] returnflag: built CRoaring index (3 keys, 22.5336 MB) in 724 ms
+
+================================================================
+  TPC-H Q1 (BitEngine pattern, BMFetch) — CRoaring (SF10)
+  Pre-loaded auxiliary structures: bitmap_shipdate + bitmap_linestatus + bitmap_returnflag
+================================================================
+
+--- Iteration 1/5 (warm-up) ---
+  CRoaring:  PhaseA=390.658  PhaseB=497.463  PhaseC=3060.56  Total=3948.69
+
+--- Iteration 2/5 ---
+  CRoaring:  PhaseA=393.68  PhaseB=499.125  PhaseC=2865.38  Total=3758.19
+
+--- Iteration 3/5 ---
+  CRoaring:  PhaseA=394.9  PhaseB=501.592  PhaseC=2862.64  Total=3759.13
+
+--- Iteration 4/5 ---
+  CRoaring:  PhaseA=395.533  PhaseB=501.095  PhaseC=2867.57  Total=3764.2
+
+--- Iteration 5/5 ---
+  CRoaring:  PhaseA=394.625  PhaseB=500.768  PhaseC=2873.15  Total=3768.55
+
+[OK] CRoaring matches DuckDB SQL ground truth (4 (rf,ls) groups).
+
+  Q1 group results (rf,ls): qty / base_price / disc_price / charge / discount / count
+  (A,F): 377518399.00  566065727797.25  537759104278.07  559276670892.12  740301.18  14804077
+  (N,F): 9851614.00  14767438399.17  14028805792.21  14590490998.37  19289.62  385998
+  (N,O): 743124873.00  1114302286901.88  1058580922144.96  1100937000170.59  1457241.21  29144351
+  (R,F): 377732830.00  566431054976.00  538110922664.77  559634780885.09  740361.65  14808183
+
+================================================================
+  Q1 RESULTS — CRoaring only (4 measured iter, median +/- stddev)
+================================================================
+  PhaseA (shipdate range OR): 394.76 +/- 0.67 ms
+  PhaseB (per-group AND)    : 500.93 +/- 0.93 ms
+  PhaseC (BMFetch+Agg)      : 2866.47 +/- 3.86 ms
+  TOTAL                     : 3761.67 +/- 4.17 ms
+================================================================
+
+  [CSV] q1_results_SF10.csv
+┌──────────────┬──────────────┬───────────────┬──────────────────┬────────────────────┬──────────────────────┬────────────────────┬────────────────────┬─────────────────────┬─────────────┐
+│ l_returnflag │ l_linestatus │    sum_qty    │  sum_base_price  │   sum_disc_price   │      sum_charge      │      avg_qty       │     avg_price      │      avg_disc       │ count_order │
+│   varchar    │   varchar    │ decimal(38,2) │  decimal(38,2)   │   decimal(38,4)    │    decimal(38,6)     │       double       │       double       │       double        │    int64    │
+├──────────────┼──────────────┼───────────────┼──────────────────┼────────────────────┼──────────────────────┼────────────────────┼────────────────────┼─────────────────────┼─────────────┤
+│ A            │ F            │  377518399.00 │  566065727797.25 │  537759104278.0656 │  559276670892.116819 │ 25.500975103007097 │  38237.15100895854 │  0.0500065745402432 │    14804077 │
+│ N            │ F            │    9851614.00 │   14767438399.17 │   14028805792.2114 │   14590490998.366737 │ 25.522448302840946 │  38257.81066008114 │ 0.04997336773765667 │      385998 │
+│ N            │ O            │  743124873.00 │ 1114302286901.88 │ 1058580922144.9638 │ 1100937000170.591854 │ 25.498075870689316 │  38233.90292348181 │ 0.05000081182113131 │    29144351 │
+│ R            │ F            │  377732830.00 │  566431054976.00 │  538110922664.7677 │  559634780885.086257 │  25.50838478968014 │ 38251.219273559764 │ 0.04999679231408742 │    14808183 │
+└──────────────┴──────────────┴───────────────┴──────────────────┴────────────────────┴──────────────────────┴────────────────────┴────────────────────┴─────────────────────┴─────────────┘
+
+# === Backend CRR (DEBIT_BM=crr) ===
+# sql=
+PRAGMA load_bitmap('shipdate');
+PRAGMA load_bitmap('linestatus');
+PRAGMA load_bitmap('returnflag');
+PRAGMA bm_tpch(1);
+[load_bitmap] shipdate: scanned 59986052 rows in 690 ms
+[load_bitmap] shipdate: built CRoaringRun index (2526 keys, 138.443 MB) in 1483 ms
+[load_bitmap] linestatus: scanned 59986052 rows in 881 ms
+[load_bitmap] linestatus: built CRoaringRun index (2 keys, 15.0175 MB) in 722 ms
+[load_bitmap] returnflag: scanned 59986052 rows in 867 ms
+[load_bitmap] returnflag: built CRoaringRun index (3 keys, 22.5311 MB) in 715 ms
+
+================================================================
+  TPC-H Q1 (BitEngine pattern, BMFetch) — CRoaring+Run (SF10)
+  Pre-loaded auxiliary structures: bitmap_shipdate + bitmap_linestatus + bitmap_returnflag
+================================================================
+
+--- Iteration 1/5 (warm-up) ---
+  CRoaringRun:  PhaseA=391.061  PhaseB=500.033  PhaseC=3107.64  Total=3998.74
+
+--- Iteration 2/5 ---
+  CRoaringRun:  PhaseA=393.448  PhaseB=499.984  PhaseC=2906.51  Total=3799.95
+
+--- Iteration 3/5 ---
+  CRoaringRun:  PhaseA=395.013  PhaseB=504.165  PhaseC=2904.76  Total=3803.94
+
+--- Iteration 4/5 ---
+  CRoaringRun:  PhaseA=394.491  PhaseB=501.595  PhaseC=2906.39  Total=3802.49
+
+--- Iteration 5/5 ---
+  CRoaringRun:  PhaseA=395.389  PhaseB=502.935  PhaseC=2910.12  Total=3808.45
+
+[OK] CRoaringRun matches DuckDB SQL ground truth (4 (rf,ls) groups).
+
+  Q1 group results (rf,ls): qty / base_price / disc_price / charge / discount / count
+  (A,F): 377518399.00  566065727797.25  537759104278.07  559276670892.12  740301.18  14804077
+  (N,F): 9851614.00  14767438399.17  14028805792.21  14590490998.37  19289.62  385998
+  (N,O): 743124873.00  1114302286901.88  1058580922144.96  1100937000170.59  1457241.21  29144351
+  (R,F): 377732830.00  566431054976.00  538110922664.77  559634780885.09  740361.65  14808183
+
+================================================================
+  Q1 RESULTS — CRoaringRun only (4 measured iter, median +/- stddev)
+================================================================
+  PhaseA (shipdate range OR): 394.75 +/- 0.73 ms
+  PhaseB (per-group AND)    : 502.26 +/- 1.56 ms
+  PhaseC (BMFetch+Agg)      : 2906.45 +/- 1.96 ms
+  TOTAL                     : 3803.21 +/- 3.09 ms
+================================================================
+
+  [CSV] q1_results_SF10.csv
+┌──────────────┬──────────────┬───────────────┬──────────────────┬────────────────────┬──────────────────────┬────────────────────┬────────────────────┬─────────────────────┬─────────────┐
+│ l_returnflag │ l_linestatus │    sum_qty    │  sum_base_price  │   sum_disc_price   │      sum_charge      │      avg_qty       │     avg_price      │      avg_disc       │ count_order │
+│   varchar    │   varchar    │ decimal(38,2) │  decimal(38,2)   │   decimal(38,4)    │    decimal(38,6)     │       double       │       double       │       double        │    int64    │
+├──────────────┼──────────────┼───────────────┼──────────────────┼────────────────────┼──────────────────────┼────────────────────┼────────────────────┼─────────────────────┼─────────────┤
+│ A            │ F            │  377518399.00 │  566065727797.25 │  537759104278.0656 │  559276670892.116819 │ 25.500975103007097 │  38237.15100895854 │  0.0500065745402432 │    14804077 │
+│ N            │ F            │    9851614.00 │   14767438399.17 │   14028805792.2114 │   14590490998.366737 │ 25.522448302840946 │  38257.81066008114 │ 0.04997336773765667 │      385998 │
+│ N            │ O            │  743124873.00 │ 1114302286901.88 │ 1058580922144.9638 │ 1100937000170.591854 │ 25.498075870689316 │  38233.90292348181 │ 0.05000081182113131 │    29144351 │
+│ R            │ F            │  377732830.00 │  566431054976.00 │  538110922664.7677 │  559634780885.086257 │  25.50838478968014 │ 38251.219273559764 │ 0.04999679231408742 │    14808183 │
+└──────────────┴──────────────┴───────────────┴──────────────────┴────────────────────┴──────────────────────┴────────────────────┴────────────────────┴─────────────────────┴─────────────┘

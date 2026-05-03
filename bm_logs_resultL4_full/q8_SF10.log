@@ -1,0 +1,14 @@
+# cwd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev
+# cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(8);
+
+================================================================
+  TPC-H Q8 Benchmark — ComBit vs WAH vs CRoaring vs EWAH (SF10)
+  OR orderdate days 1096..1826 (731 bitmaps)
+  AND join_result, then per-year split (1995, 1996), aggregate revenue
+  TPC-H params: r_name='AMERICA', p_type='ECONOMY ANODIZED STEEL', BRAZIL nation numerator
+  Bitmap dirs: tpch_q8_combit tpch_q8_croaring tpch_q8_wah tpch_q8_ewah
+  Iterations: 10 (first 2 = warm-up)
+================================================================
+
+[Pre-load] Loading 59986052 rows (l_extendedprice, l_discount) ...
+[Pre-load] Done in 760.511 ms

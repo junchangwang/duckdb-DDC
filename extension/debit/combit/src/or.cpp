@@ -29,10 +29,10 @@ ComBitBtv::operator|(const ComBitBtv& other) const {
     if (compress) {
         result.l2_flat_.assign(l2_byte_count, 0x00);
     } else {
-        // Fully expanded: all L2 bytes are 0xFF (all words literal)
+        // Fully expanded: all L2 bytes are 0xFF (all words literal).
+        // l3_bits_ is canonically all-zero in Decompressed and is never
+        // read by AVX-512 paths — skip the alloc.
         result.l3_count_ = l2_byte_count;
-        size_t l3_byte_count = (l2_byte_count + 7) / 8;
-        result.l3_bits_.assign(l3_byte_count, 0);
         result.l2_literal_count_ = 0;
     }
 
@@ -54,6 +54,14 @@ ComBitBtv::operator|(const ComBitBtv& other) const {
 #ifdef __AVX512VBMI2__
     const size_t avx_regions = total_words / words_per_reg;
     size_t a_l2_off = 0, b_l2_off = 0;
+    // L4 streaming state for L3 byte decode (mirrors and.cpp's operator&).
+    size_t a_l3_lit_off = 0, b_l3_lit_off = 0;
+    const uint8_t* a_l4 = l4_bits_.data();
+    const uint8_t* b_l4 = other.l4_bits_.data();
+    const uint8_t* a_l3_lits = l3_literals_.data();
+    const uint8_t* b_l3_lits = other.l3_literals_.data();
+    const uint8_t a_l3_fill = l3_fill_ones_ ? 0xFF : 0x00;
+    const uint8_t b_l3_fill = other.l3_fill_ones_ ? 0xFF : 0x00;
 
     const __m512i fill_a_vec = l1_fill_ones_
         ? _mm512_set1_epi8(static_cast<char>(-1))
@@ -80,96 +88,129 @@ ComBitBtv::operator|(const ComBitBtv& other) const {
     const bool a_zero_fill = !l1_fill_ones_ && !l2_fill_ones_;
     const bool b_zero_fill = !other.l1_fill_ones_ && !other.l2_fill_ones_;
 
-    for (size_t region = 0; region < avx_regions; region++) {
-        uint8_t l3a = l3_bits_[region];
-        uint8_t l3b = other.l3_bits_[region];
+    // Batch-decode 64 L3 bytes per side via SIMD expand-load.  Mirrors
+    // operator|= and for_each_literal.
+    const __m512i a_l3_fill_vec = _mm512_set1_epi8(static_cast<char>(a_l3_fill));
+    const __m512i b_l3_fill_vec = _mm512_set1_epi8(static_cast<char>(b_l3_fill));
 
-        // --- Per-side bypass: x | 0 = x ---
-        if (a_zero_fill && l3a == 0) {
-            if (b_zero_fill && l3b == 0) {
-                // Both zero => 0 | 0 = 0
-                if (!compress) {
-                    _mm512_storeu_si512(r_l1 + r_off, _mm512_setzero_si512());
+    const size_t batch_count = (avx_regions + 63) / 64;
+    for (size_t batch = 0; batch < batch_count; batch++) {
+        const size_t batch_start = batch * 64;
+        const size_t batch_end   = std::min(batch_start + 64, avx_regions);
+        const size_t batch_size  = batch_end - batch_start;
+
+        uint64_t a_l4_mask = 0, b_l4_mask = 0;
+        std::memcpy(&a_l4_mask, a_l4 + batch_start / 8, (batch_size + 7) / 8);
+        std::memcpy(&b_l4_mask, b_l4 + batch_start / 8, (batch_size + 7) / 8);
+        if (batch_size < 64) {
+            uint64_t valid = (uint64_t(1) << batch_size) - 1;
+            a_l4_mask &= valid;
+            b_l4_mask &= valid;
+        }
+
+        __m512i l3a_chunk = _mm512_mask_expandloadu_epi8(a_l3_fill_vec,
+            static_cast<__mmask64>(a_l4_mask), a_l3_lits + a_l3_lit_off);
+        __m512i l3b_chunk = _mm512_mask_expandloadu_epi8(b_l3_fill_vec,
+            static_cast<__mmask64>(b_l4_mask), b_l3_lits + b_l3_lit_off);
+        a_l3_lit_off += __builtin_popcountll(a_l4_mask);
+        b_l3_lit_off += __builtin_popcountll(b_l4_mask);
+
+        alignas(64) uint8_t l3a_buf[64], l3b_buf[64];
+        _mm512_store_si512(reinterpret_cast<__m512i*>(l3a_buf), l3a_chunk);
+        _mm512_store_si512(reinterpret_cast<__m512i*>(l3b_buf), l3b_chunk);
+
+        for (size_t r = 0; r < batch_size; r++) {
+            const size_t region = batch_start + r;
+            const uint8_t l3a = l3a_buf[r];
+            const uint8_t l3b = l3b_buf[r];
+
+            // --- Per-side bypass: x | 0 = x ---
+            if (a_zero_fill && l3a == 0) {
+                if (b_zero_fill && l3b == 0) {
+                    // Both zero => 0 | 0 = 0
+                    if (!compress) {
+                        _mm512_storeu_si512(r_l1 + r_off, _mm512_setzero_si512());
+                        r_off += 64;
+                    }
+                    continue;
+                }
+                // a is all-zero => result = b (expand b only)
+                __m512i l2b_v = _mm512_mask_expandloadu_epi8(l2_fill_b_vec,
+                    static_cast<__mmask64>(l3b), other.l2_literals_.data() + b_l2_off);
+                b_l2_off += __builtin_popcount(l3b);
+                __mmask64 mb = static_cast<__mmask64>(
+                    _mm_cvtsi128_si64(_mm512_castsi512_si128(l2b_v)));
+                __m512i vb = _mm512_mask_expandloadu_epi8(fill_b_vec, mb,
+                    b_l1 + b_l1_off);
+                b_l1_off += __builtin_popcountll(static_cast<uint64_t>(mb));
+                if (compress) {
+                    __mmask64 lit_mask = _mm512_test_epi8_mask(vb, vb);
+                    uint64_t mask_val = static_cast<uint64_t>(lit_mask);
+                    std::memcpy(result_l2 + region * 8, &mask_val, 8);
+                    _mm512_mask_compressstoreu_epi8(r_l1 + r_off, lit_mask, vb);
+                    r_off += __builtin_popcountll(mask_val);
+                } else {
+                    _mm512_storeu_si512(r_l1 + r_off, vb);
                     r_off += 64;
                 }
                 continue;
             }
-            // a is all-zero => result = b (expand b only)
-            __m512i l2b_v = _mm512_mask_expandloadu_epi8(l2_fill_b_vec,
-                static_cast<__mmask64>(l3b), other.l2_literals_.data() + b_l2_off);
-            b_l2_off += __builtin_popcount(l3b);
-            __mmask64 mb = static_cast<__mmask64>(
-                _mm_cvtsi128_si64(_mm512_castsi512_si128(l2b_v)));
-            __m512i vb = _mm512_mask_expandloadu_epi8(fill_b_vec, mb,
-                b_l1 + b_l1_off);
-            b_l1_off += __builtin_popcountll(static_cast<uint64_t>(mb));
-            if (compress) {
-                __mmask64 lit_mask = _mm512_test_epi8_mask(vb, vb);
-                uint64_t mask_val = static_cast<uint64_t>(lit_mask);
-                std::memcpy(result_l2 + region * 8, &mask_val, 8);
-                _mm512_mask_compressstoreu_epi8(r_l1 + r_off, lit_mask, vb);
-                r_off += __builtin_popcountll(mask_val);
-            } else {
-                _mm512_storeu_si512(r_l1 + r_off, vb);
-                r_off += 64;
+            if (b_zero_fill && l3b == 0) {
+                // b is all-zero => result = a (expand a only)
+                __m512i l2a_v = _mm512_mask_expandloadu_epi8(l2_fill_a_vec,
+                    static_cast<__mmask64>(l3a), l2_literals_.data() + a_l2_off);
+                a_l2_off += __builtin_popcount(l3a);
+                __mmask64 ma = static_cast<__mmask64>(
+                    _mm_cvtsi128_si64(_mm512_castsi512_si128(l2a_v)));
+                __m512i va = _mm512_mask_expandloadu_epi8(fill_a_vec, ma,
+                    a_l1 + a_l1_off);
+                a_l1_off += __builtin_popcountll(static_cast<uint64_t>(ma));
+                if (compress) {
+                    __mmask64 lit_mask = _mm512_test_epi8_mask(va, va);
+                    uint64_t mask_val = static_cast<uint64_t>(lit_mask);
+                    std::memcpy(result_l2 + region * 8, &mask_val, 8);
+                    _mm512_mask_compressstoreu_epi8(r_l1 + r_off, lit_mask, va);
+                    r_off += __builtin_popcountll(mask_val);
+                } else {
+                    _mm512_storeu_si512(r_l1 + r_off, va);
+                    r_off += 64;
+                }
+                continue;
             }
-            continue;
-        }
-        if (b_zero_fill && l3b == 0) {
-            // b is all-zero => result = a (expand a only)
+
+            _mm_prefetch(reinterpret_cast<const char*>(a_l1 + a_l1_off + PF_DIST), _MM_HINT_T0);
+            _mm_prefetch(reinterpret_cast<const char*>(b_l1 + b_l1_off + PF_DIST), _MM_HINT_T0);
+            _mm_prefetch(reinterpret_cast<char*>(r_l1 + r_off + PF_DIST), _MM_HINT_T0);
+
             __m512i l2a_v = _mm512_mask_expandloadu_epi8(l2_fill_a_vec,
                 static_cast<__mmask64>(l3a), l2_literals_.data() + a_l2_off);
             a_l2_off += __builtin_popcount(l3a);
             __mmask64 ma = static_cast<__mmask64>(
                 _mm_cvtsi128_si64(_mm512_castsi512_si128(l2a_v)));
-            __m512i va = _mm512_mask_expandloadu_epi8(fill_a_vec, ma,
-                a_l1 + a_l1_off);
+
+            __m512i l2b_v = _mm512_mask_expandloadu_epi8(l2_fill_b_vec,
+                static_cast<__mmask64>(l3b), other.l2_literals_.data() + b_l2_off);
+            b_l2_off += __builtin_popcount(l3b);
+            __mmask64 mb = static_cast<__mmask64>(
+                _mm_cvtsi128_si64(_mm512_castsi512_si128(l2b_v)));
+
+            __m512i va = _mm512_mask_expandloadu_epi8(fill_a_vec, ma, a_l1 + a_l1_off);
             a_l1_off += __builtin_popcountll(static_cast<uint64_t>(ma));
+
+            __m512i vb = _mm512_mask_expandloadu_epi8(fill_b_vec, mb, b_l1 + b_l1_off);
+            b_l1_off += __builtin_popcountll(static_cast<uint64_t>(mb));
+
+            __m512i vr = _mm512_or_si512(va, vb);
             if (compress) {
-                __mmask64 lit_mask = _mm512_test_epi8_mask(va, va);
+                __mmask64 lit_mask = _mm512_test_epi8_mask(vr, vr);
                 uint64_t mask_val = static_cast<uint64_t>(lit_mask);
                 std::memcpy(result_l2 + region * 8, &mask_val, 8);
-                _mm512_mask_compressstoreu_epi8(r_l1 + r_off, lit_mask, va);
+                _mm512_mask_compressstoreu_epi8(r_l1 + r_off, lit_mask, vr);
                 r_off += __builtin_popcountll(mask_val);
             } else {
-                _mm512_storeu_si512(r_l1 + r_off, va);
+                _mm512_storeu_si512(r_l1 + r_off, vr);
                 r_off += 64;
             }
-            continue;
-        }
-
-        _mm_prefetch(reinterpret_cast<const char*>(a_l1 + a_l1_off + PF_DIST), _MM_HINT_T0);
-        _mm_prefetch(reinterpret_cast<const char*>(b_l1 + b_l1_off + PF_DIST), _MM_HINT_T0);
-        _mm_prefetch(reinterpret_cast<char*>(r_l1 + r_off + PF_DIST), _MM_HINT_T0);
-
-        __m512i l2a_v = _mm512_mask_expandloadu_epi8(l2_fill_a_vec,
-            static_cast<__mmask64>(l3a), l2_literals_.data() + a_l2_off);
-        a_l2_off += __builtin_popcount(l3a);
-        __mmask64 ma = static_cast<__mmask64>(
-            _mm_cvtsi128_si64(_mm512_castsi512_si128(l2a_v)));
-
-        __m512i l2b_v = _mm512_mask_expandloadu_epi8(l2_fill_b_vec,
-            static_cast<__mmask64>(l3b), other.l2_literals_.data() + b_l2_off);
-        b_l2_off += __builtin_popcount(l3b);
-        __mmask64 mb = static_cast<__mmask64>(
-            _mm_cvtsi128_si64(_mm512_castsi512_si128(l2b_v)));
-
-        __m512i va = _mm512_mask_expandloadu_epi8(fill_a_vec, ma, a_l1 + a_l1_off);
-        a_l1_off += __builtin_popcountll(static_cast<uint64_t>(ma));
-
-        __m512i vb = _mm512_mask_expandloadu_epi8(fill_b_vec, mb, b_l1 + b_l1_off);
-        b_l1_off += __builtin_popcountll(static_cast<uint64_t>(mb));
-
-        __m512i vr = _mm512_or_si512(va, vb);
-        if (compress) {
-            __mmask64 lit_mask = _mm512_test_epi8_mask(vr, vr);
-            uint64_t mask_val = static_cast<uint64_t>(lit_mask);
-            std::memcpy(result_l2 + region * 8, &mask_val, 8);
-            _mm512_mask_compressstoreu_epi8(r_l1 + r_off, lit_mask, vr);
-            r_off += __builtin_popcountll(mask_val);
-        } else {
-            _mm512_storeu_si512(r_l1 + r_off, vr);
-            r_off += 64;
         }
     }
 
@@ -179,8 +220,10 @@ ComBitBtv::operator|(const ComBitBtv& other) const {
         const uint8_t l1_fill_b = other.l1_fill_ones_ ? 0xFF : 0x00;
         const uint8_t l2_fill_a = l2_fill_ones_ ? 0xFF : 0x00;
         const uint8_t l2_fill_b = other.l2_fill_ones_ ? 0xFF : 0x00;
-        uint8_t l3a = l3_bits_[avx_regions];
-        uint8_t l3b = other.l3_bits_[avx_regions];
+        bool a_l4_lit = (a_l4[avx_regions / 8] >> (avx_regions % 8)) & 1;
+        bool b_l4_lit = (b_l4[avx_regions / 8] >> (avx_regions % 8)) & 1;
+        uint8_t l3a = a_l4_lit ? a_l3_lits[a_l3_lit_off++] : a_l3_fill;
+        uint8_t l3b = b_l4_lit ? b_l3_lits[b_l3_lit_off++] : b_l3_fill;
         size_t pos = avx_regions * words_per_reg;
         for (int l2i = 0; pos < total_words; l2i++) {
             uint8_t l2a = ((l3a >> l2i) & 1) ? l2_literals_[a_l2_off++] : l2_fill_a;
@@ -284,8 +327,38 @@ ComBit::operator|(const ComBit& other) const {
     result.bit_count_ = bit_count_;
     result.segment_bits_ = segment_bits_;
 
-    for (size_t i = 0; i < segments_.size(); i++)
-        result.segments_.push_back(segments_[i] | other.segments_[i]);
+    for (size_t i = 0; i < segments_.size(); i++) {
+        const auto& sa = segments_[i];
+        const auto& sb = other.segments_[i];
+
+        // Segment-level bypass:
+        //   a | 0 = a, 0 | b = b   (zero side returns the other)
+        //   1 | b = 1 (= sa), a | 1 = 1 (= sb)   (ones side returns itself)
+        if (sb.is_all_zero()) { result.segments_.push_back(sa); continue; }
+        if (sa.is_all_zero()) { result.segments_.push_back(sb); continue; }
+        if (sa.is_all_ones()) { result.segments_.push_back(sa); continue; }
+        if (sb.is_all_ones()) { result.segments_.push_back(sb); continue; }
+
+        // ComBitBtv::operator| (binary) asserts both inputs Compressed.
+        // If either is Decompressed (e.g. result of a previous binary |
+        // chained again), fall back to the in-place |= path which accepts
+        // a Decompressed *this.
+        if (sa.state() != ComBitBtv::State::Compressed) {
+            ComBitBtv tmp = sa;          // copy preserves Decompressed state
+            tmp |= sb;
+            result.segments_.push_back(std::move(tmp));
+            continue;
+        }
+        if (sb.state() != ComBitBtv::State::Compressed) {
+            // sb Decompressed, sa Compressed — swap roles via copy + |=.
+            ComBitBtv tmp = sb;
+            tmp |= sa;
+            result.segments_.push_back(std::move(tmp));
+            continue;
+        }
+
+        result.segments_.push_back(sa | sb);
+    }
 
     return result;
 }
@@ -298,7 +371,7 @@ ComBitBtv&
 ComBitBtv::operator|=(const ComBitBtv& other) {
     assert(bit_count_ == other.bit_count_);
     assert(state_ == State::Decompressed);
-    assert(other.state_ == State::Compressed);
+    assert(other.state_ != State::Uncompressed);
 
     if (bit_count_ == 0) return *this;
 
@@ -309,6 +382,21 @@ ComBitBtv::operator|=(const ComBitBtv& other) {
 
 #ifdef __AVX512VBMI2__
     const size_t avx_regions = total_words / words_per_reg;
+
+    // Decompressed RHS: l1 holds every word; degenerates to flat 64-byte OR.
+    if (other.state_ == State::Decompressed) {
+        for (size_t region = 0; region < avx_regions; region++) {
+            __m512i va = _mm512_loadu_si512(r_l1 + region * 64);
+            __m512i vb = _mm512_loadu_si512(b_l1 + region * 64);
+            _mm512_storeu_si512(r_l1 + region * 64,
+                _mm512_or_si512(va, vb));
+        }
+        for (size_t pos = avx_regions * words_per_reg; pos < total_words; pos++)
+            r_l1[pos] |= b_l1[pos];
+        return *this;
+    }
+
+    // Compressed RHS: stream L3 bytes from L4, per-region expand+OR.
     const __m512i fill_b_vec = other.l1_fill_ones_
         ? _mm512_set1_epi8(static_cast<char>(-1))
         : _mm512_setzero_si512();
@@ -317,19 +405,36 @@ ComBitBtv::operator|=(const ComBitBtv& other) {
         : _mm512_setzero_si512();
     static constexpr size_t PF_DIST = 128;
 
+    const uint8_t* b_l4 = other.l4_bits_.data();
+    const uint8_t* b_l3_lits = other.l3_literals_.data();
+    const uint8_t b_l3_fill = other.l3_fill_ones_ ? 0xFF : 0x00;
+    size_t b_l3_lit_off = 0;
     size_t b_l2_off = 0;
 
-    // Per-region bypass for OR:
-    // b all-zero => a | 0 = a (skip entirely)
+    // OR bypass: b all-zero (l1_fill=0, l2_fill=0, l3b=0) => a | 0 = a.
     const bool b_zero_fill = !other.l1_fill_ones_ && !other.l2_fill_ones_;
 
-    for (size_t region = 0; region < avx_regions; region++) {
-        uint8_t l3b = other.l3_bits_[region];
+    // ComBit-native fast skip: when RHS is zero-fill and l3_fill=0,
+    // 8 L4 bytes covering 64 regions = 0 means those 64 regions are
+    // entirely all-zero; the OR is a no-op and offsets stay put.
+    // Per-loop check, no preprocessing.
+    const bool b_l4_skipable = b_zero_fill && b_l3_fill == 0;
 
-        if (b_zero_fill && l3b == 0) {
-            // all-zeros => a | 0 = a (no-op)
-            continue;
+    for (size_t region = 0; region < avx_regions; region++) {
+        if (b_l4_skipable && (region & 63) == 0
+            && region + 64 <= avx_regions) {
+            uint64_t l4_chunk;
+            std::memcpy(&l4_chunk, b_l4 + region / 8, 8);
+            if (l4_chunk == 0) {
+                region += 63;  // loop ++ steps to next batch
+                continue;
+            }
         }
+
+        bool b_l4_lit = (b_l4[region / 8] >> (region % 8)) & 1;
+        uint8_t l3b = b_l4_lit ? b_l3_lits[b_l3_lit_off++] : b_l3_fill;
+
+        if (b_zero_fill && l3b == 0) continue;
 
         _mm_prefetch(reinterpret_cast<const char*>(
             b_l1 + b_l1_off + PF_DIST), _MM_HINT_T0);
@@ -355,7 +460,8 @@ ComBitBtv::operator|=(const ComBitBtv& other) {
     if (avx_regions * words_per_reg < total_words) {
         const uint8_t l1_fill_b = other.l1_fill_ones_ ? 0xFF : 0x00;
         const uint8_t l2_fill_b = other.l2_fill_ones_ ? 0xFF : 0x00;
-        uint8_t l3b = other.l3_bits_[avx_regions];
+        bool b_l4_lit = (b_l4[avx_regions / 8] >> (avx_regions % 8)) & 1;
+        uint8_t l3b = b_l4_lit ? b_l3_lits[b_l3_lit_off++] : b_l3_fill;
         size_t pos = avx_regions * words_per_reg;
         for (int l2i = 0; pos < total_words; l2i++) {
             uint8_t l2b = ((l3b >> l2i) & 1) ? other.l2_literals_[b_l2_off++] : l2_fill_b;
@@ -392,32 +498,32 @@ ComBit::operator|=(const ComBit& other) {
 
     for (size_t i = 0; i < num_segs; i++) {
         const auto& seg = other.segments_[i];
-        bool b_all_zero = !seg.l1_fill_ones() && !seg.l2_fill_ones()
-                          && seg.num_literals() == 0;
-        bool b_all_ones = seg.l1_fill_ones() && !seg.l2_fill_ones()
-                          && seg.num_literals() == 0;
-
-        if (b_all_zero) {
-            // other is all-zero => a | 0 = a (no-op)
+        if (seg.is_all_zero()) continue;                     // a | 0 = a
+        if (seg.is_all_ones()) {                             // a | 1 = 1
+            segments_[i] = ComBitBtv::make_all_fill(
+                seg.bit_count(), seg.l2_count(), true);
             continue;
         }
-        if (b_all_ones) {
-            // other is all-ones => a | 1 = 1 => set this segment to all-ones
-            segments_[i] = ComBitBtv(true);
-            segments_[i].bit_count_ = seg.bit_count_;
-            segments_[i].l2_count_ = seg.l2_count_;
-            size_t l2_byte_count = (seg.l2_count_ + 7) / 8;
-            segments_[i].l3_count_ = l2_byte_count;
-            segments_[i].l3_bits_.assign((l2_byte_count + 7) / 8, 0x00);
+        // segments_[i] may be Compressed (from prior all-fill bypass or
+        // ComBit::operator| binary path).  ComBitBtv::operator|= asserts
+        // Decompressed; route Compressed LHS through binary | which handles
+        // both Compressed inputs and produces a Decompressed result.
+        if (segments_[i].is_all_ones()) continue;            // 1 | b = 1
+        if (segments_[i].is_all_zero()) {                    // 0 | b = b
+            segments_[i] = seg;
+            continue;
+        }
+        if (segments_[i].state() != ComBitBtv::State::Decompressed) {
+            segments_[i] = segments_[i] | seg;
             continue;
         }
 
-        // Prefetch next segment's heap data (l3_bits_, l1_literals_).
+        // Prefetch next segment's heap data (l4_bits_, l1_literals_).
         if (i + 2 < num_segs) {
             __builtin_prefetch(
                 other.segments_[i + 2].l1_literal_data(), 0, 3);
             __builtin_prefetch(
-                other.segments_[i + 2].l3_data(), 0, 3);
+                other.segments_[i + 2].l4_data(), 0, 3);
         }
 
         segments_[i] |= other.segments_[i];
@@ -505,7 +611,11 @@ ComBit::OR_many(size_t number, const ComBit** Btvs) {
             seg.l2_count_ = src.l2_count_;
             const size_t l2_byte_count = (src.l2_count_ + 7) / 8;
             seg.l3_count_ = l2_byte_count;
-            seg.l3_bits_.assign((l2_byte_count + 7) / 8, 0x00);
+            // l3_bits_ is canonically all-zero for Decompressed (l2_fill=1
+            // means "all literal", so every l3 bit is 0).  Production
+            // AVX-512 paths never read it — only the scalar fallback in
+            // for_each_literal does.  Skip the multi-megabyte zero-fill
+            // alloc to halve OR_many path B init cost on lineitem scale.
             seg.l2_literal_count_ = 0;
             seg.l1_literals_.assign(src.l2_count_, 0x00);
             seg.l1_literal_count_ = src.l2_count_;
@@ -551,16 +661,12 @@ ComBit::OR_many(size_t number, const ComBit** Btvs) {
             for (size_t i = 2; i < number; i++) {
                 const auto& seg = Btvs[i]->segment(s);
 
-                if (!seg.l1_fill_ones()
-                    && !seg.l2_fill_ones()
-                    && seg.num_literals() == 0) {
-                    continue;
-                }
+                if (seg.is_all_zero()) continue;       // a | 0 = a
 
                 if (i + 2 < number) {
                     const auto& next = Btvs[i + 2]->segment(s);
                     __builtin_prefetch(next.l1_literal_data(), 0, 3);
-                    __builtin_prefetch(next.l3_data(), 0, 3);
+                    __builtin_prefetch(next.l4_data(), 0, 3);
                 }
 
                 result.segments_[s] |= seg;

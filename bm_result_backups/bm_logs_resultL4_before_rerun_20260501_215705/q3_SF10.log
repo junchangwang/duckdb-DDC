@@ -1,0 +1,188 @@
+# cwd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev
+# cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(3);
+
+================================================================
+  TPC-H Q3 Benchmark — ComBit vs WAH vs CRoaring vs EWAH (SF10)
+  Complement OR shipdate days 1..1169 -> NOT -> AND join_result -> Top-10
+  TPC-H params: c_mktsegment='BUILDING', date=1995-03-15
+  Iterations: 10 (first 2 = warm-up)
+================================================================
+
+[Side-load] orders_meta: 1461923 qualifying orders in 438.44 ms
+[Pre-load] lineitem: 59986052 rows (l_orderkey, l_extendedprice, l_discount) in 524.6 ms
+
+[Load] Loading bitmaps (mode=ALL)...
+  WAH load:      264.201 ms
+  ComBit load:   1470.37 ms
+  CRoaring load: 130.502 ms
+  CRR load:      162.099 ms
+  EWAH load:     239.909 ms
+  Bitset load:   3970.16 ms (shared by BS / BSA)
+  Concise load:  796.901 ms (incl. universe build)
+
+--- Iteration 1/10 (warm-up) ---
+  CB:   OR=259.794  NOT=3.953  AND=0.902  Agg=35.671  Total=300.321  rows=302114
+  CR:   OR=285.326  NOT=0.383  AND=12.467  Agg=27.176  Total=325.354  rows=302114
+  CRR:  OR=106.326  NOT=0.4  AND=12.457  Agg=25.879  Total=145.063  rows=302114
+  WAH:  OR=113.698  NOT=0.303  AND=7.108  Agg=40.527  Total=161.637  rows=302114
+  EW:   OR=2676.59  NOT=0.64  AND=7.842  Agg=31.616  Total=2716.69  rows=302114
+  BS:   OR=1139.18  NOT=0.312  AND=0.998  Agg=34.555  Total=1175.05  rows=302114
+  BSA:  OR=745.426  NOT=0.288  AND=0.645  Agg=34.855  Total=781.216  rows=302114
+  CON:  OR=3549.16  NOT=10.315  AND=18.655  Agg=36.535  Total=3614.67  rows=302114
+
+--- Iteration 2/10 (warm-up) ---
+  CB:   OR=257.483  NOT=0.97  AND=1.123  Agg=34.011  Total=293.588  rows=302114
+  CR:   OR=291.263  NOT=0.402  AND=12.816  Agg=27.267  Total=331.749  rows=302114
+  CRR:  OR=107.442  NOT=0.443  AND=12.648  Agg=25.923  Total=146.457  rows=302114
+  WAH:  OR=113.72  NOT=0.304  AND=5.15  Agg=40.386  Total=159.562  rows=302114
+  EW:   OR=2706.88  NOT=0.645  AND=6.996  Agg=31.653  Total=2746.18  rows=302114
+  BS:   OR=1192.3  NOT=0.312  AND=0.999  Agg=34.628  Total=1228.24  rows=302114
+  BSA:  OR=745.349  NOT=0.283  AND=0.641  Agg=34.736  Total=781.01  rows=302114
+  CON:  OR=3543.45  NOT=11.076  AND=21.13  Agg=36.247  Total=3611.9  rows=302114
+
+--- Iteration 3/10 ---
+  CB:   OR=256.331  NOT=0.999  AND=0.884  Agg=33.725  Total=291.94  rows=302114
+  CR:   OR=286.765  NOT=0.394  AND=12.479  Agg=27.223  Total=326.863  rows=302114
+  CRR:  OR=106.774  NOT=0.408  AND=12.468  Agg=25.868  Total=145.519  rows=302114
+  WAH:  OR=113.511  NOT=0.305  AND=5.214  Agg=40.733  Total=159.765  rows=302114
+  EW:   OR=2703.84  NOT=0.809  AND=7.078  Agg=31.759  Total=2743.49  rows=302114
+  BS:   OR=1144.62  NOT=0.327  AND=0.993  Agg=34.648  Total=1180.59  rows=302114
+  BSA:  OR=751.418  NOT=0.288  AND=0.662  Agg=34.857  Total=787.227  rows=302114
+  CON:  OR=3543.35  NOT=10.907  AND=23.523  Agg=35.974  Total=3613.76  rows=302114
+
+--- Iteration 4/10 ---
+  CB:   OR=253.855  NOT=1.046  AND=0.893  Agg=33.426  Total=289.221  rows=302114
+  CR:   OR=288.18  NOT=0.403  AND=12.576  Agg=27.704  Total=328.865  rows=302114
+  CRR:  OR=106.671  NOT=0.41  AND=12.495  Agg=26.053  Total=145.63  rows=302114
+  WAH:  OR=113.454  NOT=0.306  AND=5.128  Agg=40.747  Total=159.637  rows=302114
+  EW:   OR=2695.58  NOT=0.715  AND=7.074  Agg=31.757  Total=2735.13  rows=302114
+  BS:   OR=1136.51  NOT=0.336  AND=0.987  Agg=34.47  Total=1172.3  rows=302114
+  BSA:  OR=748.179  NOT=0.292  AND=0.642  Agg=34.933  Total=784.047  rows=302114
+  CON:  OR=3543.67  NOT=10.77  AND=23.12  Agg=36.221  Total=3613.78  rows=302114
+
+--- Iteration 5/10 ---
+  CB:   OR=256.171  NOT=1.04  AND=0.914  Agg=33.468  Total=291.595  rows=302114
+  CR:   OR=286.723  NOT=0.396  AND=12.48  Agg=27.01  Total=326.61  rows=302114
+  CRR:  OR=106.155  NOT=0.422  AND=12.427  Agg=25.873  Total=144.878  rows=302114
+  WAH:  OR=113.762  NOT=0.306  AND=6.939  Agg=40.912  Total=161.921  rows=302114
+  EW:   OR=2712.97  NOT=0.695  AND=7.014  Agg=31.988  Total=2752.67  rows=302114
+  BS:   OR=1138.81  NOT=0.325  AND=1.002  Agg=34.551  Total=1174.69  rows=302114
+  BSA:  OR=747.514  NOT=0.283  AND=0.649  Agg=34.667  Total=783.114  rows=302114
+  CON:  OR=3549.6  NOT=10.916  AND=23.425  Agg=36.244  Total=3620.18  rows=302114
+
+--- Iteration 6/10 ---
+  CB:   OR=255.098  NOT=1.054  AND=0.889  Agg=33.481  Total=290.523  rows=302114
+  CR:   OR=288.162  NOT=0.402  AND=12.619  Agg=27.165  Total=328.349  rows=302114
+  CRR:  OR=106.336  NOT=0.401  AND=12.433  Agg=25.765  Total=144.937  rows=302114
+  WAH:  OR=113.683  NOT=0.306  AND=5.217  Agg=40.67  Total=159.878  rows=302114
+  EW:   OR=2698.02  NOT=0.712  AND=7.002  Agg=31.897  Total=2737.63  rows=302114
+  BS:   OR=1143.61  NOT=0.311  AND=1.017  Agg=34.566  Total=1179.5  rows=302114
+  BSA:  OR=748.316  NOT=0.287  AND=0.667  Agg=34.704  Total=783.975  rows=302114
+  CON:  OR=3546.62  NOT=10.85  AND=23.587  Agg=36.221  Total=3617.28  rows=302114
+
+--- Iteration 7/10 ---
+  CB:   OR=255.667  NOT=1.039  AND=0.895  Agg=33.292  Total=290.894  rows=302114
+  CR:   OR=287.831  NOT=0.402  AND=12.515  Agg=27.091  Total=327.841  rows=302114
+  CRR:  OR=106.356  NOT=0.41  AND=12.462  Agg=25.943  Total=145.173  rows=302114
+  WAH:  OR=113.717  NOT=0.316  AND=6.966  Agg=41.16  Total=162.161  rows=302114
+  EW:   OR=2706.21  NOT=0.936  AND=7.053  Agg=32.114  Total=2746.32  rows=302114
+  BS:   OR=1138.87  NOT=0.312  AND=1.003  Agg=34.811  Total=1174.99  rows=302114
+  BSA:  OR=746.686  NOT=0.289  AND=0.657  Agg=34.83  Total=782.463  rows=302114
+  CON:  OR=3551.87  NOT=10.757  AND=23.106  Agg=36.166  Total=3621.9  rows=302114
+
+--- Iteration 8/10 ---
+  CB:   OR=256.071  NOT=1.05  AND=0.901  Agg=33.581  Total=291.604  rows=302114
+  CR:   OR=288.199  NOT=0.393  AND=12.655  Agg=27.339  Total=328.587  rows=302114
+  CRR:  OR=106.379  NOT=0.406  AND=12.455  Agg=25.862  Total=145.105  rows=302114
+  WAH:  OR=113.779  NOT=0.309  AND=4.936  Agg=40.445  Total=159.471  rows=302114
+  EW:   OR=2702.5  NOT=0.655  AND=7.069  Agg=31.572  Total=2741.8  rows=302114
+  BS:   OR=1139.38  NOT=0.32  AND=0.988  Agg=34.612  Total=1175.31  rows=302114
+  BSA:  OR=745.746  NOT=0.282  AND=0.645  Agg=34.557  Total=781.232  rows=302114
+  CON:  OR=3538.85  NOT=10.718  AND=23.297  Agg=36.101  Total=3608.96  rows=302114
+
+--- Iteration 9/10 ---
+  CB:   OR=256.167  NOT=1.008  AND=0.89  Agg=32.895  Total=290.96  rows=302114
+  CR:   OR=287.553  NOT=0.4  AND=12.522  Agg=27.135  Total=327.612  rows=302114
+  CRR:  OR=106.463  NOT=0.41  AND=12.422  Agg=25.969  Total=145.265  rows=302114
+  WAH:  OR=113.03  NOT=0.307  AND=4.979  Agg=40.779  Total=159.097  rows=302114
+  EW:   OR=2712.29  NOT=0.667  AND=7.051  Agg=31.789  Total=2751.8  rows=302114
+  BS:   OR=1139.54  NOT=0.325  AND=0.998  Agg=34.847  Total=1175.71  rows=302114
+  BSA:  OR=746.589  NOT=0.292  AND=0.642  Agg=34.681  Total=782.205  rows=302114
+  CON:  OR=3549.68  NOT=10.607  AND=23.39  Agg=36.193  Total=3619.87  rows=302114
+
+--- Iteration 10/10 ---
+  CB:   OR=258.909  NOT=1.044  AND=0.908  Agg=33.503  Total=294.365  rows=302114
+  CR:   OR=288.784  NOT=0.391  AND=12.451  Agg=27.018  Total=328.645  rows=302114
+  CRR:  OR=105.954  NOT=0.413  AND=12.503  Agg=25.926  Total=144.797  rows=302114
+  WAH:  OR=113.517  NOT=0.303  AND=5.164  Agg=40.754  Total=159.739  rows=302114
+  EW:   OR=2703.98  NOT=0.642  AND=7.042  Agg=31.634  Total=2743.3  rows=302114
+  BS:   OR=1137.8  NOT=0.313  AND=0.985  Agg=34.804  Total=1173.91  rows=302114
+  BSA:  OR=745.353  NOT=0.283  AND=0.653  Agg=34.696  Total=780.987  rows=302114
+  CON:  OR=3551.62  NOT=10.775  AND=23.445  Agg=36.237  Total=3622.07  rows=302114
+
+[Baseline] DuckDB native SQL Top-10  (single run: 384.64 ms)
+[OK] all active backends match DuckDB SQL ground truth (Top-10, revenue within 0.01).
+
+  Q3 Top-10 (revenue DESC, o_orderdate ASC, source=ComBit):
+  l_orderkey           revenue  o_orderdate o_shippriority 
+  4791171          440715.2185  1995-02-23  0              
+  46678469         439855.3250  1995-01-27  0              
+  23906758         432728.5737  1995-03-14  0              
+  23861382         428739.1368  1995-03-09  0              
+  59393639         426036.0662  1995-02-12  0              
+  3355202          425100.6657  1995-03-04  0              
+  9806272          425088.0568  1995-03-13  0              
+  22810436         423231.9690  1995-01-02  0              
+  16384100         421478.7294  1995-03-02  0              
+  52974151         415367.1195  1995-02-05  0              
+
+================================================================
+  Q3 RESULTS (8 measured iterations, median +/- stddev)
+================================================================
+                  CB (ms)         CR (ms)        CRR (ms)        WAH (ms)        EW (ms)
+  -----------------------------------------------------------------------------------------
+  OR_ship       256.1190 +/- 1.3300  287.9965 +/- 0.6792  106.3675 +/- 0.2452  113.6000 +/- 0.2304  2703.9105 +/- 5.7191
+  NOT             1.0420 +/- 0.0189    0.3980 +/- 0.0044    0.4100 +/- 0.0056    0.3060 +/- 0.0037    0.7035 +/- 0.0920
+  AND             0.8940 +/- 0.0095   12.5185 +/- 0.0679   12.4585 +/- 0.0283    5.1890 +/- 0.8051    7.0520 +/- 0.0259
+  Agg            33.4745 +/- 0.2302   27.1500 +/- 0.2120   25.8995 +/- 0.0804   40.7505 +/- 0.1904   31.7740 +/- 0.1677
+  -----------------------------------------------------------------------------------------
+  TOTAL         291.2775 +/- 1.3751  328.0950 +/- 0.7891  145.1390 +/- 0.2795  159.7520 +/- 1.0827  2743.3945 +/- 5.7691
+
+  CB rows: 302114  CR rows: 302114  CRR rows: 302114  WAH rows: 302114  EW rows: 302114
+================================================================
+
+
+================================================================
+  Q3 BASELINE BACKENDS (no compression / Concise)
+================================================================
+                  BS (ms)         BSA (ms)        Concise (ms)     BS vs WAH   BSA vs WAH   CON vs WAH
+  ----------------------------------------------------------------------------------------------
+  OR_ship       1139.1245 +/- 2.6109  747.1000 +/- 1.7907  3548.1070 +/- 4.3291     0.0997x     0.1521x     0.0320x
+  NOT             0.3225 +/- 0.0082    0.2875 +/- 0.0037   10.7725 +/- 0.0959     0.9488x     1.0643x     0.0284x
+  AND             0.9955 +/- 0.0100    0.6510 +/- 0.0087   23.4075 +/- 0.1645     5.2125x     7.9708x     0.2217x
+  Agg            34.6300 +/- 0.1312   34.7000 +/- 0.1143   36.2070 +/- 0.0858     1.1767x     1.1744x     1.1255x
+  ----------------------------------------------------------------------------------------------
+  TOTAL         1175.1490 +/- 2.6108  782.7885 +/- 1.8652  3618.5750 +/- 4.3773     0.1359x     0.2041x     0.0441x
+
+  BS rows: 302114  BSA rows: 302114  CON rows: 302114
+================================================================
+
+  [CSV] q3_results_SF10.csv
+┌────────────┬───────────────┬─────────────┬────────────────┐
+│ l_orderkey │    revenue    │ o_orderdate │ o_shippriority │
+│   int64    │ decimal(38,4) │    date     │     int32      │
+├────────────┼───────────────┼─────────────┼────────────────┤
+│    4791171 │   440715.2185 │ 1995-02-23  │              0 │
+│   46678469 │   439855.3250 │ 1995-01-27  │              0 │
+│   23906758 │   432728.5737 │ 1995-03-14  │              0 │
+│   23861382 │   428739.1368 │ 1995-03-09  │              0 │
+│   59393639 │   426036.0662 │ 1995-02-12  │              0 │
+│    3355202 │   425100.6657 │ 1995-03-04  │              0 │
+│    9806272 │   425088.0568 │ 1995-03-13  │              0 │
+│   22810436 │   423231.9690 │ 1995-01-02  │              0 │
+│   16384100 │   421478.7294 │ 1995-03-02  │              0 │
+│   52974151 │   415367.1195 │ 1995-02-05  │              0 │
+├────────────┴───────────────┴─────────────┴────────────────┤
+│ 10 rows                                         4 columns │
+└───────────────────────────────────────────────────────────┘
+  [Breakdown] ComBit   L1=27.78 MiB  L2=26.38 MiB  L3=23.56 MiB  L4=16.34 MiB  total=94.06 MiB

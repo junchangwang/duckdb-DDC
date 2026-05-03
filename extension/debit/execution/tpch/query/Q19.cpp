@@ -91,6 +91,7 @@
 #include <iomanip>
 #include <sstream>
 #include <cstring>
+#include <unordered_set>
 
 namespace duckdb {
 
@@ -137,24 +138,6 @@ static const int Q19_WARMUP     = bm_bench::warmup_count(2);
 
 static std::once_flag q19_once_flag;
 
-struct Q19Stats {
-    double median = 0, stddev = 0, min_val = 0, max_val = 0;
-};
-static Q19Stats q19_compute_stats(std::vector<double>& v) {
-    Q19Stats s{};
-    if (v.empty()) return s;
-    std::sort(v.begin(), v.end());
-    size_t n = v.size();
-    s.median  = (n % 2 == 0) ? (v[n/2-1] + v[n/2]) / 2.0 : v[n/2];
-    s.min_val = v.front();
-    s.max_val = v.back();
-    double mean = std::accumulate(v.begin(), v.end(), 0.0) / n;
-    double sq = 0;
-    for (auto x : v) sq += (x - mean) * (x - mean);
-    s.stddev = std::sqrt(sq / n);
-    return s;
-}
-
 // Bitmap loaders (same set as Q14/Q15/Q17).
 static ComBit q19_load_cb(const std::string& p) {
     std::ifstream in(p, std::ios::binary);
@@ -187,19 +170,6 @@ static ewah::EWAHBoolArray<uint64_t> q19_load_ew(const std::string& p) {
 }
 
 // Byte-LUT for MSB-first bit extraction (same convention as Q1/Q14/Q15/Q17).
-struct Q19ByteEntry { uint8_t count; uint8_t pos[8]; };
-static Q19ByteEntry q19_byte_lut[256];
-static bool q19_byte_lut_init = []() {
-    for (int v = 0; v < 256; v++) {
-        uint8_t c = 0;
-        for (int b = 7; b >= 0; b--)
-            if (v & (1 << b))
-                q19_byte_lut[v].pos[c++] = 7 - b;
-        q19_byte_lut[v].count = c;
-    }
-    return true;
-}();
-
 // Per-row revenue contribution (×10000 fixed-point):
 //   pp[r] is l_extendedprice ×100 (cents);
 //   dp[r] is l_discount      ×100 (percentage points);
@@ -309,6 +279,71 @@ void BMTableScan::BMTPCH_Q19(ExecutionContext &context, const PhysicalTableScan 
     const int64_t* dp = col_disc.data();
 
     // ============================================================
+    // 1.5 Build branch[123]_part bitmaps dynamically (TPC-H 1.5.7 compliance).
+    //     Each branch query is single-table on `part`.  Result is a set of
+    //     qualifying part keys; we walk lineitem.l_partkey + FK lookup to
+    //     materialize per-lineitem positions.  No multi-table aux on disk.
+    // ============================================================
+    std::vector<uint32_t> b1_pos, b2_pos, b3_pos;
+    {
+        auto t0 = std::chrono::high_resolution_clock::now();
+        std::unordered_set<int64_t> b1_pk, b2_pk, b3_pk;
+        Connection con(*context.client.db);
+        auto run_branch = [&](const char* sql, std::unordered_set<int64_t>& out) {
+            auto r = con.Query(sql);
+            if (r && !r->HasError()) {
+                out.reserve(r->RowCount());
+                for (idx_t i = 0; i < r->RowCount(); i++)
+                    out.insert(r->GetValue(0, i).GetValue<int64_t>());
+            }
+        };
+        run_branch(
+            "SELECT p_partkey FROM part WHERE p_brand='Brand#12' "
+            "AND p_container IN ('SM CASE','SM BOX','SM PACK','SM PKG') "
+            "AND p_size BETWEEN 1 AND 5", b1_pk);
+        run_branch(
+            "SELECT p_partkey FROM part WHERE p_brand='Brand#23' "
+            "AND p_container IN ('MED BAG','MED BOX','MED PKG','MED PACK') "
+            "AND p_size BETWEEN 1 AND 10", b2_pk);
+        run_branch(
+            "SELECT p_partkey FROM part WHERE p_brand='Brand#34' "
+            "AND p_container IN ('LG CASE','LG BOX','LG PACK','LG PKG') "
+            "AND p_size BETWEEN 1 AND 15", b3_pk);
+
+        // Load lineitem.l_partkey, walk once, FK-lookup all 3 branches.
+        std::vector<int64_t> li_pkey(num_rows);
+        {
+            TableScanState st2;
+            vector<StorageIndex> cols2{ StorageIndex(1) };
+            lineitem_table.GetStorage().InitializeScan(
+                context.client, lineitem_transaction, st2, cols2);
+            vector<LogicalType> types2{ lineitem_table.GetColumns().GetColumnTypes()[1] };
+            size_t off = 0;
+            while (true) {
+                DataChunk ch; ch.Initialize(context.client, types2);
+                lineitem_table.GetStorage().Scan(lineitem_transaction, ch, st2);
+                if (ch.size() == 0) break;
+                std::memcpy(li_pkey.data() + off,
+                            FlatVector::GetData<int64_t>(ch.data[0]),
+                            ch.size() * 8);
+                off += ch.size();
+            }
+        }
+        b1_pos.reserve(num_rows / 100);
+        b2_pos.reserve(num_rows / 100);
+        b3_pos.reserve(num_rows / 100);
+        for (size_t i = 0; i < num_rows; i++) {
+            int64_t pk = li_pkey[i];
+            if (b1_pk.count(pk)) b1_pos.push_back(static_cast<uint32_t>(i));
+            else if (b2_pk.count(pk)) b2_pos.push_back(static_cast<uint32_t>(i));
+            else if (b3_pk.count(pk)) b3_pos.push_back(static_cast<uint32_t>(i));
+        }
+        std::cout << "[Build branch_part] b1=" << b1_pos.size()
+                  << " b2=" << b2_pos.size() << " b3=" << b3_pos.size()
+                  << " in " << ms(t0, std::chrono::high_resolution_clock::now()) << " ms" << std::endl;
+    }
+
+    // ============================================================
     // 2. Load bitmaps:
     //      5 own bitmaps + Q19_QTY_MAX equality bitmaps for quantity.
     // ============================================================
@@ -326,9 +361,15 @@ void BMTableScan::BMTPCH_Q19(ExecutionContext &context, const PhysicalTableScan 
         cb_qty.resize(Q19_QTY_MAX + 1);
         for (int q = Q19_QTY_MIN; q <= Q19_QTY_MAX; q++)
             cb_qty[q] = q19_load_cb(Q19_CB_DIR + "/quantity/" + std::to_string(q) + ".bm");
-        cb_b1     = q19_load_cb(Q19_CB_DIR + "/branch1_part/0.bm");
-        cb_b2     = q19_load_cb(Q19_CB_DIR + "/branch2_part/0.bm");
-        cb_b3     = q19_load_cb(Q19_CB_DIR + "/branch3_part/0.bm");
+        // Branch bitmaps built in-memory from FK-lookup positions (L2 compliance).
+        {
+            std::vector<bool> jm(num_rows, false);
+            for (uint32_t p : b1_pos) jm[p] = true; cb_b1 = ComBit::compress(jm, false);
+            std::fill(jm.begin(), jm.end(), false);
+            for (uint32_t p : b2_pos) jm[p] = true; cb_b2 = ComBit::compress(jm, false);
+            std::fill(jm.begin(), jm.end(), false);
+            for (uint32_t p : b3_pos) jm[p] = true; cb_b3 = ComBit::compress(jm, false);
+        }
         cb_smair  = q19_load_cb(Q19_CB_DIR + "/shipmode_air/0.bm");
         cb_sidip  = q19_load_cb(Q19_CB_DIR + "/shipinstruct_dip/0.bm");
         for (int q = Q19_QTY_RANGES[0][0]; q <= Q19_QTY_RANGES[0][1]; q++) cb_q1_ptrs.push_back(&cb_qty[q]);
@@ -346,9 +387,9 @@ void BMTableScan::BMTPCH_Q19(ExecutionContext &context, const PhysicalTableScan 
         cr_qty.resize(Q19_QTY_MAX + 1);
         for (int q = Q19_QTY_MIN; q <= Q19_QTY_MAX; q++)
             cr_qty[q] = q19_load_cr(Q19_CR_DIR + "/quantity/" + std::to_string(q) + ".bm");
-        cr_b1     = q19_load_cr(Q19_CR_DIR + "/branch1_part/0.bm");
-        cr_b2     = q19_load_cr(Q19_CR_DIR + "/branch2_part/0.bm");
-        cr_b3     = q19_load_cr(Q19_CR_DIR + "/branch3_part/0.bm");
+        if (!b1_pos.empty()) cr_b1.addMany(b1_pos.size(), b1_pos.data());
+        if (!b2_pos.empty()) cr_b2.addMany(b2_pos.size(), b2_pos.data());
+        if (!b3_pos.empty()) cr_b3.addMany(b3_pos.size(), b3_pos.data());
         cr_smair  = q19_load_cr(Q19_CR_DIR + "/shipmode_air/0.bm");
         cr_sidip  = q19_load_cr(Q19_CR_DIR + "/shipinstruct_dip/0.bm");
         cr_load_ms = ms(t0, std::chrono::high_resolution_clock::now());
@@ -366,9 +407,9 @@ void BMTableScan::BMTPCH_Q19(ExecutionContext &context, const PhysicalTableScan 
             crr_qty[q] = q19_load_cr(Q19_CR_DIR + "/quantity/" + std::to_string(q) + ".bm");
             crr_qty[q].runOptimize();
         }
-        crr_b1     = q19_load_cr(Q19_CR_DIR + "/branch1_part/0.bm");     crr_b1.runOptimize();
-        crr_b2     = q19_load_cr(Q19_CR_DIR + "/branch2_part/0.bm");     crr_b2.runOptimize();
-        crr_b3     = q19_load_cr(Q19_CR_DIR + "/branch3_part/0.bm");     crr_b3.runOptimize();
+        if (!b1_pos.empty()) crr_b1.addMany(b1_pos.size(), b1_pos.data()); crr_b1.runOptimize();
+        if (!b2_pos.empty()) crr_b2.addMany(b2_pos.size(), b2_pos.data()); crr_b2.runOptimize();
+        if (!b3_pos.empty()) crr_b3.addMany(b3_pos.size(), b3_pos.data()); crr_b3.runOptimize();
         crr_smair  = q19_load_cr(Q19_CR_DIR + "/shipmode_air/0.bm");     crr_smair.runOptimize();
         crr_sidip  = q19_load_cr(Q19_CR_DIR + "/shipinstruct_dip/0.bm"); crr_sidip.runOptimize();
         for (int q = Q19_QTY_RANGES[0][0]; q <= Q19_QTY_RANGES[0][1]; q++) crr_q1_ptrs.push_back(&crr_qty[q]);
@@ -386,9 +427,19 @@ void BMTableScan::BMTPCH_Q19(ExecutionContext &context, const PhysicalTableScan 
         wah_qty.resize(Q19_QTY_MAX + 1);
         for (int q = Q19_QTY_MIN; q <= Q19_QTY_MAX; q++)
             wah_qty[q] = q19_load_wah(Q19_WAH_DIR + "/quantity/" + std::to_string(q) + ".bm");
-        wah_b1     = q19_load_wah(Q19_WAH_DIR + "/branch1_part/0.bm");
-        wah_b2     = q19_load_wah(Q19_WAH_DIR + "/branch2_part/0.bm");
-        wah_b3     = q19_load_wah(Q19_WAH_DIR + "/branch3_part/0.bm");
+        // WAH branches via sequential bit append.
+        auto wah_build = [&](ibis::bitvector& w, const std::vector<uint32_t>& pos) {
+            size_t k = 0;
+            for (size_t i = 0; i < num_rows; i++) {
+                bool b = (k < pos.size() && pos[k] == i);
+                if (b) k++;
+                w += (b ? 1 : 0);
+            }
+            w.compress();
+        };
+        wah_build(wah_b1, b1_pos);
+        wah_build(wah_b2, b2_pos);
+        wah_build(wah_b3, b3_pos);
         wah_smair  = q19_load_wah(Q19_WAH_DIR + "/shipmode_air/0.bm");
         wah_sidip  = q19_load_wah(Q19_WAH_DIR + "/shipinstruct_dip/0.bm");
         wah_load_ms = ms(t0, std::chrono::high_resolution_clock::now());
@@ -404,9 +455,13 @@ void BMTableScan::BMTPCH_Q19(ExecutionContext &context, const PhysicalTableScan 
         ew_qty.resize(Q19_QTY_MAX + 1);
         for (int q = Q19_QTY_MIN; q <= Q19_QTY_MAX; q++)
             ew_qty[q] = q19_load_ew(Q19_EW_DIR + "/quantity/" + std::to_string(q) + ".bm");
-        ew_b1     = q19_load_ew(Q19_EW_DIR + "/branch1_part/0.bm");
-        ew_b2     = q19_load_ew(Q19_EW_DIR + "/branch2_part/0.bm");
-        ew_b3     = q19_load_ew(Q19_EW_DIR + "/branch3_part/0.bm");
+        auto ew_build = [&](ewah::EWAHBoolArray<uint64_t>& e, const std::vector<uint32_t>& pos) {
+            for (uint32_t p : pos) e.set(p);
+            if (e.sizeInBits() < num_rows) e.padWithZeroes(num_rows);
+        };
+        ew_build(ew_b1, b1_pos);
+        ew_build(ew_b2, b2_pos);
+        ew_build(ew_b3, b3_pos);
         ew_smair  = q19_load_ew(Q19_EW_DIR + "/shipmode_air/0.bm");
         ew_sidip  = q19_load_ew(Q19_EW_DIR + "/shipinstruct_dip/0.bm");
         for (int q = Q19_QTY_RANGES[0][0]; q <= Q19_QTY_RANGES[0][1]; q++) ew_q1_ptrs.push_back(&ew_qty[q]);
@@ -425,9 +480,13 @@ void BMTableScan::BMTPCH_Q19(ExecutionContext &context, const PhysicalTableScan 
         for (int q = Q19_QTY_MIN; q <= Q19_QTY_MAX; q++)
             bs_qty[q] = bm_bench::load_bitmap_from_croaring(
                 Q19_CR_DIR + "/quantity/" + std::to_string(q) + ".bm");
-        bs_b1     = bm_bench::load_bitmap_from_croaring(Q19_CR_DIR + "/branch1_part/0.bm");
-        bs_b2     = bm_bench::load_bitmap_from_croaring(Q19_CR_DIR + "/branch2_part/0.bm");
-        bs_b3     = bm_bench::load_bitmap_from_croaring(Q19_CR_DIR + "/branch3_part/0.bm");
+        auto bs_build = [&](bs::Bitmap& b, const std::vector<uint32_t>& pos) {
+            b.alloc_for_bits(num_rows);
+            for (uint32_t p : pos) b.words[p / 64] |= uint64_t(1) << (p % 64);
+        };
+        bs_build(bs_b1, b1_pos);
+        bs_build(bs_b2, b2_pos);
+        bs_build(bs_b3, b3_pos);
         bs_smair  = bm_bench::load_bitmap_from_croaring(Q19_CR_DIR + "/shipmode_air/0.bm");
         bs_sidip  = bm_bench::load_bitmap_from_croaring(Q19_CR_DIR + "/shipinstruct_dip/0.bm");
         bs_load_ms = ms(t0, std::chrono::high_resolution_clock::now());
@@ -444,9 +503,9 @@ void BMTableScan::BMTPCH_Q19(ExecutionContext &context, const PhysicalTableScan 
         for (int q = Q19_QTY_MIN; q <= Q19_QTY_MAX; q++)
             con_qty[q] = bm_bench::load_concise_from_croaring(
                 Q19_CR_DIR + "/quantity/" + std::to_string(q) + ".bm");
-        con_b1     = bm_bench::load_concise_from_croaring(Q19_CR_DIR + "/branch1_part/0.bm");
-        con_b2     = bm_bench::load_concise_from_croaring(Q19_CR_DIR + "/branch2_part/0.bm");
-        con_b3     = bm_bench::load_concise_from_croaring(Q19_CR_DIR + "/branch3_part/0.bm");
+        for (uint32_t p : b1_pos) con_b1.add(p);
+        for (uint32_t p : b2_pos) con_b2.add(p);
+        for (uint32_t p : b3_pos) con_b3.add(p);
         con_smair  = bm_bench::load_concise_from_croaring(Q19_CR_DIR + "/shipmode_air/0.bm");
         con_sidip  = bm_bench::load_concise_from_croaring(Q19_CR_DIR + "/shipinstruct_dip/0.bm");
         for (int q = Q19_QTY_RANGES[0][0]; q <= Q19_QTY_RANGES[0][1]; q++) con_q1_ptrs.push_back(&con_qty[q]);
@@ -539,7 +598,7 @@ void BMTableScan::BMTPCH_Q19(ExecutionContext &context, const PhysicalTableScan 
                     for (size_t bi = 0; bi < n; bi++) {
                         uint8_t b = data[bi];
                         if (b == 0) { row_base += 8; continue; }
-                        const auto& entry = q19_byte_lut[b];
+                        const auto& entry = bm_bench::byte_lut[b];
                         for (int k = 0; k < entry.count; k++)
                             sum_rev += Q19_REV_CONTRIB(pp, dp, row_base + entry.pos[k]);
                         row_base += 8;
@@ -969,10 +1028,10 @@ void BMTableScan::BMTPCH_Q19(ExecutionContext &context, const PhysicalTableScan 
                            std::vector<double>& and_t, std::vector<double>& agg_t,
                            std::vector<double>& tot_t) {
         if (or_t.empty()) return;
-        auto so = q19_compute_stats(or_t);
-        auto sa = q19_compute_stats(and_t);
-        auto sg = q19_compute_stats(agg_t);
-        auto st = q19_compute_stats(tot_t);
+        auto so = bm_bench::compute_stats(or_t);
+        auto sa = bm_bench::compute_stats(and_t);
+        auto sg = bm_bench::compute_stats(agg_t);
+        auto st = bm_bench::compute_stats(tot_t);
         std::cout << "  " << std::left << std::setw(5) << lbl
                   << " OR="     << std::fixed << std::setprecision(2) << std::setw(7) << so.median
                   << " +/- "    << std::setw(5) << so.stddev
@@ -1011,10 +1070,10 @@ void BMTableScan::BMTPCH_Q19(ExecutionContext &context, const PhysicalTableScan 
                             std::vector<double>& and_t, std::vector<double>& agg_t,
                             std::vector<double>& tot_t) {
                 if (or_t.empty()) return;
-                auto so = q19_compute_stats(or_t);
-                auto sa = q19_compute_stats(and_t);
-                auto sg = q19_compute_stats(agg_t);
-                auto st = q19_compute_stats(tot_t);
+                auto so = bm_bench::compute_stats(or_t);
+                auto sa = bm_bench::compute_stats(and_t);
+                auto sg = bm_bench::compute_stats(agg_t);
+                auto st = bm_bench::compute_stats(tot_t);
                 csv << lbl << "," << so.median << "," << sa.median << ","
                     << sg.median << "," << st.median << "\n";
             };

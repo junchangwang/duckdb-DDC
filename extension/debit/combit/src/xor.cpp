@@ -28,10 +28,9 @@ ComBitBtv::operator^(const ComBitBtv& other) const {
     if (compress) {
         result.l2_flat_.assign(l2_byte_count, 0x00);
     } else {
-        // Fully expanded: all L2 bytes are 0xFF (all words literal)
+        // Fully expanded: all L2 bytes are 0xFF (all words literal).
+        // l3_bits_ canonically all-zero in Decompressed; skip alloc.
         result.l3_count_ = l2_byte_count;
-        size_t l3_byte_count = (l2_byte_count + 7) / 8;
-        result.l3_bits_.assign(l3_byte_count, 0);
         result.l2_literal_count_ = 0;
     }
 
@@ -53,6 +52,14 @@ ComBitBtv::operator^(const ComBitBtv& other) const {
 #ifdef __AVX512VBMI2__
     const size_t avx_regions = total_words / words_per_reg;
     size_t a_l2_off = 0, b_l2_off = 0;
+    // L4 streaming state for L3 byte decode (mirrors and.cpp / or.cpp).
+    size_t a_l3_lit_off = 0, b_l3_lit_off = 0;
+    const uint8_t* a_l4 = l4_bits_.data();
+    const uint8_t* b_l4 = other.l4_bits_.data();
+    const uint8_t* a_l3_lits = l3_literals_.data();
+    const uint8_t* b_l3_lits = other.l3_literals_.data();
+    const uint8_t a_l3_fill = l3_fill_ones_ ? 0xFF : 0x00;
+    const uint8_t b_l3_fill = other.l3_fill_ones_ ? 0xFF : 0x00;
 
     const __m512i fill_a_vec = l1_fill_ones_
         ? _mm512_set1_epi8(static_cast<char>(-1))
@@ -80,8 +87,10 @@ ComBitBtv::operator^(const ComBitBtv& other) const {
     const bool b_zero_fill = !other.l1_fill_ones_ && !other.l2_fill_ones_;
 
     for (size_t region = 0; region < avx_regions; region++) {
-        uint8_t l3a = l3_bits_[region];
-        uint8_t l3b = other.l3_bits_[region];
+        bool a_l4_lit = (a_l4[region / 8] >> (region % 8)) & 1;
+        bool b_l4_lit = (b_l4[region / 8] >> (region % 8)) & 1;
+        uint8_t l3a = a_l4_lit ? a_l3_lits[a_l3_lit_off++] : a_l3_fill;
+        uint8_t l3b = b_l4_lit ? b_l3_lits[b_l3_lit_off++] : b_l3_fill;
 
         // --- Per-side bypass: x ^ 0 = x ---
         if (a_zero_fill && l3a == 0) {
@@ -178,8 +187,10 @@ ComBitBtv::operator^(const ComBitBtv& other) const {
         const uint8_t l1_fill_b = other.l1_fill_ones_ ? 0xFF : 0x00;
         const uint8_t l2_fill_a = l2_fill_ones_ ? 0xFF : 0x00;
         const uint8_t l2_fill_b = other.l2_fill_ones_ ? 0xFF : 0x00;
-        uint8_t l3a = l3_bits_[avx_regions];
-        uint8_t l3b = other.l3_bits_[avx_regions];
+        bool a_l4_lit = (a_l4[avx_regions / 8] >> (avx_regions % 8)) & 1;
+        bool b_l4_lit = (b_l4[avx_regions / 8] >> (avx_regions % 8)) & 1;
+        uint8_t l3a = a_l4_lit ? a_l3_lits[a_l3_lit_off++] : a_l3_fill;
+        uint8_t l3b = b_l4_lit ? b_l3_lits[b_l3_lit_off++] : b_l3_fill;
         size_t pos = avx_regions * words_per_reg;
         for (int l2i = 0; pos < total_words; l2i++) {
             uint8_t l2a = ((l3a >> l2i) & 1) ? l2_literals_[a_l2_off++] : l2_fill_a;
@@ -283,8 +294,67 @@ ComBit::operator^(const ComBit& other) const {
     result.bit_count_ = bit_count_;
     result.segment_bits_ = segment_bits_;
 
-    for (size_t i = 0; i < segments_.size(); i++)
-        result.segments_.push_back(segments_[i] ^ other.segments_[i]);
+    for (size_t i = 0; i < segments_.size(); i++) {
+        const auto& sa = segments_[i];
+        const auto& sb = other.segments_[i];
+
+        // Segment-level bypass (mirrors operator| / operator&):
+        //   0 ^ b = b,  a ^ 0 = a,  1 ^ b = ~b,  a ^ 1 = ~a.
+        // Catches 0^0=0 (via sa zero-bypass), 1^1=0 (via sa ones → ~sb=~all1=all0).
+        if (sa.is_all_zero()) { result.segments_.push_back(sb); continue; }
+        if (sb.is_all_zero()) { result.segments_.push_back(sa); continue; }
+        if (sa.is_all_ones()) { result.segments_.push_back(~sb); continue; }
+        if (sb.is_all_ones()) { result.segments_.push_back(~sa); continue; }
+
+        result.segments_.push_back(sa ^ sb);
+    }
 
     return result;
+}
+
+// ----------------------------------------------------------------
+// ComBitBtv in-place XOR (operator^=)
+// ----------------------------------------------------------------
+//
+// XOR has no in-place AVX-512 fast path that meaningfully beats the
+// binary operator^ followed by move-assignment: every output bit
+// depends on both inputs, so unlike |= (which can short-circuit on
+// fill_ones RHS) and &= (fill_zero RHS), there's no per-byte case
+// where the LHS byte stays unchanged.  Delegate to operator^ to
+// reuse its AVX-512 core; the rvalue is move-assigned with no copy.
+// ----------------------------------------------------------------
+
+ComBitBtv&
+ComBitBtv::operator^=(const ComBitBtv& other) {
+    *this = *this ^ other;
+    return *this;
+}
+
+// ----------------------------------------------------------------
+// ComBit (segmented) in-place XOR
+// ----------------------------------------------------------------
+
+ComBit&
+ComBit::operator^=(const ComBit& other) {
+    assert(bit_count_ == other.bit_count_);
+    assert(segments_.size() == other.segments_.size());
+
+    for (size_t i = 0; i < segments_.size(); i++) {
+        const auto& seg = other.segments_[i];
+        if (seg.is_all_zero()) continue;                     // a ^ 0 = a
+        if (segments_[i].is_all_zero()) {                    // 0 ^ b = b
+            segments_[i] = seg;
+            continue;
+        }
+        if (seg.is_all_ones()) {                             // a ^ 1 = ~a
+            segments_[i] = ~segments_[i];
+            continue;
+        }
+        if (segments_[i].is_all_ones()) {                    // 1 ^ b = ~b
+            segments_[i] = ~seg;
+            continue;
+        }
+        segments_[i] = segments_[i] ^ seg;
+    }
+    return *this;
 }

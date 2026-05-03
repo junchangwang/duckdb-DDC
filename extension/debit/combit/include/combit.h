@@ -586,10 +586,23 @@ public:
     // segment per logical slot.
     void apply_or_to(ComBit& dst) const;
 
+    // K-way OR over multiple SparseComBit's into a single ComBit result.
+    // Equivalent to building an empty ComBit and calling apply_or_to for
+    // each input, but does scatter-OR per segment in one pass — avoids
+    // the per-pairwise ComBitBtv |= overhead that dominates Q5/Q1/Q6
+    // multi-OR phases.  Counterpart of CRR's fastunion / EWAH's
+    // fast_logicalor.
+    static ComBit or_many(size_t count, const SparseComBit** sparses,
+                          size_t num_rows, size_t segment_bits);
+
     size_t bit_count()    const { return bit_count_; }
     size_t segment_bits() const { return segment_bits_; }
     size_t num_set_bits() const { return num_set_bits_; }
     size_t num_non_empty_segments() const { return seg_indices_.size(); }
+
+    // Read-only access to the per-segment storage (used by or_many).
+    const std::vector<uint32_t>&  seg_indices() const { return seg_indices_; }
+    const std::vector<ComBitBtv>& seg_data()    const { return seg_data_; }
 
     // Approximate memory footprint in bytes.
     size_t storage_bytes() const;

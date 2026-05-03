@@ -1,0 +1,161 @@
+# cwd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev
+# cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(19);
+
+================================================================
+  TPC-H Q19 Benchmark — 8 backends (SF10)
+  3-branch OR over (brand × container × p_size × l_quantity range)
+        AND with l_shipmode IN ('AIR','AIR REG')
+        AND with l_shipinstruct = 'DELIVER IN PERSON'
+  TPC-H params: BRAND1=Brand#12 (Q1=1..11), BRAND2=Brand#23 (Q2=10..20), BRAND3=Brand#34 (Q3=20..30)
+  Bitmap dirs: tpch_q19_combit tpch_q19_croaring tpch_q19_wah tpch_q19_ewah
+  Iterations: 10 (first 2 = warm-up)
+================================================================
+
+[Pre-load] Loading 59986052 rows (price, discount) ...
+[Pre-load] Done in 802.793 ms
+
+[Load] Loading bitmaps (mode=ALL)...
+  WAH load:      295.626 ms
+  ComBit load:   86.583 ms
+  CRoaring load: 66.825 ms
+  CRR load:      86.151 ms
+  EWAH load:     136.712 ms
+  Bitset load:   271.831 ms (shared by BS / BSA)
+  Concise load:  1073.94 ms
+  WAH      on disk: 15.82 MiB
+  ComBit   on disk: 13.90 MiB
+  CRoaring on disk: 14.62 MiB (shared by CR / CRR)
+  EWAH     on disk: 16.35 MiB
+
+--- Iteration 1/10 (warm-up) ---
+  CB:   OR=20.13  AND=18.09  Agg=2.90  Total=41.12  revenue=30104438.09
+  CR:   OR=71.96  AND=1.96  Agg=0.07  Total=74.00  revenue=30104438.09
+  CRR:  OR=23.91  AND=1.91  Agg=0.08  Total=25.90  revenue=30104438.09
+  WAH:  OR=128.37  AND=17.30  Agg=1.70  Total=147.37  revenue=30104438.09
+  EW:   OR=302.81  AND=7.79  Agg=0.12  Total=310.72  revenue=30104438.09
+  BS:   OR=40.51  AND=21.89  Agg=0.92  Total=63.32  revenue=30104438.09
+  BSA:  OR=23.64  AND=19.60  Agg=1.22  Total=44.46  revenue=30104438.09
+  CON:  OR=767.32  AND=44.65  Agg=0.10  Total=812.08  revenue=30104438.09
+
+--- Iteration 2/10 (warm-up) ---
+  CB:   OR=18.18  AND=13.83  Agg=2.88  Total=34.89  revenue=30104438.09
+  CR:   OR=72.41  AND=1.95  Agg=0.07  Total=74.43  revenue=30104438.09
+  CRR:  OR=23.70  AND=1.78  Agg=0.07  Total=25.55  revenue=30104438.09
+  WAH:  OR=122.78  AND=11.63  Agg=1.63  Total=136.04  revenue=30104438.09
+  EW:   OR=285.82  AND=5.62  Agg=0.08  Total=291.52  revenue=30104438.09
+  BS:   OR=39.91  AND=22.07  Agg=0.92  Total=62.90  revenue=30104438.09
+  BSA:  OR=23.64  AND=19.77  Agg=1.21  Total=44.61  revenue=30104438.09
+  CON:  OR=806.65  AND=52.91  Agg=0.10  Total=859.66  revenue=30104438.09
+
+--- Iteration 3/10 ---
+  CB:   OR=18.09  AND=15.52  Agg=2.90  Total=36.52  revenue=30104438.09
+  CR:   OR=72.66  AND=1.96  Agg=0.07  Total=74.68  revenue=30104438.09
+  CRR:  OR=23.74  AND=1.80  Agg=0.07  Total=25.61  revenue=30104438.09
+  WAH:  OR=123.09  AND=15.63  Agg=1.63  Total=140.35  revenue=30104438.09
+  EW:   OR=282.09  AND=5.56  Agg=0.08  Total=287.72  revenue=30104438.09
+  BS:   OR=41.61  AND=21.93  Agg=0.92  Total=64.46  revenue=30104438.09
+  BSA:  OR=23.39  AND=19.44  Agg=1.19  Total=44.02  revenue=30104438.09
+  CON:  OR=815.04  AND=50.92  Agg=0.10  Total=866.06  revenue=30104438.09
+
+--- Iteration 4/10 ---
+  CB:   OR=18.28  AND=13.05  Agg=2.89  Total=34.22  revenue=30104438.09
+  CR:   OR=72.82  AND=1.92  Agg=0.07  Total=74.81  revenue=30104438.09
+  CRR:  OR=23.70  AND=1.79  Agg=0.07  Total=25.57  revenue=30104438.09
+  WAH:  OR=123.03  AND=17.57  Agg=1.64  Total=142.24  revenue=30104438.09
+  EW:   OR=283.32  AND=5.53  Agg=0.07  Total=288.93  revenue=30104438.09
+  BS:   OR=34.63  AND=21.96  Agg=0.93  Total=57.52  revenue=30104438.09
+  BSA:  OR=23.69  AND=9.37  Agg=1.21  Total=34.26  revenue=30104438.09
+  CON:  OR=797.69  AND=46.65  Agg=0.10  Total=844.44  revenue=30104438.09
+
+--- Iteration 5/10 ---
+  CB:   OR=18.23  AND=10.62  Agg=2.88  Total=31.74  revenue=30104438.09
+  CR:   OR=72.62  AND=1.92  Agg=0.07  Total=74.61  revenue=30104438.09
+  CRR:  OR=23.85  AND=1.78  Agg=0.07  Total=25.70  revenue=30104438.09
+  WAH:  OR=123.19  AND=17.53  Agg=1.65  Total=142.37  revenue=30104438.09
+  EW:   OR=283.24  AND=5.52  Agg=0.07  Total=288.83  revenue=30104438.09
+  BS:   OR=36.78  AND=22.15  Agg=0.91  Total=59.85  revenue=30104438.09
+  BSA:  OR=25.98  AND=19.62  Agg=1.21  Total=46.81  revenue=30104438.09
+  CON:  OR=808.56  AND=46.35  Agg=0.11  Total=855.03  revenue=30104438.09
+
+--- Iteration 6/10 ---
+  CB:   OR=18.22  AND=10.80  Agg=2.89  Total=31.91  revenue=30104438.09
+  CR:   OR=72.74  AND=1.89  Agg=0.08  Total=74.71  revenue=30104438.09
+  CRR:  OR=23.66  AND=1.77  Agg=0.08  Total=25.50  revenue=30104438.09
+  WAH:  OR=122.97  AND=17.52  Agg=1.65  Total=142.14  revenue=30104438.09
+  EW:   OR=283.00  AND=5.40  Agg=0.07  Total=288.48  revenue=30104438.09
+  BS:   OR=37.15  AND=21.77  Agg=0.92  Total=59.84  revenue=30104438.09
+  BSA:  OR=25.92  AND=19.63  Agg=1.20  Total=46.75  revenue=30104438.09
+  CON:  OR=810.07  AND=46.46  Agg=0.10  Total=856.62  revenue=30104438.09
+
+--- Iteration 7/10 ---
+  CB:   OR=18.20  AND=10.69  Agg=2.90  Total=31.79  revenue=30104438.09
+  CR:   OR=72.50  AND=1.90  Agg=0.07  Total=74.47  revenue=30104438.09
+  CRR:  OR=23.79  AND=1.80  Agg=0.07  Total=25.66  revenue=30104438.09
+  WAH:  OR=122.89  AND=15.38  Agg=1.66  Total=139.92  revenue=30104438.09
+  EW:   OR=286.33  AND=5.57  Agg=0.07  Total=291.98  revenue=30104438.09
+  BS:   OR=35.06  AND=21.63  Agg=0.91  Total=57.60  revenue=30104438.09
+  BSA:  OR=23.74  AND=9.35  Agg=1.20  Total=34.30  revenue=30104438.09
+  CON:  OR=791.97  AND=52.87  Agg=0.10  Total=844.94  revenue=30104438.09
+
+--- Iteration 8/10 ---
+  CB:   OR=18.31  AND=11.07  Agg=2.92  Total=32.30  revenue=30104438.09
+  CR:   OR=72.48  AND=1.84  Agg=0.07  Total=74.39  revenue=30104438.09
+  CRR:  OR=23.66  AND=1.77  Agg=0.08  Total=25.51  revenue=30104438.09
+  WAH:  OR=123.22  AND=15.39  Agg=1.65  Total=140.25  revenue=30104438.09
+  EW:   OR=285.79  AND=5.49  Agg=0.08  Total=291.37  revenue=30104438.09
+  BS:   OR=34.61  AND=19.43  Agg=0.93  Total=54.98  revenue=30104438.09
+  BSA:  OR=23.72  AND=9.39  Agg=1.21  Total=34.32  revenue=30104438.09
+  CON:  OR=794.10  AND=50.83  Agg=0.10  Total=845.03  revenue=30104438.09
+
+--- Iteration 9/10 ---
+  CB:   OR=18.34  AND=8.67  Agg=2.91  Total=29.92  revenue=30104438.09
+  CR:   OR=72.54  AND=1.99  Agg=0.07  Total=74.60  revenue=30104438.09
+  CRR:  OR=23.71  AND=1.78  Agg=0.07  Total=25.56  revenue=30104438.09
+  WAH:  OR=122.97  AND=13.23  Agg=1.61  Total=137.81  revenue=30104438.09
+  EW:   OR=285.92  AND=5.72  Agg=0.07  Total=291.71  revenue=30104438.09
+  BS:   OR=34.84  AND=21.94  Agg=0.91  Total=57.69  revenue=30104438.09
+  BSA:  OR=23.59  AND=9.37  Agg=1.19  Total=34.14  revenue=30104438.09
+  CON:  OR=791.57  AND=52.88  Agg=0.10  Total=844.55  revenue=30104438.09
+
+--- Iteration 10/10 ---
+  CB:   OR=18.38  AND=11.22  Agg=2.91  Total=32.51  revenue=30104438.09
+  CR:   OR=72.41  AND=1.92  Agg=0.07  Total=74.40  revenue=30104438.09
+  CRR:  OR=23.69  AND=1.79  Agg=0.06  Total=25.55  revenue=30104438.09
+  WAH:  OR=123.43  AND=17.93  Agg=1.62  Total=142.97  revenue=30104438.09
+  EW:   OR=285.10  AND=5.81  Agg=0.08  Total=290.98  revenue=30104438.09
+  BS:   OR=34.46  AND=22.63  Agg=0.93  Total=58.03  revenue=30104438.09
+  BSA:  OR=23.95  AND=9.34  Agg=1.20  Total=34.50  revenue=30104438.09
+  CON:  OR=803.48  AND=46.91  Agg=0.10  Total=850.49  revenue=30104438.09
+
+================================================================
+  Q19 Correctness Validation
+================================================================
+  Q19 Result (ComBit):
+    revenue = 30104438.09   (sum×10000 = 301044380911)
+  Consistency: ALL MATCH
+
+[Baseline] DuckDB native SQL  (single run: 1857.89 ms)
+  SQL ground truth:  revenue = 30104438.09
+[OK] all active backends match DuckDB SQL ground truth (revenue within 0.00).
+
+================================================================
+  Q19 RESULTS (8 measured iterations, median +/- stddev)
+================================================================
+  CB    OR=18.25   +/- 0.08   AND=10.94   +/- 1.90   Agg=2.90    +/- 0.01   Total=32.11   +/- 1.84  (ms)
+  CR    OR=72.58   +/- 0.13   AND=1.92    +/- 0.04   Agg=0.07    +/- 0.00   Total=74.61   +/- 0.14  (ms)
+  CRR   OR=23.71   +/- 0.06   AND=1.79    +/- 0.01   Agg=0.07    +/- 0.00   Total=25.56   +/- 0.06  (ms)
+  WAH   OR=123.06  +/- 0.16   AND=16.57   +/- 1.53   Agg=1.64    +/- 0.02   Total=141.24  +/- 1.62  (ms)
+  EW    OR=284.21  +/- 1.51   AND=5.54    +/- 0.12   Agg=0.07    +/- 0.00   Total=289.95  +/- 1.57  (ms)
+  BS    OR=34.95   +/- 2.28   AND=21.93   +/- 0.89   Agg=0.92    +/- 0.01   Total=57.86   +/- 2.59  (ms)
+  BSA   OR=23.73   +/- 0.99   AND=9.38    +/- 4.94   Agg=1.20    +/- 0.01   Total=34.41   +/- 5.65  (ms)
+  CON   OR=800.58  +/- 8.43   AND=48.87   +/- 2.74   Agg=0.10    +/- 0.00   Total=847.76  +/- 7.35  (ms)
+================================================================
+
+  [CSV] Results written to: q19_results_SF10.csv
+┌───────────────┐
+│    revenue    │
+│ decimal(38,4) │
+├───────────────┤
+│ 30104438.0911 │
+└───────────────┘
+  [Breakdown] ComBit   L1=43.65 MiB  L2=20.93 MiB  L3=3.36 MiB  L4=0.49 MiB  total=68.43 MiB

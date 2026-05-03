@@ -1,0 +1,169 @@
+# cwd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev
+# cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(4);
+
+================================================================
+  TPC-H Q4 Benchmark — ComBit vs WAH vs CRoaring vs EWAH (SF10)
+  OR orderdate days 547..638 (92 bitmaps) -> AND late_lineitem -> per-priority popcount
+  TPC-H params: orderdate range [1993-07-01, 1993-10-01), EXISTS l_commitdate < l_receiptdate
+  Iterations: 10 (first 2 = warm-up)
+================================================================
+
+[Probe] orders num_rows = 15000000
+
+[Load] Loading bitmaps (mode=ALL)...
+  WAH load:      16.782 ms
+  ComBit load:   40.284 ms
+  CRoaring load: 12.914 ms
+  CRR load:      13.582 ms
+  EWAH load:     11.892 ms
+  Bitset load:   173.747 ms (shared by BS / BSA)
+  Concise load:  227.832 ms
+
+--- Iteration 1/10 (warm-up) ---
+  CB:   OR=4.839  AND_late=0.679  AND_prio+Pop=1.089  Total=6.609
+  CR:   OR=19.66  AND_late=0.46  AND_prio+Pop=2.06  Total=22.181
+  CRR:  OR=1.899  AND_late=0.468  AND_prio+Pop=2.056  Total=4.423
+  WAH:  OR=1.54  AND_late=0.297  AND_prio+Pop=3.376  Total=5.214
+  EW:   OR=51.707  AND_late=1.064  AND_prio+Pop=3.08  Total=55.852
+  BS:   OR=23.17  AND_late=0.259  AND_prio+Pop=1.321  Total=24.752
+  BSA:  OR=15.317  AND_late=0.163  AND_prio+Pop=0.868  Total=16.349
+  CON:  OR=67.914  AND_late=6.05  AND_prio+Pop=22.478  Total=96.443
+
+--- Iteration 2/10 (warm-up) ---
+  CB:   OR=5.032  AND_late=0.662  AND_prio+Pop=1.095  Total=6.79
+  CR:   OR=19.701  AND_late=0.481  AND_prio+Pop=2.054  Total=22.237
+  CRR:  OR=1.902  AND_late=0.46  AND_prio+Pop=2.041  Total=4.404
+  WAH:  OR=1.55  AND_late=0.295  AND_prio+Pop=3.341  Total=5.186
+  EW:   OR=51.389  AND_late=1.09  AND_prio+Pop=3.077  Total=55.557
+  BS:   OR=21.867  AND_late=0.201  AND_prio+Pop=1.073  Total=23.143
+  BSA:  OR=14.784  AND_late=0.148  AND_prio+Pop=0.757  Total=15.69
+  CON:  OR=67.829  AND_late=6.123  AND_prio+Pop=22.479  Total=96.432
+
+--- Iteration 3/10 ---
+  CB:   OR=4.912  AND_late=0.684  AND_prio+Pop=1.064  Total=6.661
+  CR:   OR=19.728  AND_late=0.457  AND_prio+Pop=2.051  Total=22.237
+  CRR:  OR=1.897  AND_late=0.468  AND_prio+Pop=2.053  Total=4.419
+  WAH:  OR=1.558  AND_late=0.302  AND_prio+Pop=3.354  Total=5.215
+  EW:   OR=51.567  AND_late=1.041  AND_prio+Pop=3.063  Total=55.672
+  BS:   OR=20.981  AND_late=0.184  AND_prio+Pop=0.982  Total=22.147
+  BSA:  OR=14.471  AND_late=0.152  AND_prio+Pop=0.717  Total=15.341
+  CON:  OR=67.798  AND_late=6.023  AND_prio+Pop=22.48  Total=96.303
+
+--- Iteration 4/10 ---
+  CB:   OR=5.02  AND_late=0.664  AND_prio+Pop=1.088  Total=6.773
+  CR:   OR=19.698  AND_late=0.473  AND_prio+Pop=2.051  Total=22.223
+  CRR:  OR=1.886  AND_late=0.461  AND_prio+Pop=2.046  Total=4.393
+  WAH:  OR=1.55  AND_late=0.298  AND_prio+Pop=3.333  Total=5.182
+  EW:   OR=51.45  AND_late=1.081  AND_prio+Pop=3.084  Total=55.617
+  BS:   OR=20.651  AND_late=0.189  AND_prio+Pop=0.984  Total=21.825
+  BSA:  OR=14.367  AND_late=0.142  AND_prio+Pop=0.725  Total=15.235
+  CON:  OR=67.806  AND_late=6.072  AND_prio+Pop=22.458  Total=96.337
+
+--- Iteration 5/10 ---
+  CB:   OR=4.905  AND_late=0.685  AND_prio+Pop=1.058  Total=6.649
+  CR:   OR=19.672  AND_late=0.461  AND_prio+Pop=2.054  Total=22.188
+  CRR:  OR=1.882  AND_late=0.475  AND_prio+Pop=2.045  Total=4.403
+  WAH:  OR=1.558  AND_late=0.315  AND_prio+Pop=3.349  Total=5.223
+  EW:   OR=51.466  AND_late=1.049  AND_prio+Pop=3.085  Total=55.601
+  BS:   OR=21.225  AND_late=0.198  AND_prio+Pop=1.047  Total=22.47
+  BSA:  OR=14.528  AND_late=0.149  AND_prio+Pop=0.732  Total=15.41
+  CON:  OR=67.935  AND_late=6.044  AND_prio+Pop=22.525  Total=96.505
+
+--- Iteration 6/10 ---
+  CB:   OR=4.922  AND_late=0.677  AND_prio+Pop=1.12  Total=6.72
+  CR:   OR=19.721  AND_late=0.468  AND_prio+Pop=2.052  Total=22.242
+  CRR:  OR=1.871  AND_late=0.454  AND_prio+Pop=2.046  Total=4.372
+  WAH:  OR=1.59  AND_late=0.293  AND_prio+Pop=3.362  Total=5.247
+  EW:   OR=51.384  AND_late=1.101  AND_prio+Pop=3.083  Total=55.569
+  BS:   OR=20.823  AND_late=0.19  AND_prio+Pop=1.029  Total=22.043
+  BSA:  OR=14.451  AND_late=0.144  AND_prio+Pop=0.732  Total=15.328
+  CON:  OR=67.971  AND_late=6.058  AND_prio+Pop=22.51  Total=96.54
+
+--- Iteration 7/10 ---
+  CB:   OR=4.938  AND_late=0.684  AND_prio+Pop=1.069  Total=6.693
+  CR:   OR=19.695  AND_late=0.463  AND_prio+Pop=2.054  Total=22.213
+  CRR:  OR=1.899  AND_late=0.471  AND_prio+Pop=2.063  Total=4.434
+  WAH:  OR=1.542  AND_late=0.311  AND_prio+Pop=3.365  Total=5.219
+  EW:   OR=51.43  AND_late=1.081  AND_prio+Pop=3.088  Total=55.6
+  BS:   OR=21.457  AND_late=0.205  AND_prio+Pop=1.092  Total=22.754
+  BSA:  OR=14.607  AND_late=0.147  AND_prio+Pop=0.76  Total=15.515
+  CON:  OR=67.899  AND_late=6.089  AND_prio+Pop=22.464  Total=96.454
+
+--- Iteration 8/10 ---
+  CB:   OR=4.941  AND_late=0.682  AND_prio+Pop=1.073  Total=6.697
+  CR:   OR=19.738  AND_late=0.459  AND_prio+Pop=2.053  Total=22.251
+  CRR:  OR=1.888  AND_late=0.474  AND_prio+Pop=2.054  Total=4.417
+  WAH:  OR=1.523  AND_late=0.305  AND_prio+Pop=3.346  Total=5.174
+  EW:   OR=51.341  AND_late=1.024  AND_prio+Pop=3.074  Total=55.44
+  BS:   OR=21.328  AND_late=0.202  AND_prio+Pop=1.072  Total=22.603
+  BSA:  OR=14.582  AND_late=0.146  AND_prio+Pop=0.75  Total=15.479
+  CON:  OR=67.892  AND_late=6.07  AND_prio+Pop=22.498  Total=96.461
+
+--- Iteration 9/10 ---
+  CB:   OR=4.926  AND_late=0.686  AND_prio+Pop=1.045  Total=6.658
+  CR:   OR=19.719  AND_late=0.475  AND_prio+Pop=2.048  Total=22.243
+  CRR:  OR=1.875  AND_late=0.457  AND_prio+Pop=2.038  Total=4.371
+  WAH:  OR=1.568  AND_late=0.294  AND_prio+Pop=3.363  Total=5.226
+  EW:   OR=51.382  AND_late=1.062  AND_prio+Pop=3.095  Total=55.54
+  BS:   OR=21.147  AND_late=0.213  AND_prio+Pop=1.062  Total=22.423
+  BSA:  OR=14.515  AND_late=0.146  AND_prio+Pop=0.75  Total=15.412
+  CON:  OR=67.848  AND_late=6.066  AND_prio+Pop=22.491  Total=96.406
+
+--- Iteration 10/10 ---
+  CB:   OR=4.931  AND_late=0.668  AND_prio+Pop=1.084  Total=6.683
+  CR:   OR=19.726  AND_late=0.475  AND_prio+Pop=2.046  Total=22.247
+  CRR:  OR=1.886  AND_late=0.464  AND_prio+Pop=2.049  Total=4.399
+  WAH:  OR=1.552  AND_late=0.297  AND_prio+Pop=3.334  Total=5.184
+  EW:   OR=51.438  AND_late=1.056  AND_prio+Pop=3.087  Total=55.581
+  BS:   OR=21.027  AND_late=0.193  AND_prio+Pop=1.059  Total=22.28
+  BSA:  OR=14.455  AND_late=0.148  AND_prio+Pop=0.738  Total=15.342
+  CON:  OR=67.986  AND_late=6.031  AND_prio+Pop=22.508  Total=96.527
+
+[Baseline] DuckDB native SQL Q4  (single run: 1214.33 ms)
+[OK] all active backends match DuckDB SQL ground truth (per-priority counts exact).
+
+  Q4 per-priority counts (source=ComBit):
+  o_orderpriority        order_count
+  1-URGENT                    105214
+  2-HIGH                      104821
+  3-MEDIUM                    105227
+  4-NOT SPECIFIED             105422
+  5-LOW                       105356
+
+================================================================
+  Q4 RESULTS (8 measured iterations, median +/- stddev)
+================================================================
+                  CB (ms)         CR (ms)        CRR (ms)        WAH (ms)        EW (ms)
+  -----------------------------------------------------------------------------------------
+  OR_date           4.93 +/-  0.03     19.72 +/-  0.02      1.89 +/-  0.01      1.56 +/-  0.02     51.43 +/-  0.06
+  AND_late          0.68 +/-  0.01      0.47 +/-  0.01      0.47 +/-  0.01      0.30 +/-  0.01      1.06 +/-  0.02
+  AND_prio+Pop      1.07 +/-  0.02      2.05 +/-  0.00      2.05 +/-  0.01      3.35 +/-  0.01      3.08 +/-  0.01
+  -----------------------------------------------------------------------------------------
+  TOTAL             6.69 +/-  0.04     22.24 +/-  0.02      4.40 +/-  0.02      5.22 +/-  0.02     55.59 +/-  0.06
+================================================================
+
+
+================================================================
+  Q4 BASELINE BACKENDS (no compression / Concise)
+================================================================
+                  BS (ms)         BSA (ms)        Concise (ms)     BS vs WAH   BSA vs WAH   CON vs WAH
+  ----------------------------------------------------------------------------------------------
+  OR_date          21.09 +/-  0.25     14.49 +/-  0.07     67.90 +/-  0.07      0.07x      0.11x      0.02x
+  AND_late          0.20 +/-  0.01      0.15 +/-  0.00      6.06 +/-  0.02      1.53x      2.05x      0.05x
+  AND_prio+Pop      1.05 +/-  0.04      0.73 +/-  0.01     22.49 +/-  0.02      3.18x      4.56x      0.15x
+  ----------------------------------------------------------------------------------------------
+  TOTAL            22.35 +/-  0.29     15.38 +/-  0.08     96.46 +/-  0.08      0.23x      0.34x      0.05x
+================================================================
+
+  [CSV] q4_results_SF10.csv
+┌─────────────────┬─────────────┐
+│ o_orderpriority │ order_count │
+│     varchar     │    int64    │
+├─────────────────┼─────────────┤
+│ 1-URGENT        │      105214 │
+│ 2-HIGH          │      104821 │
+│ 3-MEDIUM        │      105227 │
+│ 4-NOT SPECIFIED │      105422 │
+│ 5-LOW           │      105356 │
+└─────────────────┴─────────────┘
+  [Breakdown] ComBit   L1=9.78 MiB  L2=1.40 MiB  L3=0.62 MiB  L4=0.34 MiB  total=12.13 MiB
