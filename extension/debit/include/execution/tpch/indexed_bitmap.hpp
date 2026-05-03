@@ -90,6 +90,17 @@ public:
         if (it != index_.end()) it->second.apply_or_to(dst);
     }
 
+    // Apply OR for all keys in [lo_inclusive, hi_inclusive].  Used by Q1
+    // (range OR over shipdate days) and Q6 (range OR over discount /
+    // quantity values).
+    void apply_or_range_to(ComBit& dst, int64_t lo, int64_t hi) const {
+        for (auto& [k, s] : index_)
+            if (k >= lo && k <= hi) s.apply_or_to(dst);
+    }
+
+    template <typename F>
+    void for_each_key(F&& f) const { for (auto& [k, _] : index_) f(k); }
+
     size_t num_keys() const override { return index_.size(); }
     size_t storage_bytes() const override {
         size_t t = 0;
@@ -99,6 +110,68 @@ public:
     size_t num_rows() const override { return num_rows_; }
     size_t segment_bits() const { return segment_bits_; }
     const char* backend_name() const override { return "ComBit"; }
+
+private:
+    size_t num_rows_ = 0;
+    size_t segment_bits_ = 4096;
+    std::unordered_map<int64_t, SparseComBit> index_;
+};
+
+// -----------------------------------------------------------------------
+// IndexedComBitGE — Group Encoding variant of IndexedComBit.
+//
+// Same per-key SparseComBit storage as IndexedComBit, but the keys are
+// expected to be GROUP IDs (e.g. year for shipdate, decade-bucket for
+// quantity, etc.) — i.e. the build path has already bucketed the raw
+// values into a small group cardinality.  Mirrors teacher's
+// rabit::Btvs_GE pattern (one bitmap per group, accessed by group index).
+//
+// Functionally identical to IndexedComBit at this layer; the GE-ness is
+// in how it was BUILT (keys = group IDs, not raw values).  The class is
+// kept distinct so dynamic_cast in Q6 can route to GE-aware logic.
+// -----------------------------------------------------------------------
+class IndexedComBitGE : public IBitmapIndex {
+public:
+    IndexedComBitGE() = default;
+
+    // Build from already-bucketed group IDs (one per row).
+    // Equivalent to IndexedComBit::build with the group IDs.
+    void build(const std::vector<int64_t>& group_ids, size_t num_rows,
+               size_t segment_bits = 4096) {
+        num_rows_ = num_rows;
+        segment_bits_ = segment_bits;
+        std::unordered_map<int64_t, std::vector<uint32_t>> by_g;
+        by_g.reserve(num_rows / 4);
+        for (size_t i = 0; i < num_rows; i++)
+            by_g[group_ids[i]].push_back(static_cast<uint32_t>(i));
+        index_.reserve(by_g.size());
+        for (auto& [g, pos] : by_g) {
+            SparseComBit s = SparseComBit::from_positions(pos, num_rows, segment_bits);
+            index_.emplace(g, std::move(s));
+        }
+    }
+
+    bool has(int64_t group_id) const { return index_.count(group_id) > 0; }
+    void apply_or_to(ComBit& dst, int64_t group_id) const {
+        auto it = index_.find(group_id);
+        if (it != index_.end()) it->second.apply_or_to(dst);
+    }
+    void apply_or_range_to(ComBit& dst, int64_t lo, int64_t hi) const {
+        for (auto& [g, s] : index_)
+            if (g >= lo && g <= hi) s.apply_or_to(dst);
+    }
+    template <typename F>
+    void for_each_key(F&& f) const { for (auto& [g, _] : index_) f(g); }
+
+    size_t num_keys() const override { return index_.size(); }
+    size_t storage_bytes() const override {
+        size_t t = 0;
+        for (auto& [_, s] : index_) t += s.storage_bytes();
+        return t;
+    }
+    size_t num_rows() const override { return num_rows_; }
+    size_t segment_bits() const { return segment_bits_; }
+    const char* backend_name() const override { return "ComBitGE"; }
 
 private:
     size_t num_rows_ = 0;
@@ -135,6 +208,11 @@ public:
         auto it = index_.find(key);
         if (it != index_.end()) dst |= it->second;
     }
+    void apply_or_range_to(roaring::Roaring& dst, int64_t lo, int64_t hi) const {
+        for (auto& [k, r] : index_) if (k >= lo && k <= hi) dst |= r;
+    }
+    template <typename F>
+    void for_each_key(F&& f) const { for (auto& [k, _] : index_) f(k); }
     size_t num_keys() const override { return index_.size(); }
     size_t num_rows() const override { return num_rows_; }
     size_t storage_bytes() const override {
@@ -190,6 +268,11 @@ public:
         auto it = index_.find(key);
         if (it != index_.end()) dst |= it->second;
     }
+    void apply_or_range_to(ibis::bitvector& dst, int64_t lo, int64_t hi) const {
+        for (auto& [k, b] : index_) if (k >= lo && k <= hi) dst |= b;
+    }
+    template <typename F>
+    void for_each_key(F&& f) const { for (auto& [k, _] : index_) f(k); }
     size_t num_keys() const override { return index_.size(); }
     size_t num_rows() const override { return num_rows_; }
     size_t storage_bytes() const override {
@@ -238,6 +321,16 @@ public:
             dst = std::move(tmp);
         }
     }
+    void apply_or_range_to(EWBA& dst, int64_t lo, int64_t hi) const {
+        for (auto& [k, e] : index_) {
+            if (k < lo || k > hi) continue;
+            EWBA tmp;
+            dst.logicalor(e, tmp);
+            dst = std::move(tmp);
+        }
+    }
+    template <typename F>
+    void for_each_key(F&& f) const { for (auto& [k, _] : index_) f(k); }
     size_t num_keys() const override { return index_.size(); }
     size_t num_rows() const override { return num_rows_; }
     size_t storage_bytes() const override {
@@ -280,6 +373,11 @@ public:
         auto it = index_.find(key);
         if (it != index_.end()) dst = dst | it->second;
     }
+    void apply_or_range_to(CS& dst, int64_t lo, int64_t hi) const {
+        for (auto& [k, c] : index_) if (k >= lo && k <= hi) dst = dst | c;
+    }
+    template <typename F>
+    void for_each_key(F&& f) const { for (auto& [k, _] : index_) f(k); }
     size_t num_keys() const override { return index_.size(); }
     size_t num_rows() const override { return num_rows_; }
     size_t storage_bytes() const override {

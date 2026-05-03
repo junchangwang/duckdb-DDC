@@ -57,27 +57,52 @@ struct BitmapColumnSpec {
 
 // Returns the column spec by name + the field-pointer offset, set by caller
 // based on the column.
+enum class Q1ColKind {
+    Int64,    // BIGINT — read directly via FlatVector::GetData<int64_t>
+    Int32,    // INTEGER / DATE — read as int32_t, promote to int64
+    VarChar,  // VARCHAR — first byte ASCII to int64 (linestatus / returnflag / shipmode / shipinstruct)
+    DateGEYear, // DATE (epoch days) — bucketed into year (key = year, e.g. 1992..1998)
+};
+
+// Bucket epoch-days (since 1970-01-01) into the calendar year that contains
+// the date.  Hard-coded boundaries cover the TPC-H date span (1992-1998 and
+// a small margin); used by load_bitmap('shipdate_GE') to build per-year
+// IndexedComBitGE / IndexedX (mirror of teacher's `Btvs_GE[c_year - start_year]`).
+static int64_t epoch_day_to_year(int32_t day) {
+    static constexpr int boundaries[] = {
+         8035,  8401,  8766,  9131,  9496,  9862, 10227, 10592, 10957
+    };  // 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000
+    static constexpr int years[]      = {
+         1992,  1993,  1994,  1995,  1996,  1997,  1998,  1999,  2000
+    };
+    if (day < boundaries[0]) return 1991;
+    for (int i = 0; i + 1 < (int)(sizeof(boundaries)/sizeof(boundaries[0])); i++)
+        if (day >= boundaries[i] && day < boundaries[i+1])
+            return years[i];
+    return 2001;
+}
+
 struct ColInfo {
     std::string table;
     int storage_index;
-    bool is_int64;
+    Q1ColKind kind;
 };
 
 static ColInfo resolve_column(const std::string& col) {
     // (table, column index) per duckdb-dev TPC-H schema.
-    if (col == "orderkey")    return {"lineitem", 0, true};
-    if (col == "suppkey")     return {"lineitem", 2, true};
-    if (col == "partkey")     return {"lineitem", 1, true};
-    if (col == "shipdate")    return {"lineitem", 10, false};
-    if (col == "shipdate_GE") return {"lineitem", 10, false};
-    if (col == "orderdate")   return {"orders", 4, false};
-    if (col == "linestatus")  return {"lineitem", 9, false};
-    if (col == "returnflag")  return {"lineitem", 8, false};
-    if (col == "discount")    return {"lineitem", 6, false};
-    if (col == "quantity")    return {"lineitem", 4, false};
-    if (col == "shipmode")    return {"lineitem", 14, false};
-    if (col == "shipinstruct")return {"lineitem", 13, false};
-    return {"", -1, false};
+    if (col == "orderkey")    return {"lineitem", 0,  Q1ColKind::Int64};
+    if (col == "suppkey")     return {"lineitem", 2,  Q1ColKind::Int64};
+    if (col == "partkey")     return {"lineitem", 1,  Q1ColKind::Int64};
+    if (col == "shipdate")    return {"lineitem", 10, Q1ColKind::Int32};
+    if (col == "shipdate_GE") return {"lineitem", 10, Q1ColKind::DateGEYear};
+    if (col == "orderdate")   return {"orders",   4,  Q1ColKind::Int32};
+    if (col == "linestatus")  return {"lineitem", 9,  Q1ColKind::VarChar};
+    if (col == "returnflag")  return {"lineitem", 8,  Q1ColKind::VarChar};
+    if (col == "discount")    return {"lineitem", 6,  Q1ColKind::Int64};   // DECIMAL(15,2) → int64 (raw)
+    if (col == "quantity")    return {"lineitem", 4,  Q1ColKind::Int64};
+    if (col == "shipmode")    return {"lineitem", 14, Q1ColKind::VarChar};
+    if (col == "shipinstruct")return {"lineitem", 13, Q1ColKind::VarChar};
+    return {"", -1, Q1ColKind::Int64};
 }
 
 static void** resolve_context_field(ClientContext& ctx, const std::string& col) {
@@ -97,8 +122,9 @@ static void** resolve_context_field(ClientContext& ctx, const std::string& col) 
 }
 
 // Scan column values into vector<int64_t>.  Promotes int32 to int64 (e.g.
-// shipdate / linestatus / returnflag).  Used by load_bitmap to feed
-// IndexedBitmap::build().
+// shipdate / orderdate).  For VARCHAR columns (linestatus / returnflag /
+// shipmode / shipinstruct) takes the first byte as ASCII int64.  Used by
+// load_bitmap to feed IndexedBitmap::build().
 static std::vector<int64_t> scan_column(ClientContext& ctx, const ColInfo& info) {
     auto& tbl = Catalog::GetEntry<TableCatalogEntry>(ctx, "", "", info.table);
     auto& tx  = DuckTransaction::Get(ctx, tbl.catalog);
@@ -111,13 +137,40 @@ static std::vector<int64_t> scan_column(ClientContext& ctx, const ColInfo& info)
         DataChunk chunk; chunk.Initialize(ctx, types);
         tbl.GetStorage().Scan(tx, chunk, ss);
         if (chunk.size() == 0) break;
-        if (info.is_int64) {
-            auto p = FlatVector::GetData<int64_t>(chunk.data[0]);
-            out.insert(out.end(), p, p + chunk.size());
-        } else {
-            auto p = FlatVector::GetData<int32_t>(chunk.data[0]);
-            for (idx_t i = 0; i < chunk.size(); i++)
-                out.push_back(static_cast<int64_t>(p[i]));
+        switch (info.kind) {
+            case Q1ColKind::Int64: {
+                auto p = FlatVector::GetData<int64_t>(chunk.data[0]);
+                out.insert(out.end(), p, p + chunk.size());
+                break;
+            }
+            case Q1ColKind::Int32: {
+                auto p = FlatVector::GetData<int32_t>(chunk.data[0]);
+                for (idx_t i = 0; i < chunk.size(); i++)
+                    out.push_back(static_cast<int64_t>(p[i]));
+                break;
+            }
+            case Q1ColKind::DateGEYear: {
+                auto p = FlatVector::GetData<int32_t>(chunk.data[0]);
+                for (idx_t i = 0; i < chunk.size(); i++)
+                    out.push_back(epoch_day_to_year(p[i]));
+                break;
+            }
+            case Q1ColKind::VarChar: {
+                // string_t — empty strings / NULLs go to 0; otherwise first byte ASCII.
+                auto& vec = chunk.data[0];
+                vec.Flatten(chunk.size());
+                auto p = FlatVector::GetData<string_t>(vec);
+                auto& validity = FlatVector::Validity(vec);
+                for (idx_t i = 0; i < chunk.size(); i++) {
+                    int64_t v = 0;
+                    if (validity.RowIsValid(i)) {
+                        auto sz = p[i].GetSize();
+                        if (sz > 0) v = static_cast<unsigned char>(p[i].GetData()[0]);
+                    }
+                    out.push_back(v);
+                }
+                break;
+            }
         }
     }
     return out;
@@ -153,12 +206,19 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
     // Backend selection via DEBIT_BM env (mirrors BMTPCH gating).
     auto backend = bm_bench::parse_backend("DEBIT_BM");
     bm_index::IBitmapIndex* idx = nullptr;
+    bool ge_path = (col == "shipdate_GE");
     using B = bm_bench::Backend;
     switch (backend) {
         case B::CB: {
-            auto* x = new bm_index::IndexedComBit();
-            x->build(values, values.size());
-            idx = x;
+            if (ge_path) {
+                auto* x = new bm_index::IndexedComBitGE();
+                x->build(values, values.size());
+                idx = x;
+            } else {
+                auto* x = new bm_index::IndexedComBit();
+                x->build(values, values.size());
+                idx = x;
+            }
             break;
         }
         case B::CR: {
@@ -192,13 +252,20 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
             break;
         }
         case B::ALL:
-        default:
+        default: {
             // Default to ComBit when ALL/unspecified — for "ALL" semantics
             // we'd need separate fields per backend; keep simple for now.
-            auto* x = new bm_index::IndexedComBit();
-            x->build(values, values.size());
-            idx = x;
+            if (ge_path) {
+                auto* x = new bm_index::IndexedComBitGE();
+                x->build(values, values.size());
+                idx = x;
+            } else {
+                auto* x = new bm_index::IndexedComBit();
+                x->build(values, values.size());
+                idx = x;
+            }
             break;
+        }
     }
     auto t2 = clock::now();
     *field = idx;
