@@ -614,15 +614,35 @@ public:
 
     // Threshold below which a key's whole bitmap is stored as a raw
     // sorted uint32_t position list (the "ultra-sparse" path) instead
-    // of the L1/L2/L3/L4 ComBitBtv hierarchy.  At SF10, FK columns
-    // average ~4 set bits per key (l_orderkey 60M/15M=4, l_partkey
-    // 60M/2M=30) — well under this threshold — so almost all per-key
-    // bitmaps avoid ComBitBtv's 216-byte-per-segment struct overhead.
-    // This is what brings ComBit per-key footprint into CRoaring's
-    // array-container league.  The threshold is set by the break-even
-    // point where ComBitBtv hierarchy starts saving more bytes than
-    // raw positions cost: ~64 set bits at seg_bits=4096.
-    static constexpr size_t ULTRA_SPARSE_THRESHOLD = 64;
+    // of the L1/L2/L3/L4 ComBitBtv hierarchy.  Tuned to the SF10 TPC-H
+    // density landscape:
+    //
+    //   key density (set bits / key) → storage path
+    //   --------------------------------------------------------------
+    //   l_orderkey    4       ┐
+    //   l_partkey     30      │ ultra-sparse
+    //   l_suppkey     600     │ (set bits scatter ~1 per segment;
+    //   l_shipdate    24000   ┘  216-B-per-seg ComBitBtv overhead is
+    //                           pure waste — store positions instead)
+    //   l_quantity    1.2M    ┐
+    //   l_discount    5.5M    │ hierarchy
+    //   l_shipmode    7.5M    │ (bits cluster ~hundreds per segment;
+    //   l_returnflag  20M     ┘  ComBitBtv compressed L1 wins)
+    //
+    // Break-even is ~50 bits/segment.  For FK / date columns whose set
+    // bits scatter (≤ 1 bit / segment), ultra-sparse always wins both
+    // memory and OR throughput — it stays in or_many's Pass 1 scatter,
+    // skipping the per-segment dispatch overhead that dominated Q5 PhaseB
+    // (~1.7 s on 100k×600-bit suppkey).  64-bit threshold (the original
+    // value) wasted this on l_suppkey / l_partkey; 65 536 covers
+    // everything up through shipdate-per-day while keeping single-key
+    // dense bitmaps (>100 k set bits) in the hierarchy.
+    //
+    // Plan A invariant: this is ComBit's INTERNAL storage choice (analogous
+    // to CRoaring's array/bitset/run container auto-selection or WAH's
+    // compressed/decompressed mode).  The Q dispatch (cb->or_many(keys))
+    // is unchanged — teacher's BMTPCH_Q* logic stays verbatim.
+    static constexpr size_t ULTRA_SPARSE_THRESHOLD = 65536;
 
     // Build a SparseComBit of `num_rows` bits where only `positions` are set.
     // Cost: O(positions.size() + segment_bits × non_empty_segments).
