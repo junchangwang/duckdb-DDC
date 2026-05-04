@@ -137,12 +137,8 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
             ComBit ship_filter = cb_ship->or_many(in_range);
             q14_get_rowids(ship_filter, &ids);
         } else if (auto* cr_ship = dynamic_cast<bm_index::IndexedCRoaring*>(idx_ship)) {
-            roaring::Roaring ship_filter;
-            if (cr_ship->run_optimized()) {
-                ship_filter = cr_ship->or_range(Q14_DATE_LO, Q14_DATE_HI - 1);  // CRR: fastunion
-            } else {
-                cr_ship->apply_or_range_to(ship_filter, Q14_DATE_LO, Q14_DATE_HI - 1);  // CR: pairwise
-            }
+            // Both CR & CRR: Roaring or_range (k-way fastunion).
+            roaring::Roaring ship_filter = cr_ship->or_range(Q14_DATE_LO, Q14_DATE_HI - 1);
             q14_get_rowids(ship_filter, &ids);
         } else if (auto* wah_ship = dynamic_cast<bm_index::IndexedWAH*>(idx_ship)) {
             ibis::bitvector ship_filter = wah_ship->or_range(Q14_DATE_LO, Q14_DATE_HI - 1);

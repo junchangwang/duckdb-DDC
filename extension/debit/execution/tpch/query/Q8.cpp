@@ -368,16 +368,9 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         } else if (auto* cr_okey = dynamic_cast<bm_index::IndexedCRoaring*>(idx_okey)) {
             auto* cr_pk = dynamic_cast<bm_index::IndexedCRoaring*>(idx_pk);
             if (!cr_pk) { std::cerr << "[Q8] type mismatch.\n"; return; }
-            roaring::Roaring okey_filter, part_filter;
-            if (cr_okey->run_optimized()) {
-                okey_filter = cr_okey->or_many(matched_okeys);  // CRR: fastunion
-                part_filter = cr_pk->or_many(part_set);
-            } else {
-                okey_filter = *cr_okey->btv_for(matched_okeys[0]);  // CR: pairwise
-                for (size_t i = 1; i < matched_okeys.size(); i++) okey_filter |= *cr_okey->btv_for(matched_okeys[i]);
-                part_filter = *cr_pk->btv_for(part_set[0]);
-                for (size_t i = 1; i < part_set.size(); i++) part_filter |= *cr_pk->btv_for(part_set[i]);
-            }
+            // Both CR & CRR use Roaring fastunion (k-way primitive).
+            roaring::Roaring okey_filter = cr_okey->or_many(matched_okeys);
+            roaring::Roaring part_filter = cr_pk->or_many(part_set);
             okey_filter &= part_filter;
             q8_get_rowids(okey_filter, &ids);
             t_cd = clk::now();

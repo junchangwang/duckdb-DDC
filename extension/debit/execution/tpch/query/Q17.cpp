@@ -170,13 +170,8 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
         if (cb_pk) {  // ComBit: sca
             auto bv = cb_pk->or_many(matched_pks); q17_get_rowids(bv, &ids);
         } else if (cr_pk) {
-            roaring::Roaring bv;
-            if (cr_pk->run_optimized()) {
-                bv = cr_pk->or_many(matched_pks);  // CRR: fastunion
-            } else {
-                bv = *cr_pk->btv_for(matched_pks[0]);  // CR: pairwise
-                for (size_t i = 1; i < matched_pks.size(); i++) bv |= *cr_pk->btv_for(matched_pks[i]);
-            }
+            // Both CR & CRR use Roaring fastunion (k-way primitive).
+            roaring::Roaring bv = cr_pk->or_many(matched_pks);
             q17_get_rowids(bv, &ids);
         } else if (wah_pk) {  // WAH: copy+decompress+|=
             auto bv = wah_pk->or_many(matched_pks); q17_get_rowids(bv, &ids);

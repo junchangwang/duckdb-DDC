@@ -214,19 +214,10 @@ void BMTableScan::BMTPCH_Q12(ExecutionContext &context, const PhysicalTableScan 
         } else if (auto* cr_sm = dynamic_cast<bm_index::IndexedCRoaring*>(idx_sm)) {
             auto* cr_rdat = dynamic_cast<bm_index::IndexedCRoaring*>(idx_rdat);
             if (!cr_rdat) { std::cerr << "[Q12] type mismatch.\n"; return; }
-            roaring::Roaring sm_filter, date_filter;
-            if (cr_sm->run_optimized()) {
-                sm_filter = cr_sm->or_many(sm_keys);  // CRR: fastunion
-            } else {
-                sm_filter = *cr_sm->btv_for(sm_keys[0]);  // CR: pairwise
-                for (size_t i = 1; i < sm_keys.size(); i++) sm_filter |= *cr_sm->btv_for(sm_keys[i]);
-            }
+            // Both CR & CRR use Roaring fastunion / or_range (k-way primitive).
+            roaring::Roaring sm_filter   = cr_sm->or_many(sm_keys);
             t_b = clk::now();
-            if (cr_rdat->run_optimized()) {
-                date_filter = cr_rdat->or_range(Q12_DATE_LO, Q12_DATE_HI - 1);
-            } else {
-                cr_rdat->apply_or_range_to(date_filter, Q12_DATE_LO, Q12_DATE_HI - 1);
-            }
+            roaring::Roaring date_filter = cr_rdat->or_range(Q12_DATE_LO, Q12_DATE_HI - 1);
             t_c = clk::now();
             sm_filter &= date_filter;
             q12_get_rowids(sm_filter, &ids);

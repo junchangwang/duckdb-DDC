@@ -346,6 +346,16 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
               << idx->storage_bytes() / 1e6 << " MB) in "
               << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count()
               << " ms" << std::endl;
+
+    // Per-layer breakdown for the Memory Detail (MB) sheet.  ComBit gets
+    // L1/L2/L3/L4 (raw position bytes for ultra-sparse keys count as L1);
+    // CRoaring/CRoaringRun/CRoaringBPE get array/bitset/run; default
+    // backends fall back to "total" (= storage_bytes).
+    auto bd = idx->layer_breakdown();
+    std::cerr << "[load_bitmap_breakdown] " << col << " " << idx->backend_name() << ":";
+    for (auto& [name, bytes] : bd)
+        std::cerr << " " << name << "=" << bytes / 1e6 << " MB";
+    std::cerr << std::endl;
     return "";
 }
 

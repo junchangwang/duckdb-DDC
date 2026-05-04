@@ -413,10 +413,9 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
                     else cr_ship->apply_or_range_to(boundary, Q1_SHIPDATE_CUTOFF + 1, bmax);
                     shipdate_gt |= boundary;
                 }
-            } else if (cr_ship->run_optimized()) {
-                shipdate_gt = cr_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
             } else {
-                cr_ship->apply_or_range_to(shipdate_gt, Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
+                // Both CR & CRR: Roaring or_range (= fastunion under the hood).
+                shipdate_gt = cr_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
             }
             q1_to_byte_stream(shipdate_gt, shipdate_filter_bs, num_rows);
             q1_byte_stream_not(shipdate_filter_bs, num_rows);

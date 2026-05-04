@@ -302,13 +302,9 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         if (cb_okey) {
             cb_btv_res = cb_okey->or_many(matched_okeys);  // ComBit: sca
         } else if (cr_okey) {
-            if (cr_okey->run_optimized()) {
-                cr_btv_res = cr_okey->or_many(matched_okeys);  // CRR: fastunion
-            } else {
-                cr_btv_res = *cr_okey->btv_for(matched_okeys[0]);  // CR: pairwise |=
-                for (size_t i = 1; i < matched_okeys.size(); i++)
-                    cr_btv_res |= *cr_okey->btv_for(matched_okeys[i]);
-            }
+            // Both CR & CRR use Roaring fastunion (k-way priority-queue
+            // merge).  CR vs CRR delta is purely run-encoding now.
+            cr_btv_res = cr_okey->or_many(matched_okeys);
         } else if (wah_okey) {
             wah_btv_res = wah_okey->or_many(matched_okeys);  // WAH: copy+decompress+|=
         } else if (ew_okey) {

@@ -509,17 +509,34 @@ def parse_stdout_log(log_text: str, *, q: Optional[int] = None,
         result["memory_breakdown"][backend] = bd
 
     # New BMTPCH pattern footprint: one `[load_bitmap]` line per (column,
-    # backend) build.  Aggregate per-backend across the columns each Q
-    # loads (e.g. Q3 loads orderkey + shipdate; Q5 loads orderkey +
-    # suppkey).  This is the only memory signal the new pattern emits —
-    # legacy `[Breakdown]` lines aren't printed here.  Sum across columns
-    # to get a single per-backend total, plus keep per-column entries for
-    # the Memory Breakdown sheet so reviewers can see how each Q's
-    # storage decomposes by aux structure.
+    # backend) build.  Multi-backend logs interleave per-backend sections
+    # ("# === Backend X (DEBIT_BM=x) ===" headers), so we have to segment
+    # the log by section and attribute each load_bitmap line to the active
+    # backend — otherwise cb's and cb_bpe's "shipdate built ComBit (240MB)"
+    # both land in the CB bucket and double-count.
+    RE_SECTION_HEADER = re.compile(r"^# === Backend (\S+) \(DEBIT_BM=\S+\) ===\s*$", re.MULTILINE)
+    section_starts = list(RE_SECTION_HEADER.finditer(log_text))
+
+    def _section_backend_at(offset: int) -> Optional[str]:
+        """Return backend tag of the section containing this offset (None if
+        before first section header — legacy single-run logs)."""
+        last = None
+        for sm in section_starts:
+            if sm.end() <= offset:
+                last = sm.group(1)
+            else:
+                break
+        return last
+
     bmtpch_seen: set = set()
     for m in RE_LOAD_BITMAP_BUILT.finditer(log_text):
         col, name, mb_str = m.group(1), m.group(2), m.group(3)
-        backend = LOAD_BITMAP_NAME_TO_BACKEND.get(name)
+        # Authoritative tag = the section we're in (handles cb vs cb_bpe).
+        # Fall back to LOAD_BITMAP_NAME_TO_BACKEND for legacy single-run
+        # logs that have no section header.
+        backend = _section_backend_at(m.start())
+        if backend is None or backend not in BACKENDS:
+            backend = LOAD_BITMAP_NAME_TO_BACKEND.get(name)
         if backend is None:
             continue
         try:
@@ -532,8 +549,36 @@ def parse_stdout_log(log_text: str, *, q: Optional[int] = None,
         # overwrite richer detail with coarser per-column buckets.
         if any(k in bd for k in ("L1", "L2", "literal", "raw", "array")):
             continue
-        bd[col] = bd.get(col, 0.0) + mb
+        bd[col] = mb  # SET, don't accumulate — section attribution
+                      # already handles multi-backend co-located runs.
         bd["total"] = sum(v for k, v in bd.items() if k != "total")
+        bmtpch_seen.add(backend)
+
+    # Per-layer breakdown lines (new format printed by load_bitmap):
+    #   [load_bitmap_breakdown] shipdate ComBit: L1=120 MB L2=45 MB L3=12 MB L4=3 MB
+    #   [load_bitmap_breakdown] shipdate CRoaring: array=80 MB bitset=50 MB run=8 MB
+    # Aggregate across columns within the section's backend.  This is what
+    # lets the Memory Detail (MB) sheet show real layer split per Q for
+    # ALL backends, not just Q15.
+    RE_LOAD_BREAKDOWN = re.compile(
+        r"\[load_bitmap_breakdown\]\s+(\S+)\s+(\S+):\s+(.+)$",
+        re.MULTILINE,
+    )
+    RE_KV_MB = re.compile(r"(\w+)=([0-9.]+)\s*MB")
+    for m in RE_LOAD_BREAKDOWN.finditer(log_text):
+        col, name, kvs = m.group(1), m.group(2), m.group(3)
+        backend = _section_backend_at(m.start())
+        if backend is None or backend not in BACKENDS:
+            backend = LOAD_BITMAP_NAME_TO_BACKEND.get(name)
+        if backend is None:
+            continue
+        bd = result["memory_breakdown"].setdefault(backend, {})
+        for kvm in RE_KV_MB.finditer(kvs):
+            cat, mb = kvm.group(1), float(kvm.group(2))
+            # Skip "total" — it's already populated from RE_LOAD_BITMAP_BUILT.
+            if cat.lower() == "total":
+                continue
+            bd[cat] = bd.get(cat, 0.0) + mb
         bmtpch_seen.add(backend)
     # For Qs that use the new BMTPCH pattern, the on-disk footprint left
     # over from the pre-port pipeline (.bm files in tpch_q*_<backend>/)

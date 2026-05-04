@@ -205,13 +205,8 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         } else if (auto* cr_okey = dynamic_cast<bm_index::IndexedCRoaring*>(idx_okey)) {
             auto* cr_rf = dynamic_cast<bm_index::IndexedCRoaring*>(idx_rf);
             if (!cr_rf) { std::cerr << "[Q10] type mismatch.\n"; return; }
-            roaring::Roaring okey_filter;
-            if (cr_okey->run_optimized()) {
-                okey_filter = cr_okey->or_many(matched_okeys);  // CRR: fastunion
-            } else {
-                okey_filter = *cr_okey->btv_for(matched_okeys[0]);  // CR: pairwise
-                for (size_t i = 1; i < matched_okeys.size(); i++) okey_filter |= *cr_okey->btv_for(matched_okeys[i]);
-            }
+            // Both CR & CRR use Roaring fastunion (k-way primitive).
+            roaring::Roaring okey_filter = cr_okey->or_many(matched_okeys);
             t_b = clk::now();
             roaring::Roaring rf_filter;
             cr_rf->apply_or_to(rf_filter, Q10_RETURNFLAG_R);

@@ -414,29 +414,25 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
             auto* cr_skey = dynamic_cast<bm_index::IndexedCRoaring*>(idx_skey_base);
             if (!cr_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
             roaring::Roaring btv_or, btv_supp;
-            if (cr_okey->run_optimized()) {
-                btv_or   = cr_okey->or_many(okeys);  // CRR: fastunion
-                btv_supp = cr_skey->or_many(skeys);
-            } else {
-                btv_or   = *cr_okey->btv_for(okeys[0]);  // CR: pairwise |=
-                for (size_t i = 1; i < okeys.size(); i++) btv_or |= *cr_okey->btv_for(okeys[i]);
-                btv_supp = *cr_skey->btv_for(skeys[0]);
-                for (size_t i = 1; i < skeys.size(); i++) btv_supp |= *cr_skey->btv_for(skeys[i]);
-            }
+            // Both CR and CRR use Roaring's fastunion (k-way priority-queue
+            // merge — Roaring's intended k-way OR primitive, available
+            // independent of runOptimize).  CR vs CRR delta is now purely
+            // the run-encoding effect on input/output containers.
+            btv_or   = cr_okey->or_many(okeys);
+            btv_supp = cr_skey->or_many(skeys);
             btv_or &= btv_supp;
             get_rowids(btv_or, ids);
         }
-        // ---- WAH (verbatim teacher pattern). ----
+        // ---- WAH (teacher's copy+decompress+|= pattern via or_many) ----
+        // IndexedWAH::or_many encapsulates the verbatim teacher BMTPCH_Q5
+        // pattern; calling it here keeps Q dispatch symmetric with the
+        // other backends (one or_many call per key set) instead of
+        // hand-rolling the loop.
         else if (auto* wah_okey = dynamic_cast<bm_index::IndexedWAH*>(idx_okey_base)) {
             auto* wah_skey = dynamic_cast<bm_index::IndexedWAH*>(idx_skey_base);
             if (!wah_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
-            ibis::bitvector btv_res, btv_suppkey;
-            btv_res.copy(*wah_okey->btv_for(okeys[0]));
-            btv_res.decompress();
-            for (size_t i = 1; i < okeys.size(); i++) btv_res |= *wah_okey->btv_for(okeys[i]);
-            btv_suppkey.copy(*wah_skey->btv_for(skeys[0]));
-            btv_suppkey.decompress();
-            for (size_t i = 1; i < skeys.size(); i++) btv_suppkey |= *wah_skey->btv_for(skeys[i]);
+            ibis::bitvector btv_res     = wah_okey->or_many(okeys);
+            ibis::bitvector btv_suppkey = wah_skey->or_many(skeys);
             btv_res &= btv_suppkey;
             get_rowids(btv_res, ids);
         }

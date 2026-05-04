@@ -55,6 +55,18 @@ public:
     virtual size_t num_keys() const = 0;
     virtual size_t storage_bytes() const = 0;
     virtual const char* backend_name() const = 0;
+    // Per-layer storage breakdown in BYTES.  Categories:
+    //   ComBit: L1 / L2 / L3 / L4
+    //   CRoaring / CRoaring+Run / CRoaring+BPE: array / bitset / run
+    //   WAH: literal / fill / header
+    //   EWAH: literal / fill
+    //   Concise: literal / fill
+    //   Default (no breakdown): {"total": storage_bytes()}.
+    // Subclasses override to expose layer split — drives Memory Detail
+    // (MB) sheet rows in bench_suite.
+    virtual std::vector<std::pair<std::string, size_t>> layer_breakdown() const {
+        return {{"total", storage_bytes()}};
+    }
 };
 
 // -----------------------------------------------------------------------
@@ -129,6 +141,28 @@ public:
     size_t num_rows() const override { return num_rows_; }
     size_t segment_bits() const { return segment_bits_; }
     const char* backend_name() const override { return "ComBit"; }
+    std::vector<std::pair<std::string, size_t>> layer_breakdown() const override {
+        size_t l1 = 0, l2 = 0, l3 = 0, l4 = 0, ultra = 0;
+        for (auto& [_, s] : index_) {
+            if (s.is_ultra_sparse()) {
+                // Ultra-sparse path: raw sorted uint32_t positions.  Map
+                // to L1 bucket (it's the rawest bit data we have).
+                ultra += s.ultra_positions().size() * sizeof(uint32_t);
+            } else {
+                for (size_t i = 0; i < s.seg_data().size(); i++) {
+                    auto bd = s.seg_data()[i].size_breakdown();
+                    l1 += bd.l1_literal_bits / 8;
+                    l2 += bd.l2_literal_bits / 8;
+                    l3 += bd.l3_literal_bits / 8;
+                    l4 += bd.l4_bits          / 8;
+                }
+            }
+        }
+        return {{"L1", l1 + ultra},   // ultra-sparse positions counted as L1
+                {"L2", l2},
+                {"L3", l3},
+                {"L4", l4}};
+    }
 
 private:
     size_t num_rows_ = 0;
@@ -191,6 +225,23 @@ public:
     size_t num_rows() const override { return num_rows_; }
     size_t segment_bits() const { return segment_bits_; }
     const char* backend_name() const override { return "ComBitGE"; }
+    std::vector<std::pair<std::string, size_t>> layer_breakdown() const override {
+        size_t l1 = 0, l2 = 0, l3 = 0, l4 = 0, ultra = 0;
+        for (auto& [_, s] : index_) {
+            if (s.is_ultra_sparse()) {
+                ultra += s.ultra_positions().size() * sizeof(uint32_t);
+            } else {
+                for (size_t i = 0; i < s.seg_data().size(); i++) {
+                    auto bd = s.seg_data()[i].size_breakdown();
+                    l1 += bd.l1_literal_bits / 8;
+                    l2 += bd.l2_literal_bits / 8;
+                    l3 += bd.l3_literal_bits / 8;
+                    l4 += bd.l4_bits          / 8;
+                }
+            }
+        }
+        return {{"L1", l1 + ultra}, {"L2", l2}, {"L3", l3}, {"L4", l4}};
+    }
 
 private:
     size_t num_rows_ = 0;
@@ -283,6 +334,17 @@ public:
         return t;
     }
     const char* backend_name() const override { return "ComBitBPE"; }
+    std::vector<std::pair<std::string, size_t>> layer_breakdown() const override {
+        size_t l1 = 0, l2 = 0, l3 = 0, l4 = 0;
+        for (const auto& bm : bitmaps_pe_) {
+            auto bd = bm.size_breakdown();
+            l1 += bd.l1_literal_bits / 8;
+            l2 += bd.l2_literal_bits / 8;
+            l3 += bd.l3_literal_bits / 8;
+            l4 += bd.l4_bits          / 8;
+        }
+        return {{"L1", l1}, {"L2", l2}, {"L3", l3}, {"L4", l4}};
+    }
 
 private:
     size_t   num_rows_     = 0;
@@ -358,12 +420,28 @@ public:
     size_t num_keys() const override { return index_.size(); }
     size_t num_rows() const override { return num_rows_; }
     size_t storage_bytes() const override {
+        // portable=false → in-memory footprint (= roaring_bitmap_size_in_bytes),
+        // NOT the .save() serialization size which adds per-bitmap headers +
+        // alignment padding.  Default `getSizeInBytes()` is portable=true which
+        // inflates ~30-50% — unfair vs ComBit / WAH / EWAH / Concise which
+        // report the live memory footprint.
         size_t t = 0;
-        for (auto& [_, r] : index_) t += r.getSizeInBytes();
+        for (auto& [_, r] : index_) t += r.getSizeInBytes(/*portable=*/false);
         return t;
     }
     const char* backend_name() const override { return run_optimized_ ? "CRoaringRun" : "CRoaring"; }
     bool run_optimized() const { return run_optimized_; }
+    std::vector<std::pair<std::string, size_t>> layer_breakdown() const override {
+        size_t arr = 0, bset = 0, run = 0;
+        for (auto& [_, r] : index_) {
+            roaring::api::roaring_statistics_t st;
+            roaring::api::roaring_bitmap_statistics(&r.roaring, &st);
+            arr  += st.n_bytes_array_containers;
+            bset += st.n_bytes_bitset_containers;
+            run  += st.n_bytes_run_containers;
+        }
+        return {{"array", arr}, {"bitset", bset}, {"run", run}};
+    }
 
 private:
     size_t num_rows_ = 0;
@@ -442,11 +520,22 @@ public:
     size_t num_rows() const override { return num_rows_; }
     size_t storage_bytes() const override {
         size_t t = 0;
-        for (auto& r : bitmaps_pe_) t += r.getSizeInBytes();
+        for (auto& r : bitmaps_pe_) t += r.getSizeInBytes(/*portable=*/false);
         return t;
     }
     const char* backend_name() const override {
         return run_optimized_ ? "CRoaringBPE" : "CRoaringBPE";  // same label
+    }
+    std::vector<std::pair<std::string, size_t>> layer_breakdown() const override {
+        size_t arr = 0, bset = 0, run = 0;
+        for (auto& r : bitmaps_pe_) {
+            roaring::api::roaring_statistics_t st;
+            roaring::api::roaring_bitmap_statistics(&r.roaring, &st);
+            arr  += st.n_bytes_array_containers;
+            bset += st.n_bytes_bitset_containers;
+            run  += st.n_bytes_run_containers;
+        }
+        return {{"array", arr}, {"bitset", bset}, {"run", run}};
     }
 
 private:
