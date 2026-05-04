@@ -56,14 +56,16 @@ inline std::string resolve_bitmap_dir(const std::string& rel) {
 // (Q1_BM / Q5_BM / Q6_BM) so existing scripts keep working.
 // ALL  = run every backend
 // WAH  = WAH (FastBit / ibis::bitvector)
-// CB   = ComBit
-// CR   = CRoaring (no run-length opt)
-// CRR  = CRoaring + runOptimize / fastunion
-// EW   = EWAH
-// BS   = uncompressed bitset, scalar (no algorithm + no SIMD baseline)
-// BSA  = uncompressed bitset, AVX-512 (no algorithm + SIMD baseline)
-// CON  = Concise (Colantonio & Di Pietro)
-enum class Backend { ALL, WAH, CB, CR, CRR, EW, BS, BSA, CON };
+// CB     = ComBit
+// CB_BPE = ComBit + BPE prefix-encoded range column (β scheme)
+// CR     = CRoaring (no run-length opt)
+// CR_BPE = CRoaring + BPE prefix-encoded range column (β scheme, fairness)
+// CRR    = CRoaring + runOptimize / fastunion
+// EW     = EWAH
+// BS     = uncompressed bitset, scalar (no algorithm + no SIMD baseline)
+// BSA    = uncompressed bitset, AVX-512 (no algorithm + SIMD baseline)
+// CON    = Concise (Colantonio & Di Pietro)
+enum class Backend { ALL, WAH, CB, CB_BPE, CR, CR_BPE, CRR, EW, BS, BSA, CON };
 
 inline Backend parse_backend(const char* legacy_env) {
     const char* env = std::getenv("DEBIT_BM");
@@ -75,6 +77,8 @@ inline Backend parse_backend(const char* legacy_env) {
 
     if (s.empty() || s == "all")                                    return Backend::ALL;
     if (s == "wah")                                                 return Backend::WAH;
+    if (s == "cb_bpe" || s == "combit_bpe")                         return Backend::CB_BPE;
+    if (s == "cr_bpe" || s == "croaring_bpe")                       return Backend::CR_BPE;
     if (s == "cb"  || s == "combit")                                return Backend::CB;
     if (s == "cr"  || s == "croaring")                              return Backend::CR;
     if (s == "crr" || s == "croaring_run" || s == "croaring+run")   return Backend::CRR;
@@ -84,7 +88,7 @@ inline Backend parse_backend(const char* legacy_env) {
     if (s == "con" || s == "concise")                               return Backend::CON;
 
     std::cerr << "[DEBIT_BM] unknown value '" << env
-              << "' — defaulting to ALL. Accepted: all|wah|cb|cr|crr|ew|bs|bsa|con\n";
+              << "' — defaulting to ALL. Accepted: all|wah|cb|cb_bpe|cr|cr_bpe|crr|ew|bs|bsa|con\n";
     return Backend::ALL;
 }
 
@@ -93,7 +97,9 @@ inline const char* backend_label(Backend b) {
         case Backend::ALL: return "ALL";
         case Backend::WAH: return "WAH";
         case Backend::CB:  return "ComBit";
+        case Backend::CB_BPE: return "ComBit+BPE";
         case Backend::CR:  return "CRoaring";
+        case Backend::CR_BPE: return "CRoaring+BPE";
         case Backend::CRR: return "CRoaring+Run";
         case Backend::EW:  return "EWAH";
         case Backend::BS:  return "Bitset";

@@ -192,29 +192,59 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
 
     // ---- ComBit (teacher's Q6 logic: GE shipdate single-key OR + range
     // OR for discount/quantity).  GE step = single apply_or_to(year).
-    // Range OR uses sca or_many (ComBit's design contribution).  No BPE.
+    // Range OR uses sca or_many (ComBit's design contribution).
+    // β scheme: BPE prefix-encoded fast path for cb_bpe (active when
+    // bitmap_discount_BPE / bitmap_quantity_BPE are pre-loaded).
     if (auto* cb_ship = dynamic_cast<bm_index::IndexedComBitGE*>(idx_ship_ge)) {
         auto* cb_disc_x = dynamic_cast<bm_index::IndexedComBit*>(idx_disc);
         auto* cb_qty_x  = dynamic_cast<bm_index::IndexedComBit*>(idx_qty);
         if (!cb_disc_x || !cb_qty_x) { std::cerr << "[Q6] ComBit type mismatch.\n"; return; }
+        auto* cb_disc_bpe = dynamic_cast<bm_index::IndexedComBitBPE*>(
+            static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_discount_BPE));
+        auto* cb_qty_bpe = dynamic_cast<bm_index::IndexedComBitBPE*>(
+            static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_quantity_BPE));
 
         ComBit btv_ship = ComBit::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
 
         auto t_a = clk::now();
         cb_ship->apply_or_to(btv_ship, Q6_SHIPDATE_YEAR);
         auto t_b = clk::now();
-        // Gather in-range disc keys + sca or_many.
-        std::vector<int64_t> disc_keys;
-        cb_disc_x->for_each_key([&](int64_t k) {
-            if (k >= Q6_DISCOUNT_LO && k <= Q6_DISCOUNT_HI) disc_keys.push_back(k);
-        });
-        ComBit btv_disc = cb_disc_x->or_many(disc_keys);
+        ComBit btv_disc;
+        if (cb_disc_bpe) {
+            // BPE: bucket=1 → perfectly aligned. disc∈[5,7] = prefix(7) AND_NOT prefix(4).
+            int hi_b = cb_disc_bpe->bucket_of(Q6_DISCOUNT_HI);
+            int lo_b = cb_disc_bpe->bucket_of(Q6_DISCOUNT_LO - 1);
+            btv_disc = *cb_disc_bpe->prefix_at_bucket(hi_b);
+            const ComBit* lo_pe = cb_disc_bpe->prefix_at_bucket(lo_b);
+            if (lo_pe) btv_disc &= ~(*lo_pe);
+        } else {
+            // Gather in-range disc keys + sca or_many.
+            std::vector<int64_t> disc_keys;
+            cb_disc_x->for_each_key([&](int64_t k) {
+                if (k >= Q6_DISCOUNT_LO && k <= Q6_DISCOUNT_HI) disc_keys.push_back(k);
+            });
+            btv_disc = cb_disc_x->or_many(disc_keys);
+        }
         auto t_c = clk::now();
-        std::vector<int64_t> qty_keys;
-        cb_qty_x->for_each_key([&](int64_t k) {
-            if (k >= Q6_QUANTITY_LO && k <= Q6_QUANTITY_HI_EXCL - 1) qty_keys.push_back(k);
-        });
-        ComBit btv_qty = cb_qty_x->or_many(qty_keys);
+        ComBit btv_qty;
+        if (cb_qty_bpe) {
+            // BPE: qty raw ≤ 2399 = prefix(bucket(2399)) — boundary trim
+            // for raw values in (2399, bucket_max] via per-value index.
+            int hi_b = cb_qty_bpe->bucket_of(Q6_QUANTITY_HI_EXCL - 1);
+            btv_qty = *cb_qty_bpe->prefix_at_bucket(hi_b);
+            int64_t bmax = cb_qty_bpe->bucket_max(hi_b);
+            if (bmax > Q6_QUANTITY_HI_EXCL - 1) {
+                ComBit boundary = ComBit::from_sparse_positions({}, num_rows, cb_qty_x->segment_bits());
+                cb_qty_x->apply_or_range_to(boundary, Q6_QUANTITY_HI_EXCL, bmax);
+                btv_qty &= ~boundary;
+            }
+        } else {
+            std::vector<int64_t> qty_keys;
+            cb_qty_x->for_each_key([&](int64_t k) {
+                if (k >= Q6_QUANTITY_LO && k <= Q6_QUANTITY_HI_EXCL - 1) qty_keys.push_back(k);
+            });
+            btv_qty = cb_qty_x->or_many(qty_keys);
+        }
         auto t_d = clk::now();
         // Reordered AND: (disc & qty) then & ship.  ship contains a
         // SparseComBit-OR'd result that triggers an AVX-512 memcpy
@@ -254,20 +284,42 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
         return;
     }
     // ---- CR (pairwise per-value |=) / CRR (fastunion via or_range) ----
+    // β scheme: BPE prefix-encoded fast path for cr_bpe (active when
+    // bitmap_discount_BPE / bitmap_quantity_BPE are pre-loaded).
     if (auto* cr_ship = dynamic_cast<bm_index::IndexedCRoaring*>(idx_ship_ge)) {
         auto* cr_disc_x = dynamic_cast<bm_index::IndexedCRoaring*>(idx_disc);
         auto* cr_qty_x  = dynamic_cast<bm_index::IndexedCRoaring*>(idx_qty);
         if (!cr_disc_x || !cr_qty_x) { std::cerr << "[Q6] CR type mismatch.\n"; return; }
         const bool ro = cr_ship->run_optimized();
+        auto* cr_disc_bpe = dynamic_cast<bm_index::IndexedCRoaringBPE*>(
+            static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_discount_BPE));
+        auto* cr_qty_bpe  = dynamic_cast<bm_index::IndexedCRoaringBPE*>(
+            static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_quantity_BPE));
 
         roaring::Roaring btv_ship, btv_disc, btv_qty;
         auto t_a = clk::now();
         cr_ship->apply_or_to(btv_ship, Q6_SHIPDATE_YEAR);
         auto t_b = clk::now();
-        if (ro) btv_disc = cr_disc_x->or_range(Q6_DISCOUNT_LO, Q6_DISCOUNT_HI);
+        if (cr_disc_bpe) {
+            int hi_b = cr_disc_bpe->bucket_of(Q6_DISCOUNT_HI);
+            int lo_b = cr_disc_bpe->bucket_of(Q6_DISCOUNT_LO - 1);
+            btv_disc = *cr_disc_bpe->prefix_at_bucket(hi_b);
+            const roaring::Roaring* lo_pe = cr_disc_bpe->prefix_at_bucket(lo_b);
+            if (lo_pe) btv_disc -= *lo_pe;
+        } else if (ro) btv_disc = cr_disc_x->or_range(Q6_DISCOUNT_LO, Q6_DISCOUNT_HI);
         else    cr_disc_x->apply_or_range_to(btv_disc, Q6_DISCOUNT_LO, Q6_DISCOUNT_HI);
         auto t_c = clk::now();
-        if (ro) btv_qty = cr_qty_x->or_range(Q6_QUANTITY_LO, Q6_QUANTITY_HI_EXCL - 1);
+        if (cr_qty_bpe) {
+            int hi_b = cr_qty_bpe->bucket_of(Q6_QUANTITY_HI_EXCL - 1);
+            btv_qty = *cr_qty_bpe->prefix_at_bucket(hi_b);
+            int64_t bmax = cr_qty_bpe->bucket_max(hi_b);
+            if (bmax > Q6_QUANTITY_HI_EXCL - 1) {
+                roaring::Roaring boundary;
+                if (ro) boundary = cr_qty_x->or_range(Q6_QUANTITY_HI_EXCL, bmax);
+                else    cr_qty_x->apply_or_range_to(boundary, Q6_QUANTITY_HI_EXCL, bmax);
+                btv_qty -= boundary;
+            }
+        } else if (ro) btv_qty = cr_qty_x->or_range(Q6_QUANTITY_LO, Q6_QUANTITY_HI_EXCL - 1);
         else    cr_qty_x->apply_or_range_to(btv_qty, Q6_QUANTITY_LO, Q6_QUANTITY_HI_EXCL - 1);
         auto t_d = clk::now();
         btv_ship &= btv_disc;

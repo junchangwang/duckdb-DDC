@@ -333,12 +333,32 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
 
             auto t_a0 = clk::now();
             // Phase A: shipdate complement (OR over keys > cutoff, ~90 keys).
-            // ComBit: gather in-range keys + sca or_many.
-            std::vector<int64_t> gt_keys;
-            cb_ship->for_each_key([&](int64_t k) {
-                if (k > Q1_SHIPDATE_CUTOFF) gt_keys.push_back(k);
-            });
-            ComBit shipdate_gt = cb_ship->or_many(gt_keys);
+            // β scheme: BPE prefix-encoded fast path (active under
+            // DEBIT_BM=cb_bpe).  shipdate>cutoff = prefix(LAST) AND_NOT
+            // prefix(B) | per-day OR over (cutoff, bucket_max(B)].
+            // TPC-H 1.5.7 §5 compliant — same column, alt encoding.
+            auto* cb_ship_bpe = dynamic_cast<bm_index::IndexedComBitBPE*>(
+                static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_BPE));
+            ComBit shipdate_gt;
+            if (cb_ship_bpe) {
+                int B    = cb_ship_bpe->bucket_of(Q1_SHIPDATE_CUTOFF);
+                int LAST = static_cast<int>(cb_ship_bpe->num_keys()) - 1;
+                shipdate_gt = *cb_ship_bpe->prefix_at_bucket(LAST);
+                shipdate_gt &= ~(*cb_ship_bpe->prefix_at_bucket(B));
+                int64_t bmax = cb_ship_bpe->bucket_max(B);
+                if (Q1_SHIPDATE_CUTOFF + 1 <= bmax) {
+                    ComBit boundary = ComBit::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
+                    cb_ship->apply_or_range_to(boundary, Q1_SHIPDATE_CUTOFF + 1, bmax);
+                    shipdate_gt |= boundary;
+                }
+            } else {
+                // ComBit (no BPE): gather in-range keys + sca or_many.
+                std::vector<int64_t> gt_keys;
+                cb_ship->for_each_key([&](int64_t k) {
+                    if (k > Q1_SHIPDATE_CUTOFF) gt_keys.push_back(k);
+                });
+                shipdate_gt = cb_ship->or_many(gt_keys);
+            }
             q1_to_byte_stream(shipdate_gt, shipdate_filter_bs, num_rows);
             q1_byte_stream_not(shipdate_filter_bs, num_rows);
             auto t_a1 = clk::now();
@@ -376,9 +396,24 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
             if (!cr_ls_x || !cr_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
 
             // Plan A: CR pairwise per-day; CRR fastunion via or_range.
+            // β scheme: BPE prefix-encoded fast path for cr_bpe.
             auto t_a0 = clk::now();
+            auto* cr_ship_bpe = dynamic_cast<bm_index::IndexedCRoaringBPE*>(
+                static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_BPE));
             roaring::Roaring shipdate_gt;
-            if (cr_ship->run_optimized()) {
+            if (cr_ship_bpe) {
+                int B    = cr_ship_bpe->bucket_of(Q1_SHIPDATE_CUTOFF);
+                int LAST = static_cast<int>(cr_ship_bpe->num_keys()) - 1;
+                shipdate_gt = *cr_ship_bpe->prefix_at_bucket(LAST);
+                shipdate_gt -= *cr_ship_bpe->prefix_at_bucket(B);
+                int64_t bmax = cr_ship_bpe->bucket_max(B);
+                if (Q1_SHIPDATE_CUTOFF + 1 <= bmax) {
+                    roaring::Roaring boundary;
+                    if (cr_ship->run_optimized()) boundary = cr_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, bmax);
+                    else cr_ship->apply_or_range_to(boundary, Q1_SHIPDATE_CUTOFF + 1, bmax);
+                    shipdate_gt |= boundary;
+                }
+            } else if (cr_ship->run_optimized()) {
                 shipdate_gt = cr_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
             } else {
                 cr_ship->apply_or_range_to(shipdate_gt, Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);

@@ -65,8 +65,10 @@ BACKEND_FULL: Dict[str, str] = {
 CSV_PREFIX_TO_BACKEND: Dict[str, str] = {
     "wah":           "WAH",
     "combit":        "CB",
+    "combit_bpe":    "CB+BPE",
     "cb":            "CB",
     "croaring":      "CR",
+    "croaring_bpe":  "CR+BPE",
     "cr":            "CR",
     "croaring_run":  "CRR",
     "crr":           "CRR",
@@ -592,14 +594,33 @@ PATTERN_QS_LOAD_BITMAPS: Dict[int, List[str]] = {
     19: ["shipmode", "shipinstruct"],
 }
 
+# β scheme: BPE-augmented backends additionally pre-build a bucketed
+# prefix-encoded auxiliary structure on the column whose Q is dominated
+# by a range scan.  Per TPC-H 1.5.7 §5 each `<col>_BPE` references the
+# same single base-table column as the per-value `<col>`; the BPE
+# structure is just a different cumulative encoding.  Compliant.
+PATTERN_QS_LOAD_BITMAPS_BPE_EXTRA: Dict[int, List[str]] = {
+    1:  ["shipdate_BPE"],
+    3:  ["shipdate_BPE"],
+    6:  ["discount_BPE", "quantity_BPE"],
+    # Q14 omitted: 30-day range is smaller than the 100-day bucket, so
+    # BPE would force boundary trims exceeding the naive range size.
+    # CB+BPE Q14 falls back to the same per-day OR path as CB.
+}
+
 # Per-backend env values that map to our BitmapBackend enum.
+# CB+BPE / CR+BPE are the β scheme: same per-value bitmap as CB / CR
+# PLUS a bucketed prefix-encoded column for range-dominant queries.
+# Both are listed (not just CB+BPE) so the comparison stays apples-to-apples.
 PATTERN_BACKENDS_FULL: List[Tuple[str, str]] = [
-    ("CB",  "cb"),
-    ("CR",  "cr"),
-    ("CRR", "crr"),
-    ("WAH", "wah"),
-    ("EW",  "ew"),
-    ("CON", "con"),
+    ("CB",     "cb"),
+    ("CB+BPE", "cb_bpe"),
+    ("CR",     "cr"),
+    ("CR+BPE", "cr_bpe"),
+    ("CRR",    "crr"),
+    ("WAH",    "wah"),
+    ("EW",     "ew"),
+    ("CON",    "con"),
 ]
 
 # Per-Q runtime gating after IndexedWAH::build was made sparse-aware
@@ -636,12 +657,14 @@ PATTERN_BACKENDS_PER_Q: Dict[int, List[Tuple[str, str]]] = {
 # Maps the active backend short tag to its CSV column prefix in the
 # Schema-A CSV (matches CSV_PREFIX_TO_BACKEND inverted).
 PATTERN_BACKEND_CSV_PREFIX: Dict[str, str] = {
-    "CB":  "combit",
-    "CR":  "croaring",
-    "CRR": "croaring_run",
-    "WAH": "wah",
-    "EW":  "ewah",
-    "CON": "concise",
+    "CB":     "combit",
+    "CB+BPE": "combit_bpe",
+    "CR":     "croaring",
+    "CR+BPE": "croaring_bpe",
+    "CRR":    "croaring_run",
+    "WAH":    "wah",
+    "EW":     "ewah",
+    "CON":    "concise",
 }
 
 
@@ -651,38 +674,60 @@ def _merge_pattern_csvs(repo_root: Path, q: int, sf_label: str,
     qN_results_{sf}.csv with that backend's column populated and the
     others 0.  Merge the per-backend captures into a single combined CSV
     that bench_suite's parse_schema_wide can consume.
+
+    For CB+BPE / CR+BPE the cpp emits to the *non*-BPE prefix (the cpp
+    has no notion of `cb_bpe` — DEBIT_BM=cb_bpe just routes to the same
+    ComBit emit path); we rename `combit_*` → `combit_bpe_*` (and likewise
+    for croaring) when copying into the merged output.
     """
     if not per_backend_csvs:
         return
+    # Backends whose source CSV still uses the non-BPE prefix.
+    SOURCE_PREFIX_OVERRIDE = {
+        "CB+BPE": "combit",        # source column → renamed to combit_bpe_*
+        "CR+BPE": "croaring",
+    }
     # Collect rows keyed on operation, taking the active-backend cells from
     # each per-backend CSV.
     op_to_row: Dict[str, Dict[str, str]] = {}
-    fieldnames: Optional[List[str]] = None
+    base_fieldnames: Optional[List[str]] = None
     for backend, path in per_backend_csvs.items():
         if not path.exists():
             continue
-        prefix = PATTERN_BACKEND_CSV_PREFIX.get(backend)
+        prefix     = PATTERN_BACKEND_CSV_PREFIX.get(backend)
+        src_prefix = SOURCE_PREFIX_OVERRIDE.get(backend, prefix)
         if not prefix:
             continue
         with path.open() as f:
             reader = csv.DictReader(f)
-            if fieldnames is None:
-                fieldnames = list(reader.fieldnames or [])
+            if base_fieldnames is None:
+                base_fieldnames = list(reader.fieldnames or [])
             for row in reader:
                 op = row.get("operation", "")
                 if not op:
                     continue
                 target = op_to_row.setdefault(op, {**row})
                 for stat in ("median_ms", "stddev_ms", "min_ms", "max_ms"):
-                    col = f"{prefix}_{stat}"
-                    if col in row:
-                        target[col] = row[col]
-    if fieldnames is None:
+                    src = f"{src_prefix}_{stat}"
+                    dst = f"{prefix}_{stat}"
+                    if src in row:
+                        target[dst] = row[src]
+    if base_fieldnames is None:
         return
+    # Extend fieldnames with any BPE columns that weren't in the source CSV.
+    fieldnames = list(base_fieldnames)
+    for backend, _ in per_backend_csvs.items():
+        prefix = PATTERN_BACKEND_CSV_PREFIX.get(backend)
+        if not prefix:
+            continue
+        for stat in ("median_ms", "stddev_ms", "min_ms", "max_ms"):
+            col = f"{prefix}_{stat}"
+            if col not in fieldnames:
+                fieldnames.append(col)
     # Write the merged CSV to the canonical location.
     out_path = repo_root / f"q{q}_results_{sf_label}.csv"
     with out_path.open("w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=fieldnames)
+        w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         w.writeheader()
         for op in op_to_row.values():
             w.writerow(op)
@@ -704,7 +749,15 @@ def run_single_query(duckdb_bin: Path, db: Path, q: int,
             f.write(f"# cwd={REPO_ROOT}\n# pattern_qs_per_backend Q{q}\n")
             for backend, env_val in PATTERN_BACKENDS_PER_Q.get(q, PATTERN_BACKENDS_FULL):
                 env["DEBIT_BM"] = env_val
-                stmts = [f"PRAGMA load_bitmap('{c}');" for c in cols]
+                # β scheme: BPE-augmented backends additionally pre-load
+                # the bucketed prefix-encoded column (TPC-H 1.5.7 §5
+                # compliant — same base-table column as the per-value).
+                this_cols = list(cols)
+                if env_val in ("cb_bpe", "cr_bpe"):
+                    for extra in PATTERN_QS_LOAD_BITMAPS_BPE_EXTRA.get(q, []):
+                        if extra not in this_cols:
+                            this_cols.append(extra)
+                stmts = [f"PRAGMA load_bitmap('{c}');" for c in this_cols]
                 stmts.append(f"PRAGMA bm_tpch({q});")
                 sql_input = "\n".join(stmts) + "\n"
                 f.write(f"\n# === Backend {backend} (DEBIT_BM={env_val}) ===\n")

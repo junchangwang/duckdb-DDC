@@ -335,20 +335,57 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         // per-day bitmaps.
         if (cb_okey) {
             auto* cb_ship = dynamic_cast<bm_index::IndexedComBit*>(idx_ship);
-            // ComBit: gather in-range keys + sca or_many.
-            std::vector<int64_t> in_range;
-            cb_ship->for_each_key([&](int64_t k) {
-                if (k > Q3_CUTOFF_DATE) in_range.push_back(k);
-            });
-            ComBit ship_filter = cb_ship->or_many(in_range);
+            // β scheme: BPE prefix-encoded fast path (active when
+            // bitmap_shipdate_BPE was pre-loaded under DEBIT_BM=cb_bpe).
+            // ship>cutoff = prefix(LAST) AND_NOT prefix(B) | per-day OR
+            // over (cutoff, bucket_max(B)] — TPC-H 1.5.7 §5 compliant.
+            auto* cb_ship_bpe = dynamic_cast<bm_index::IndexedComBitBPE*>(
+                static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_BPE));
+            ComBit ship_filter = ComBit::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
+            if (cb_ship_bpe) {
+                int B    = cb_ship_bpe->bucket_of(Q3_CUTOFF_DATE);
+                int LAST = static_cast<int>(cb_ship_bpe->num_keys()) - 1;
+                ship_filter = *cb_ship_bpe->prefix_at_bucket(LAST);
+                ship_filter &= ~(*cb_ship_bpe->prefix_at_bucket(B));
+                int64_t bmax = cb_ship_bpe->bucket_max(B);
+                if (Q3_CUTOFF_DATE + 1 <= bmax) {
+                    ComBit boundary = ComBit::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
+                    cb_ship->apply_or_range_to(boundary, Q3_CUTOFF_DATE + 1, bmax);
+                    ship_filter |= boundary;
+                }
+            } else {
+                // ComBit (no BPE): gather in-range keys + sca or_many.
+                std::vector<int64_t> in_range;
+                cb_ship->for_each_key([&](int64_t k) {
+                    if (k > Q3_CUTOFF_DATE) in_range.push_back(k);
+                });
+                ship_filter = cb_ship->or_many(in_range);
+            }
             t_c = clk::now();
             cb_btv_res &= ship_filter;
             t_d = clk::now();
             q3_get_rowids_t(cb_btv_res, &ids);
         } else if (cr_okey) {
             auto* cr_ship = dynamic_cast<bm_index::IndexedCRoaring*>(idx_ship);
+            // β scheme: BPE prefix-encoded fast path for CR (and CRR
+            // when cr_bpe is selected, though CRR's fastunion is already
+            // fast).  Same algebra as ComBit BPE.
+            auto* cr_ship_bpe = dynamic_cast<bm_index::IndexedCRoaringBPE*>(
+                static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_BPE));
             roaring::Roaring ship_filter;
-            if (cr_ship->run_optimized()) {
+            if (cr_ship_bpe) {
+                int B    = cr_ship_bpe->bucket_of(Q3_CUTOFF_DATE);
+                int LAST = static_cast<int>(cr_ship_bpe->num_keys()) - 1;
+                ship_filter = *cr_ship_bpe->prefix_at_bucket(LAST);
+                ship_filter -= *cr_ship_bpe->prefix_at_bucket(B);
+                int64_t bmax = cr_ship_bpe->bucket_max(B);
+                if (Q3_CUTOFF_DATE + 1 <= bmax) {
+                    roaring::Roaring boundary;
+                    if (cr_ship->run_optimized()) boundary = cr_ship->or_range(Q3_CUTOFF_DATE + 1, bmax);
+                    else cr_ship->apply_or_range_to(boundary, Q3_CUTOFF_DATE + 1, bmax);
+                    ship_filter |= boundary;
+                }
+            } else if (cr_ship->run_optimized()) {
                 // CRR: fastunion via or_range.
                 ship_filter = cr_ship->or_range(Q3_CUTOFF_DATE + 1, INT64_MAX);
             } else {

@@ -244,7 +244,8 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
     bool ge_path = (col == "shipdate_GE");
     using B = bm_bench::Backend;
     switch (backend) {
-        case B::CB: {
+        case B::CB:
+        case B::CB_BPE: {
             if (bpe_path) {
                 auto* x = new bm_index::IndexedComBitBPE();
                 x->build(values, values.size(), bpe_lo, bpe_hi, bpe_bs);
@@ -260,7 +261,8 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
             }
             break;
         }
-        case B::CR: {
+        case B::CR:
+        case B::CR_BPE: {
             if (bpe_path) {
                 auto* x = new bm_index::IndexedCRoaringBPE();
                 x->build(values, values.size(), bpe_lo, bpe_hi, bpe_bs, false);
