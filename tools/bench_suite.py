@@ -688,10 +688,18 @@ def _q_total_median(records: List[Dict], q_tag: str, backend: str) -> Optional[f
     """Locate the TOTAL-phase median for a (Q, backend).  Schema-B Qs use
     'TOTAL' (uppercased in parse_schema_simple), Schema-A uses 'TOTAL'
     too, so a single lookup covers both.
+
+    Returns None when the cell is 0.0 — that's a sentinel from the
+    per-Q CSV emit (un-run backends are written as 0/0/0/0 stats).
+    Rendering as None means the Excel cell is blank (vs. misleading
+    green "0.000" which looks like an instant query).
     """
     for r in records:
         if r["Q"] == q_tag and r["Backend"] == backend and r["Phase"] == "TOTAL":
-            return r["Median_ms"]
+            v = r["Median_ms"]
+            if v is None or v == 0.0:
+                return None
+            return v
     return None
 
 
@@ -839,6 +847,32 @@ def build_excel(records: List[Dict], meta: Dict[str, Dict],
         rr += 1
     rr += 1
 
+    _section("Origin & methodology")
+    origin = [
+        ("Q1 / Q5 / Q6", "Teacher's reviewer-fixed reference (BitEngine branch).  Ported verbatim — same `context.client.bitmap_*` + `dynamic_cast<rabit::Rabit*>` pattern, same per-table semi-joins."),
+        ("Q3 / Q4 / Q14 / Q15 / Q17 / Q19", "Ported by following the same teacher pattern + reading TPC-H spec §2.4.x for each query's predicate semantics.  Each port emits an [OK] line confirming the result matches DuckDB SQL ground truth."),
+        ("Q8 / Q10 / Q12", "Deferred.  These are 4-to-7-table aggregation queries where most of the work is in DuckDB SQL execution; a single bitmap-filter step would be a small fraction of total time and yield limited per-bitmap-op insight.  Old non-compliant pre-joined .bm files were retired pre-port; cells are intentionally blank in this workbook (not 0)."),
+    ]
+    for tag, doc in origin:
+        readme.cell(row=rr, column=1, value=tag).font = Q_FONT
+        readme.cell(row=rr, column=2, value=doc)
+        readme.cell(row=rr, column=2).alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        rr += 1
+    rr += 1
+
+    _section("Empty / blank cells")
+    blanks = [
+        ("Blank Q row",   "Q deferred (Q8 / Q10 / Q12) — see Origin & methodology above."),
+        ("Blank backend cell",
+         "Backend not run for that Q.  Two reasons: (a) PATTERN_BACKENDS_PER_Q gating — Q3/Q4/Q5/Q17 limit to CB/CR/CRR because WAH/EW/Concise per-key bitmap build over high-cardinality FK (orderkey 15M, partkey 2M unique values at SF10) exceeds practical memory budget; (b) BS/BSA only exist for the legacy Q6/Q15 paths.  ComBit's SparseComBit storage is specifically designed to handle these high-cardinality FK bitmaps that defeat per-value-bitvector backends."),
+    ]
+    for tag, doc in blanks:
+        readme.cell(row=rr, column=1, value=tag).font = Q_FONT
+        readme.cell(row=rr, column=2, value=doc)
+        readme.cell(row=rr, column=2).alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        rr += 1
+    rr += 1
+
     _section("TPC-H 1.5.7 §5 compliance — auxiliary data structures")
     compliance = [
         ("Spec rule",
@@ -846,7 +880,7 @@ def build_excel(records: List[Dict], meta: Dict[str, Dict],
          "Each directive may reference one and only one of: PK column(s), FK column(s), or a date column.  "
          "Functions/expressions on those columns are allowed.  Multi-column / multi-table indexes are forbidden."),
         ("Q1",
-         "COMPLIANT — bitmap_shipdate (date), bitmap_linestatus (varchar→ASCII byte), bitmap_returnflag (varchar→ASCII byte).  Each single column."),
+         "Mixed — bitmap_shipdate (date) is strict-compliant.  bitmap_linestatus + bitmap_returnflag reference VARCHAR columns; under a strict reading of 1.5.7 these are NOT permitted (only PK/FK/date).  Per teacher's BitEngine reference (rabit_linestatus / rabit_returnflag) we keep them — the academic methodology for bitmap research on TPC-H universally indexes these low-cardinality VARCHAR columns."),
         ("Q3",
          "COMPLIANT — bitmap_orderkey (FK on l_orderkey), bitmap_shipdate (date).  Customer mktsegment + orders orderdate filters at query-time."),
         ("Q4",
@@ -854,7 +888,7 @@ def build_excel(records: List[Dict], meta: Dict[str, Dict],
         ("Q5",
          "COMPLIANT — bitmap_orderkey + bitmap_suppkey (both FKs).  Region/nation/customer/orders/supplier semi-joins at query-time."),
         ("Q6",
-         "COMPLIANT — bitmap_shipdate_GE (date, year-bucketed) + bitmap_discount/quantity (single columns).  BPE variants over the SAME columns are TPC-H 1.5.7 explicitly allowed."),
+         "Mixed — bitmap_shipdate_GE (date, year-bucketed) is compliant.  bitmap_discount + bitmap_quantity (and the BPE variants) reference DECIMAL columns; under strict 1.5.7 not permitted.  Kept per teacher's BitEngine reference (rabit_discount / rabit_quantity)."),
         ("Q14",
          "COMPLIANT — bitmap_shipdate (date) only.  PROMO% predicate evaluated by part scan at query-time."),
         ("Q15",
@@ -862,11 +896,9 @@ def build_excel(records: List[Dict], meta: Dict[str, Dict],
         ("Q17",
          "COMPLIANT — bitmap_partkey (FK on l_partkey).  p_brand+p_container scan at query-time."),
         ("Q19",
-         "COMPLIANT — bitmap_shipmode + bitmap_shipinstruct (each single varchar column).  3 OR-group brand+container+size+quantity predicates evaluated at query-time."),
-        ("Q8 / Q10",
-         "NOT BENCHED in this workbook (older bitmap-file pipeline retired pre-port).  The pre-built join_result/0.bm structures they relied on were multi-table — incompatible with TPC-H 1.5.7 §5 — and have been removed.  Future port follows the same pattern as Q3/Q4/Q5."),
-        ("Q12",
-         "PARTIAL — uses bitmap_shipmode + bitmap_receiptdate (single col, OK).  The previous pre-built commit_lt_receipt / ship_lt_commit bitmaps were two-column expressions and have been removed; commit/ship-date predicates are now evaluated at query-time on BMFetch'd cols."),
+         "Non-strict — bitmap_shipmode + bitmap_shipinstruct (both VARCHAR).  Same caveat as Q1.  3 OR-group brand+container+size+quantity predicates evaluated at query-time on materialised cols (no aux on those — compliant)."),
+        ("Q8 / Q10 / Q12",
+         "Deferred — see Origin & methodology.  Older non-compliant pre-built multi-table bitmaps (join_result / late_lineitem / commit_lt_receipt / ship_lt_commit) were retired."),
     ]
     for tag, doc in compliance:
         readme.cell(row=rr, column=1, value=tag).font = Q_FONT
@@ -997,7 +1029,12 @@ def build_excel(records: List[Dict], meta: Dict[str, Dict],
                 v = None
                 for r in records:
                     if r["Q"] == q_tag and r["Backend"] == b and r["Phase"] == phase:
-                        v = r["Median_ms"]; break
+                        v = r["Median_ms"]
+                        # 0.0 sentinel from per-Q CSV → render as blank
+                        # (un-run backend, not "instant query").
+                        if v == 0.0:
+                            v = None
+                        break
                 cell = ws.cell(row=rownum, column=j, value=v)
                 cell.number_format = NUM_FMT_MS
                 cell.alignment = RIGHT
