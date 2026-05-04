@@ -301,9 +301,11 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
                 }
             }
         }
-        // Batched k-way OR for non-ComBit backends.
+        // Batched k-way OR for non-ComBit backends.  WAH/EW/CON now
+        // all expose tree-merge or_many in indexed_bitmap.hpp — handles
+        // K=590k in seconds vs. minutes for pairwise streaming.
         if (cr_okey)       cr_btv_res  = cr_okey->or_many(matched_okeys);
-        else if (wah_okey) for (int64_t k : matched_okeys) wah_okey->apply_or_to(wah_btv_res, k);
+        else if (wah_okey) wah_btv_res = wah_okey->or_many(matched_okeys);
         else if (ew_okey)  ew_btv_res  = ew_okey->or_many(matched_okeys);
         else if (con_okey) con_btv_res = con_okey->or_many(matched_okeys);
         auto t_b = clk::now();

@@ -184,8 +184,10 @@ void BMTableScan::BMTPCH_Q4(ExecutionContext &context, const PhysicalTableScan &
             }
             q4_get_rowids(btv, &ids);
         } else if (auto* wah = dynamic_cast<bm_index::IndexedWAH*>(idx_okey)) {
-            ibis::bitvector btv;
-            for (auto& [k, _] : orderkey_priority) wah->apply_or_to(btv, k);
+            std::vector<int64_t> keys;
+            keys.reserve(orderkey_priority.size());
+            for (auto& [k, _] : orderkey_priority) keys.push_back(k);
+            ibis::bitvector btv = wah->or_many(keys);
             q4_get_rowids(btv, &ids);
         } else if (auto* ew = dynamic_cast<bm_index::IndexedEWAH*>(idx_okey)) {
             std::vector<int64_t> keys;

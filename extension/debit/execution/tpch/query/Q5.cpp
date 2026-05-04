@@ -414,13 +414,17 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
             roaring::Roaring filt = btv_or & btv_supp;
             get_rowids(filt, ids);
         }
-        // ---- WAH ----
+        // ---- WAH (tree-merge or_many) ----
         else if (auto* wah_okey = dynamic_cast<bm_index::IndexedWAH*>(idx_okey_base)) {
             auto* wah_skey = dynamic_cast<bm_index::IndexedWAH*>(idx_skey_base);
             if (!wah_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
-            ibis::bitvector btv_or, btv_supp;
-            for (auto& [okey, _] : order_nation_map) wah_okey->apply_or_to(btv_or, okey);
-            for (auto& [skey, _] : supp_nation_map ) wah_skey->apply_or_to(btv_supp, skey);
+            std::vector<int64_t> okeys, skeys;
+            okeys.reserve(order_nation_map.size());
+            skeys.reserve(supp_nation_map.size());
+            for (auto& [k, _] : order_nation_map) okeys.push_back(k);
+            for (auto& [k, _] : supp_nation_map ) skeys.push_back(k);
+            ibis::bitvector btv_or   = wah_okey->or_many(okeys);
+            ibis::bitvector btv_supp = wah_skey->or_many(skeys);
             ibis::bitvector filt; filt.copy(btv_or); filt &= btv_supp;
             get_rowids(filt, ids);
         }

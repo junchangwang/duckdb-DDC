@@ -584,6 +584,9 @@ PATTERN_QS_LOAD_BITMAPS: Dict[int, List[str]] = {
     4:  ["orderkey"],
     5:  ["orderkey", "suppkey"],
     6:  ["shipdate_GE", "discount", "quantity", "discount_BPE", "quantity_BPE"],
+    8:  ["orderkey", "partkey"],
+    10: ["orderkey", "returnflag"],
+    12: ["shipmode", "receiptdate"],
     14: ["shipdate"],
     17: ["partkey"],
     19: ["shipmode", "shipinstruct"],
@@ -616,24 +619,15 @@ PATTERN_BACKENDS_FULL: List[Tuple[str, str]] = [
 #
 # Q17 has ~200 partkey ORs (Brand#23 + MED BOX selectivity) so all 6
 # backends run cheaply.  Q1/Q6/Q14/Q19 have ≤90-key fan-out.
-PATTERN_NO_WAH: List[Tuple[str, str]] = [
-    ("CB",  "cb"),
-    ("CR",  "cr"),
-    ("CRR", "crr"),
-    ("EW",  "ew"),
-    ("CON", "con"),
-]
-PATTERN_HIGH_FANOUT: List[Tuple[str, str]] = [
-    ("CB",  "cb"),
-    ("CR",  "cr"),
-    ("CRR", "crr"),
-]
 PATTERN_BACKENDS_PER_Q: Dict[int, List[Tuple[str, str]]] = {
     1:  PATTERN_BACKENDS_FULL,
-    3:  PATTERN_HIGH_FANOUT,
-    4:  PATTERN_HIGH_FANOUT,
-    5:  PATTERN_NO_WAH,
+    3:  PATTERN_BACKENDS_FULL,
+    4:  PATTERN_BACKENDS_FULL,
+    5:  PATTERN_BACKENDS_FULL,
     6:  PATTERN_BACKENDS_FULL,
+    8:  PATTERN_BACKENDS_FULL,
+    10: PATTERN_BACKENDS_FULL,
+    12: PATTERN_BACKENDS_FULL,
     14: PATTERN_BACKENDS_FULL,
     17: PATTERN_BACKENDS_FULL,
     19: PATTERN_BACKENDS_FULL,

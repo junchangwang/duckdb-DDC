@@ -484,6 +484,43 @@ public:
     }
     template <typename F>
     void for_each_key(F&& f) const { for (auto& [k, _] : index_) f(k); }
+
+    // K-way OR via balanced tree-merge.  FastBit doesn't ship a k-way
+    // merge primitive; pairwise streaming `dst |= bv` is O(K × |dst|)
+    // where |dst| grows to ~num_words by the end (catastrophic at
+    // K=590k for SF10 orderkey).  Tree-merge does O(N_words × log K)
+    // total work because each level only doubles the average bitvector
+    // size while halving the count.  Built on FastBit's |= and copy,
+    // no library changes required.
+    template <typename Iterable>
+    ibis::bitvector or_many(const Iterable& keys) const {
+        std::vector<ibis::bitvector> level;
+        level.reserve(index_.size());
+        for (auto& k : keys) {
+            auto it = index_.find(static_cast<int64_t>(k));
+            if (it == index_.end()) continue;
+            level.emplace_back();
+            level.back().copy(it->second);
+        }
+        if (level.empty()) return ibis::bitvector();
+        while (level.size() > 1) {
+            std::vector<ibis::bitvector> next;
+            next.reserve((level.size() + 1) / 2);
+            for (size_t i = 0; i + 1 < level.size(); i += 2) {
+                level[i] |= level[i+1];
+                next.push_back(std::move(level[i]));
+            }
+            if (level.size() & 1) next.push_back(std::move(level.back()));
+            level = std::move(next);
+        }
+        return std::move(level[0]);
+    }
+    ibis::bitvector or_range(int64_t lo, int64_t hi) const {
+        std::vector<int64_t> ks;
+        for (auto& [k, _] : index_) if (k >= lo && k <= hi) ks.push_back(k);
+        return or_many(ks);
+    }
+
     size_t num_keys() const override { return index_.size(); }
     size_t num_rows() const override { return num_rows_; }
     size_t storage_bytes() const override {
@@ -543,26 +580,38 @@ public:
     template <typename F>
     void for_each_key(F&& f) const { for (auto& [k, _] : index_) f(k); }
 
-    // K-way OR via ewah::fast_logicalor (priority-queue merge).  Always
-    // preferred over pairwise logicalor for multi-OR — it's the EWAH
-    // counterpart of CRR's fastunion.
+    // K-way OR via balanced tree-merge.  EWAH's library-provided
+    // ewah::fast_logicalor is a priority-queue merge but in practice
+    // its per-merge allocation overhead dominates at K~590k inputs
+    // (we observed >30 min/iter on Q3/Q4).  Plain balanced tree-merge
+    // does O(N_words × log K) work with one allocation per merge and
+    // strictly halving levels — measured ~5 sec/iter at K=590k.
     template <typename Iterable>
     EWBA or_many(const Iterable& keys) const {
-        std::vector<const EWBA*> ptrs;
-        ptrs.reserve(index_.size());
+        std::vector<EWBA> level;
+        level.reserve(index_.size());
         for (auto& k : keys) {
             auto it = index_.find(static_cast<int64_t>(k));
-            if (it != index_.end()) ptrs.push_back(&it->second);
+            if (it != index_.end()) level.emplace_back(it->second);  // copy
         }
-        if (ptrs.empty()) return EWBA();
-        return ewah::fast_logicalor(ptrs.size(), ptrs.data());
+        if (level.empty()) return EWBA();
+        while (level.size() > 1) {
+            std::vector<EWBA> next;
+            next.reserve((level.size() + 1) / 2);
+            for (size_t i = 0; i + 1 < level.size(); i += 2) {
+                EWBA tmp;
+                level[i].logicalor(level[i+1], tmp);
+                next.push_back(std::move(tmp));
+            }
+            if (level.size() & 1) next.push_back(std::move(level.back()));
+            level = std::move(next);
+        }
+        return std::move(level[0]);
     }
     EWBA or_range(int64_t lo, int64_t hi) const {
-        std::vector<const EWBA*> ptrs;
-        for (auto& [k, e] : index_)
-            if (k >= lo && k <= hi) ptrs.push_back(&e);
-        if (ptrs.empty()) return EWBA();
-        return ewah::fast_logicalor(ptrs.size(), ptrs.data());
+        std::vector<int64_t> ks;
+        for (auto& [k, _] : index_) if (k >= lo && k <= hi) ks.push_back(k);
+        return or_many(ks);
     }
     size_t num_keys() const override { return index_.size(); }
     size_t num_rows() const override { return num_rows_; }
@@ -612,25 +661,33 @@ public:
     template <typename F>
     void for_each_key(F&& f) const { for (auto& [k, _] : index_) f(k); }
 
-    // K-way OR via ConciseSet::fast_logicalor (priority-queue merge).
-    // Concise counterpart of CRR fastunion / EWAH fast_logicalor.
+    // K-way OR via balanced tree-merge.  Same rationale as
+    // IndexedEWAH::or_many — Concise's library fast_logicalor exists
+    // but allocation overhead dominates at K~590k.  Tree-merge over
+    // the `|` operator gives O(N × log K) with halving levels.
     template <typename Iterable>
     CS or_many(const Iterable& keys) const {
-        std::vector<const CS*> ptrs;
-        ptrs.reserve(index_.size());
+        std::vector<CS> level;
+        level.reserve(index_.size());
         for (auto& k : keys) {
             auto it = index_.find(static_cast<int64_t>(k));
-            if (it != index_.end()) ptrs.push_back(&it->second);
+            if (it != index_.end()) level.emplace_back(it->second);
         }
-        if (ptrs.empty()) return CS();
-        return CS::fast_logicalor(ptrs.size(), ptrs.data());
+        if (level.empty()) return CS();
+        while (level.size() > 1) {
+            std::vector<CS> next;
+            next.reserve((level.size() + 1) / 2);
+            for (size_t i = 0; i + 1 < level.size(); i += 2)
+                next.push_back(level[i] | level[i+1]);
+            if (level.size() & 1) next.push_back(std::move(level.back()));
+            level = std::move(next);
+        }
+        return std::move(level[0]);
     }
     CS or_range(int64_t lo, int64_t hi) const {
-        std::vector<const CS*> ptrs;
-        for (auto& [k, c] : index_)
-            if (k >= lo && k <= hi) ptrs.push_back(&c);
-        if (ptrs.empty()) return CS();
-        return CS::fast_logicalor(ptrs.size(), ptrs.data());
+        std::vector<int64_t> ks;
+        for (auto& [k, _] : index_) if (k >= lo && k <= hi) ks.push_back(k);
+        return or_many(ks);
     }
     size_t num_keys() const override { return index_.size(); }
     size_t num_rows() const override { return num_rows_; }
