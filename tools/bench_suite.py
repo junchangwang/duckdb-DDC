@@ -537,16 +537,23 @@ PATTERN_BACKENDS_FULL: List[Tuple[str, str]] = [
     ("CON", "con"),
 ]
 
-# Build cost is now uniform (IndexedWAH::build uses FastBit appendFill,
-# O(num_set_bits)).  Runtime gating differs per Q:
-#   * EWAH/Concise have fast_logicalor (priority-queue k-way merge), so
-#     they handle high-fan-out OR (Q3/Q4 ~590k orderkeys, Q5 ~28k) well.
-#   * WAH (FastBit ibis::bitvector) has no k-way merge — only 2-way
-#     `dst |= bv` ORs.  Each OR is O(num_words) ≈ 1.27 GB / 8 = 160M words
-#     per call.  At 28k ORs per Q5 iteration this is ~60 minutes/iter —
-#     practically un-runnable in a sweep.  Gate WAH off for Q3/Q4/Q5;
-#     all other Qs have small enough OR fan-out (≤200 keys) that WAH
-#     finishes in seconds.
+# Per-Q runtime gating after IndexedWAH::build was made sparse-aware
+# (build cost is uniform).  The remaining gating is purely about runtime
+# OR fan-out:
+#
+#   * WAH (FastBit ibis::bitvector) has no k-way merge — pairwise
+#     `dst |= bv` only, ~160M-word per OR on a 1.27 GB SF10 orderkey
+#     index.  Tractable up to ~200 keys; gated off for Q3/Q4/Q5.
+#   * EWAH and Concise have fast_logicalor (priority-queue k-way),
+#     but the constant factor on K=590k inputs is still ~10-30 minutes
+#     per iteration empirically (the priority queue does O(K log K)
+#     setup before any merging).  Tractable up to ~30k keys; gated off
+#     for Q3/Q4 (590k keys) but kept on for Q5 (28k keys).
+#   * CRoaring (CR / CRR) fastunion handles 590k inputs in seconds —
+#     the only backends fast enough to keep on for Q3/Q4.
+#
+# Q17 has ~200 partkey ORs (Brand#23 + MED BOX selectivity) so all 6
+# backends run cheaply.  Q1/Q6/Q14/Q19 have ≤90-key fan-out.
 PATTERN_NO_WAH: List[Tuple[str, str]] = [
     ("CB",  "cb"),
     ("CR",  "cr"),
@@ -554,10 +561,15 @@ PATTERN_NO_WAH: List[Tuple[str, str]] = [
     ("EW",  "ew"),
     ("CON", "con"),
 ]
+PATTERN_HIGH_FANOUT: List[Tuple[str, str]] = [
+    ("CB",  "cb"),
+    ("CR",  "cr"),
+    ("CRR", "crr"),
+]
 PATTERN_BACKENDS_PER_Q: Dict[int, List[Tuple[str, str]]] = {
     1:  PATTERN_BACKENDS_FULL,
-    3:  PATTERN_NO_WAH,
-    4:  PATTERN_NO_WAH,
+    3:  PATTERN_HIGH_FANOUT,
+    4:  PATTERN_HIGH_FANOUT,
     5:  PATTERN_NO_WAH,
     6:  PATTERN_BACKENDS_FULL,
     14: PATTERN_BACKENDS_FULL,
@@ -862,7 +874,7 @@ def build_excel(records: List[Dict], meta: Dict[str, Dict],
     blanks = [
         ("Blank Q row",   "Q deferred (Q8 / Q10 / Q12) — see Origin & methodology above."),
         ("Blank backend cell",
-         "Backend not run for that Q.  CB/CR/CRR/EW/CON run for every Q.  WAH is gated off for Q3/Q4/Q5: FastBit ibis::bitvector has only 2-way OR (no k-way merge); per-Q fan-out is 590k orderkeys (Q3/Q4) and 28k (Q5), making each iteration ~60 min on a 1.27 GB WAH index.  CRR/EW/CON use fast_logicalor (priority-queue k-way merge) and remain tractable.  BS/BSA cells are blank: the legacy dense-bit-array baseline relied on file-format predicate pre-derivation incompatible with the new per-value PRAGMA load_bitmap pattern."),
+         "Backend not run for that Q.  Gating is on runtime OR fan-out per-iteration:  Q3/Q4 (~590k orderkeys after the orders-scan + custkey-set semi-join) — only CB/CR/CRR finish in seconds; WAH has no k-way merge (pairwise OR over a 1.27 GB index = ~60 min/iter); EWAH/Concise's fast_logicalor priority-queue setup is O(K log K) and at K=590k empirically hangs >30 min/iter.  Q5 (~28k orderkeys) — WAH still gated, CR/CRR/EW/CON all run.  Q17 (~200 partkey ORs after Brand#23 + MED BOX) — all 6 run.  BS/BSA cells are blank: the legacy dense-bit-array baseline relied on file-format predicate pre-derivation incompatible with the new per-value PRAGMA load_bitmap pattern."),
     ]
     for tag, doc in blanks:
         readme.cell(row=rr, column=1, value=tag).font = Q_FONT
