@@ -161,6 +161,28 @@ RE_BREAKDOWN_LINE = re.compile(
 )
 RE_BREAKDOWN_KV = re.compile(r"(\w+)=([0-9.]+)\s*MiB")
 
+# New BMTPCH pattern (PRAGMA load_bitmap) prints one line per (column,
+# backend) build:
+#   `[load_bitmap] orderkey: built ComBit index (15000000 keys, 4448.84 MB) in 12947 ms`
+#   `[load_bitmap] shipdate: built CRoaringRun index (2526 keys, 138.443 MB) in 1403 ms`
+# Size is decimal MB (storage_bytes / 1e6), already consistent with the
+# spreadsheet's MB convention — no MiB conversion needed.
+RE_LOAD_BITMAP_BUILT = re.compile(
+    r"\[load_bitmap\]\s+(\S+):\s+built\s+(\w+)\s+index\s+\(\d+\s+keys,\s+([0-9.]+)\s+MB\)",
+)
+# IBitmapIndex::backend_name() printed strings -> canonical backend tag.
+LOAD_BITMAP_NAME_TO_BACKEND: Dict[str, str] = {
+    "ComBit":      "CB",
+    "ComBitGE":    "CB",
+    "ComBitBPE":   "CB",
+    "CRoaring":    "CR",
+    "CRoaringRun": "CRR",
+    "CRoaringBPE": "CR",   # BPE label is shared between run-opt on/off
+    "WAH":         "WAH",
+    "EWAH":        "EW",
+    "Concise":     "CON",
+}
+
 # Map the printed leading tag -> canonical backend code + category list
 # in canonical column order.  Categories that don't apply for a backend
 # stay None so the spreadsheet can render them as blank cells.
@@ -481,6 +503,46 @@ def parse_stdout_log(log_text: str, *, q: Optional[int] = None,
         # Store all categories printed (including 'total') in MB.
         bd = {k: mib_to_mb(v) for k, v in kv.items()}
         result["memory_breakdown"][backend] = bd
+
+    # New BMTPCH pattern footprint: one `[load_bitmap]` line per (column,
+    # backend) build.  Aggregate per-backend across the columns each Q
+    # loads (e.g. Q3 loads orderkey + shipdate; Q5 loads orderkey +
+    # suppkey).  This is the only memory signal the new pattern emits —
+    # legacy `[Breakdown]` lines aren't printed here.  Sum across columns
+    # to get a single per-backend total, plus keep per-column entries for
+    # the Memory Breakdown sheet so reviewers can see how each Q's
+    # storage decomposes by aux structure.
+    bmtpch_seen: set = set()
+    for m in RE_LOAD_BITMAP_BUILT.finditer(log_text):
+        col, name, mb_str = m.group(1), m.group(2), m.group(3)
+        backend = LOAD_BITMAP_NAME_TO_BACKEND.get(name)
+        if backend is None:
+            continue
+        try:
+            mb = float(mb_str)
+        except ValueError:
+            continue
+        bd = result["memory_breakdown"].setdefault(backend, {})
+        # Skip if the legacy `[Breakdown]` block already populated this
+        # backend with structured categories (L1/L2/L3/L4 etc) — don't
+        # overwrite richer detail with coarser per-column buckets.
+        if any(k in bd for k in ("L1", "L2", "literal", "raw", "array")):
+            continue
+        bd[col] = bd.get(col, 0.0) + mb
+        bd["total"] = sum(v for k, v in bd.items() if k != "total")
+        bmtpch_seen.add(backend)
+    # For Qs that use the new BMTPCH pattern, the on-disk footprint left
+    # over from the pre-port pipeline (.bm files in tpch_q*_<backend>/)
+    # is stale — those files aren't what's actually executing.  Replace
+    # `footprint_mb` with the freshly-built in-memory total so the
+    # Storage Total sheet reflects what the bench really paid for.
+    for backend in bmtpch_seen:
+        bd = result["memory_breakdown"].get(backend, {})
+        total_mb = bd.get("total")
+        if total_mb is None or total_mb <= 0.0:
+            continue
+        result["footprint_mb"][backend] = total_mb
+        result["footprint_kind"][backend] = "mem (built)"
 
     # Backfill missing footprint_mb / kind from the breakdown's 'total'
     # field.  Compressed backends (WAH/CB/CR/CRR/EW) usually report an
@@ -1086,12 +1148,21 @@ def build_excel(records: List[Dict], meta: Dict[str, Dict],
                 cell.value = "—"
                 cell.fill = NUM_FILL_NA
                 continue
-            # Render in canonical category order, with 'total' last.
+            # Render in canonical category order first (legacy
+            # `[Breakdown]` shape: L1/L2/L3/L4 etc), then any leftover
+            # keys (per-column entries from the new BMTPCH `[load_bitmap]`
+            # path: `orderkey`, `shipdate`, `suppkey`, …), then 'total'.
             tag_order = BREAKDOWN_TAG_ORDER_BY_BACKEND.get(b, [])
+            seen = set()
             lines = []
             for cat in tag_order:
                 if cat in bd:
                     lines.append(f"{cat}: {bd[cat]:.2f} MB")
+                    seen.add(cat)
+            for cat, mb in bd.items():
+                if cat in seen or cat == "total":
+                    continue
+                lines.append(f"{cat}: {mb:.2f} MB")
             if "total" in bd:
                 lines.append(f"total: {bd['total']:.2f} MB")
             cell.value = "\n".join(lines)
