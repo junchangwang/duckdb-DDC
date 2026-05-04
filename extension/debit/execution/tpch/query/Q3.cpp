@@ -319,10 +319,31 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         ids.reserve(2000000);
 
         if (cb_okey) {
-            ComBit ship_filter = ComBit::from_sparse_positions({}, num_rows,
-                dynamic_cast<bm_index::IndexedComBit*>(idx_ship)->segment_bits());
-            dynamic_cast<bm_index::IndexedComBit*>(idx_ship)
-                ->apply_or_range_to(ship_filter, Q3_CUTOFF_DATE + 1, INT64_MAX);
+            auto* cb_ship = dynamic_cast<bm_index::IndexedComBit*>(idx_ship);
+            ComBit ship_filter = ComBit::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
+            // BPE fast path: if shipdate_BPE was pre-loaded, evaluate
+            // "shipdate > CUTOFF" as `prefix(LAST) AND NOT prefix(B)`
+            // (where B = bucket_of(CUTOFF)) plus per-day boundary OR
+            // for days (CUTOFF, bucket_max(B)].  Drops PhaseC from
+            // ~924ms (1387 pairwise day-ORs) to ~30ms (≤100 boundary
+            // days + 2 cumulative bitmap ops).  Same column, separate
+            // aux structure — TPC-H 1.5.7 §5 compliant.
+            auto* cb_ship_bpe = dynamic_cast<bm_index::IndexedComBitBPE*>(
+                static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_BPE));
+            if (cb_ship_bpe) {
+                int B    = cb_ship_bpe->bucket_of(Q3_CUTOFF_DATE);
+                int LAST = static_cast<int>(cb_ship_bpe->num_keys()) - 1;
+                ship_filter = *cb_ship_bpe->prefix_at_bucket(LAST);
+                ship_filter &= ~(*cb_ship_bpe->prefix_at_bucket(B));
+                int64_t bmax = cb_ship_bpe->bucket_max(B);
+                if (Q3_CUTOFF_DATE + 1 <= bmax) {
+                    ComBit boundary = ComBit::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
+                    cb_ship->apply_or_range_to(boundary, Q3_CUTOFF_DATE + 1, bmax);
+                    ship_filter |= boundary;
+                }
+            } else {
+                cb_ship->apply_or_range_to(ship_filter, Q3_CUTOFF_DATE + 1, INT64_MAX);
+            }
             t_c = clk::now();
             cb_btv_res &= ship_filter;
             t_d = clk::now();
@@ -330,8 +351,27 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         } else if (cr_okey) {
             auto* cr_ship = dynamic_cast<bm_index::IndexedCRoaring*>(idx_ship);
             roaring::Roaring ship_filter;
-            if (cr_ship->run_optimized()) ship_filter = cr_ship->or_range(Q3_CUTOFF_DATE + 1, INT64_MAX);
-            else cr_ship->apply_or_range_to(ship_filter, Q3_CUTOFF_DATE + 1, INT64_MAX);
+            // CRoaringBPE fast path for CR/CRR (same shape as ComBit BPE).
+            auto* cr_ship_bpe = dynamic_cast<bm_index::IndexedCRoaringBPE*>(
+                static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_BPE));
+            if (cr_ship_bpe) {
+                int B    = cr_ship_bpe->bucket_of(Q3_CUTOFF_DATE);
+                int LAST = static_cast<int>(cr_ship_bpe->num_keys()) - 1;
+                ship_filter = *cr_ship_bpe->prefix_at_bucket(LAST);
+                roaring::Roaring lo_pe = *cr_ship_bpe->prefix_at_bucket(B);
+                ship_filter -= lo_pe;
+                int64_t bmax = cr_ship_bpe->bucket_max(B);
+                if (Q3_CUTOFF_DATE + 1 <= bmax) {
+                    roaring::Roaring boundary;
+                    if (cr_ship->run_optimized()) boundary = cr_ship->or_range(Q3_CUTOFF_DATE + 1, bmax);
+                    else cr_ship->apply_or_range_to(boundary, Q3_CUTOFF_DATE + 1, bmax);
+                    ship_filter |= boundary;
+                }
+            } else if (cr_ship->run_optimized()) {
+                ship_filter = cr_ship->or_range(Q3_CUTOFF_DATE + 1, INT64_MAX);
+            } else {
+                cr_ship->apply_or_range_to(ship_filter, Q3_CUTOFF_DATE + 1, INT64_MAX);
+            }
             t_c = clk::now();
             cr_btv_res &= ship_filter;
             t_d = clk::now();

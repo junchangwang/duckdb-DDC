@@ -580,7 +580,7 @@ def parse_stdout_log(log_text: str, *, q: Optional[int] = None,
 # below records which columns each Q needs pre-loaded.
 PATTERN_QS_LOAD_BITMAPS: Dict[int, List[str]] = {
     1:  ["shipdate", "linestatus", "returnflag"],
-    3:  ["orderkey", "shipdate"],
+    3:  ["orderkey", "shipdate", "shipdate_BPE"],
     4:  ["orderkey"],
     5:  ["orderkey", "suppkey"],
     6:  ["shipdate_GE", "discount", "quantity", "discount_BPE", "quantity_BPE"],
