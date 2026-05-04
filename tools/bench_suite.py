@@ -46,17 +46,19 @@ QUERIES: List[int] = [1, 3, 4, 5, 6, 8, 10, 12, 14, 15, 17, 19]
 
 # Canonical backend order for every output sheet.  Matches the Backend
 # enum declared in extension/debit/include/execution/tpch/bm_bench_common.hpp.
-BACKENDS: List[str] = ["WAH", "CB", "CR", "CRR", "EW", "BS", "BSA", "CON"]
+BACKENDS: List[str] = ["WAH", "CB", "CB+BPE", "CR", "CR+BPE", "CRR", "EW", "BS", "BSA", "CON"]
 
 BACKEND_FULL: Dict[str, str] = {
-    "WAH": "WAH (FastBit)",
-    "CB":  "ComBit",
-    "CR":  "CRoaring",
-    "CRR": "CRoaring+Run",
-    "EW":  "EWAH",
-    "BS":  "Bitset (scalar)",
-    "BSA": "Bitset+AVX512",
-    "CON": "Concise",
+    "WAH":    "WAH (FastBit)",
+    "CB":     "ComBit",
+    "CB+BPE": "ComBit + BPE (β scheme)",
+    "CR":     "CRoaring",
+    "CR+BPE": "CRoaring + BPE (β scheme, fairness)",
+    "CRR":    "CRoaring+Run",
+    "EW":     "EWAH",
+    "BS":     "Bitset (scalar)",
+    "BSA":    "Bitset+AVX512",
+    "CON":    "Concise",
 }
 
 # CSV column-prefix -> canonical backend tag.  Covers both schemas used
