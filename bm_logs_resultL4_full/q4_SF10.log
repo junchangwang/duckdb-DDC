@@ -5,8 +5,8 @@
 # sql=
 PRAGMA load_bitmap('orderkey');
 PRAGMA bm_tpch(4);
-[load_bitmap] orderkey: scanned 59986052 rows in 664 ms
-[load_bitmap] orderkey: built ComBit index (15000000 keys, 4448.84 MB) in 13078 ms
+[load_bitmap] orderkey: scanned 59986052 rows in 657 ms
+[load_bitmap] orderkey: built ComBit index (15000000 keys, 4448.84 MB) in 13052 ms
 
 ================================================================
   TPC-H Q4 (BitEngine pattern, runtime EXISTS via BMFetch)
@@ -14,30 +14,30 @@ PRAGMA bm_tpch(4);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  ComBit:  PhaseA(orders_scan)=317.712  PhaseB(orderkey_OR+ids)=273.541  PhaseC(BMFetch+EXISTS)=413.083  PhaseD(count_by_priority)=60.512  Total=1064.85  rows=2294856  groups=5
+  ComBit:  PhaseA(orders_scan)=325.354  PhaseB(orderkey_OR+ids)=286.446  PhaseC(BMFetch+EXISTS)=417.077  PhaseD(count_by_priority)=64.465  Total=1093.34  rows=2294856  groups=5
 
 --- Iteration 2/5 ---
-  ComBit:  PhaseA(orders_scan)=243.311  PhaseB(orderkey_OR+ids)=268.46  PhaseC(BMFetch+EXISTS)=233.912  PhaseD(count_by_priority)=57.946  Total=803.631  rows=2294856  groups=5
+  ComBit:  PhaseA(orders_scan)=248.563  PhaseB(orderkey_OR+ids)=280.947  PhaseC(BMFetch+EXISTS)=237.088  PhaseD(count_by_priority)=60.97  Total=827.569  rows=2294856  groups=5
 
 --- Iteration 3/5 ---
-  ComBit:  PhaseA(orders_scan)=242.817  PhaseB(orderkey_OR+ids)=266.82  PhaseC(BMFetch+EXISTS)=233.613  PhaseD(count_by_priority)=57.052  Total=800.304  rows=2294856  groups=5
+  ComBit:  PhaseA(orders_scan)=247.625  PhaseB(orderkey_OR+ids)=279.574  PhaseC(BMFetch+EXISTS)=236.828  PhaseD(count_by_priority)=61.597  Total=825.626  rows=2294856  groups=5
 
 --- Iteration 4/5 ---
-  ComBit:  PhaseA(orders_scan)=242.968  PhaseB(orderkey_OR+ids)=267.668  PhaseC(BMFetch+EXISTS)=234.376  PhaseD(count_by_priority)=59.182  Total=804.196  rows=2294856  groups=5
+  ComBit:  PhaseA(orders_scan)=247.962  PhaseB(orderkey_OR+ids)=281.353  PhaseC(BMFetch+EXISTS)=237.511  PhaseD(count_by_priority)=62.868  Total=829.696  rows=2294856  groups=5
 
 --- Iteration 5/5 ---
-  ComBit:  PhaseA(orders_scan)=244.512  PhaseB(orderkey_OR+ids)=268.248  PhaseC(BMFetch+EXISTS)=234.169  PhaseD(count_by_priority)=57.937  Total=804.867  rows=2294856  groups=5
+  ComBit:  PhaseA(orders_scan)=250.282  PhaseB(orderkey_OR+ids)=284.858  PhaseC(BMFetch+EXISTS)=238.58  PhaseD(count_by_priority)=63.355  Total=837.077  rows=2294856  groups=5
 
 [OK] ComBit matches DuckDB SQL ground truth (5 priorities).
 
 ================================================================
   Q4 RESULTS — ComBit (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (orders scan)        : 243.139 +/- 0.665387 ms
-  PhaseB (orderkey OR + ids)  : 267.958 +/- 0.635241 ms
-  PhaseC (BMFetch + EXISTS)   : 234.041 +/- 0.285581 ms
-  PhaseD (count by priority)  : 57.9415 +/- 0.758171 ms
-  TOTAL                       : 803.913 +/- 1.75597 ms
+  PhaseA (orders scan)        : 248.262 +/- 1.02322 ms
+  PhaseB (orderkey OR + ids)  : 281.15 +/- 1.94802 ms
+  PhaseC (BMFetch + EXISTS)   : 237.299 +/- 0.66855 ms
+  PhaseD (count by priority)  : 62.2325 +/- 0.956129 ms
+  TOTAL                       : 828.632 +/- 4.33641 ms
 ================================================================
 
   [CSV] q4_results_SF10.csv
@@ -56,8 +56,8 @@ PRAGMA bm_tpch(4);
 # sql=
 PRAGMA load_bitmap('orderkey');
 PRAGMA bm_tpch(4);
-[load_bitmap] orderkey: scanned 59986052 rows in 634 ms
-[load_bitmap] orderkey: built CRoaring index (15000000 keys, 359.978 MB) in 6430 ms
+[load_bitmap] orderkey: scanned 59986052 rows in 648 ms
+[load_bitmap] orderkey: built CRoaring index (15000000 keys, 359.978 MB) in 6580 ms
 
 ================================================================
   TPC-H Q4 (BitEngine pattern, runtime EXISTS via BMFetch)
@@ -65,30 +65,30 @@ PRAGMA bm_tpch(4);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  CRoaring:  PhaseA(orders_scan)=312.268  PhaseB(orderkey_OR+ids)=488.193  PhaseC(BMFetch+EXISTS)=415.255  PhaseD(count_by_priority)=65.213  Total=1280.93  rows=2294856  groups=5
+  CRoaring:  PhaseA(orders_scan)=327.508  PhaseB(orderkey_OR+ids)=507.168  PhaseC(BMFetch+EXISTS)=421.299  PhaseD(count_by_priority)=64.223  Total=1320.2  rows=2294856  groups=5
 
 --- Iteration 2/5 ---
-  CRoaring:  PhaseA(orders_scan)=242.382  PhaseB(orderkey_OR+ids)=477.861  PhaseC(BMFetch+EXISTS)=235.601  PhaseD(count_by_priority)=59.395  Total=1015.24  rows=2294856  groups=5
+  CRoaring:  PhaseA(orders_scan)=250.11  PhaseB(orderkey_OR+ids)=510.333  PhaseC(BMFetch+EXISTS)=238.485  PhaseD(count_by_priority)=63.005  Total=1061.93  rows=2294856  groups=5
 
 --- Iteration 3/5 ---
-  CRoaring:  PhaseA(orders_scan)=242.292  PhaseB(orderkey_OR+ids)=478.759  PhaseC(BMFetch+EXISTS)=234.351  PhaseD(count_by_priority)=58.411  Total=1013.82  rows=2294856  groups=5
+  CRoaring:  PhaseA(orders_scan)=248.643  PhaseB(orderkey_OR+ids)=504.528  PhaseC(BMFetch+EXISTS)=240.013  PhaseD(count_by_priority)=62.296  Total=1055.48  rows=2294856  groups=5
 
 --- Iteration 4/5 ---
-  CRoaring:  PhaseA(orders_scan)=248.175  PhaseB(orderkey_OR+ids)=479.073  PhaseC(BMFetch+EXISTS)=235.324  PhaseD(count_by_priority)=56.1  Total=1018.67  rows=2294856  groups=5
+  CRoaring:  PhaseA(orders_scan)=248.721  PhaseB(orderkey_OR+ids)=506.541  PhaseC(BMFetch+EXISTS)=238.455  PhaseD(count_by_priority)=62.687  Total=1056.41  rows=2294856  groups=5
 
 --- Iteration 5/5 ---
-  CRoaring:  PhaseA(orders_scan)=242.896  PhaseB(orderkey_OR+ids)=479.187  PhaseC(BMFetch+EXISTS)=234.411  PhaseD(count_by_priority)=58.528  Total=1015.02  rows=2294856  groups=5
+  CRoaring:  PhaseA(orders_scan)=256.344  PhaseB(orderkey_OR+ids)=508.4  PhaseC(BMFetch+EXISTS)=238.598  PhaseD(count_by_priority)=63.056  Total=1066.4  rows=2294856  groups=5
 
 [OK] CRoaring matches DuckDB SQL ground truth (5 priorities).
 
 ================================================================
   Q4 RESULTS — CRoaring (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (orders scan)        : 242.639 +/- 2.45807 ms
-  PhaseB (orderkey OR + ids)  : 478.916 +/- 0.52012 ms
-  PhaseC (BMFetch + EXISTS)   : 234.868 +/- 0.549956 ms
-  PhaseD (count by priority)  : 58.4695 +/- 1.22031 ms
-  TOTAL                       : 1015.13 +/- 1.80743 ms
+  PhaseA (orders scan)        : 249.416 +/- 3.16589 ms
+  PhaseB (orderkey OR + ids)  : 507.471 +/- 2.15514 ms
+  PhaseC (BMFetch + EXISTS)   : 238.542 +/- 0.651848 ms
+  PhaseD (count by priority)  : 62.846 +/- 0.303423 ms
+  TOTAL                       : 1059.17 +/- 4.41621 ms
 ================================================================
 
   [CSV] q4_results_SF10.csv
@@ -107,8 +107,8 @@ PRAGMA bm_tpch(4);
 # sql=
 PRAGMA load_bitmap('orderkey');
 PRAGMA bm_tpch(4);
-[load_bitmap] orderkey: scanned 59986052 rows in 634 ms
-[load_bitmap] orderkey: built CRoaringRun index (15000000 keys, 257.154 MB) in 6780 ms
+[load_bitmap] orderkey: scanned 59986052 rows in 648 ms
+[load_bitmap] orderkey: built CRoaringRun index (15000000 keys, 257.154 MB) in 6895 ms
 
 ================================================================
   TPC-H Q4 (BitEngine pattern, runtime EXISTS via BMFetch)
@@ -116,30 +116,30 @@ PRAGMA bm_tpch(4);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  CRoaringRun:  PhaseA(orders_scan)=316.288  PhaseB(orderkey_OR+ids)=158.487  PhaseC(BMFetch+EXISTS)=417.565  PhaseD(count_by_priority)=59.66  Total=952.002  rows=2294856  groups=5
+  CRoaringRun:  PhaseA(orders_scan)=325.011  PhaseB(orderkey_OR+ids)=165.305  PhaseC(BMFetch+EXISTS)=421.535  PhaseD(count_by_priority)=62.765  Total=974.617  rows=2294856  groups=5
 
 --- Iteration 2/5 ---
-  CRoaringRun:  PhaseA(orders_scan)=243.744  PhaseB(orderkey_OR+ids)=157.431  PhaseC(BMFetch+EXISTS)=234.277  PhaseD(count_by_priority)=58.102  Total=693.555  rows=2294856  groups=5
+  CRoaringRun:  PhaseA(orders_scan)=245.242  PhaseB(orderkey_OR+ids)=159.595  PhaseC(BMFetch+EXISTS)=236.749  PhaseD(count_by_priority)=61.868  Total=703.455  rows=2294856  groups=5
 
 --- Iteration 3/5 ---
-  CRoaringRun:  PhaseA(orders_scan)=243.566  PhaseB(orderkey_OR+ids)=155.1  PhaseC(BMFetch+EXISTS)=235.519  PhaseD(count_by_priority)=57.744  Total=691.931  rows=2294856  groups=5
+  CRoaringRun:  PhaseA(orders_scan)=245.081  PhaseB(orderkey_OR+ids)=159.051  PhaseC(BMFetch+EXISTS)=235.912  PhaseD(count_by_priority)=61.112  Total=701.158  rows=2294856  groups=5
 
 --- Iteration 4/5 ---
-  CRoaringRun:  PhaseA(orders_scan)=243.224  PhaseB(orderkey_OR+ids)=155.746  PhaseC(BMFetch+EXISTS)=237.561  PhaseD(count_by_priority)=55.772  Total=692.303  rows=2294856  groups=5
+  CRoaringRun:  PhaseA(orders_scan)=245.171  PhaseB(orderkey_OR+ids)=159.035  PhaseC(BMFetch+EXISTS)=236.825  PhaseD(count_by_priority)=60.782  Total=701.814  rows=2294856  groups=5
 
 --- Iteration 5/5 ---
-  CRoaringRun:  PhaseA(orders_scan)=243.264  PhaseB(orderkey_OR+ids)=155.325  PhaseC(BMFetch+EXISTS)=233.635  PhaseD(count_by_priority)=59.154  Total=691.38  rows=2294856  groups=5
+  CRoaringRun:  PhaseA(orders_scan)=245.797  PhaseB(orderkey_OR+ids)=160.168  PhaseC(BMFetch+EXISTS)=236.576  PhaseD(count_by_priority)=63.592  Total=706.135  rows=2294856  groups=5
 
 [OK] CRoaringRun matches DuckDB SQL ground truth (5 priorities).
 
 ================================================================
   Q4 RESULTS — CRoaringRun (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (orders scan)        : 243.415 +/- 0.215385 ms
-  PhaseB (orderkey OR + ids)  : 155.536 +/- 0.913551 ms
-  PhaseC (BMFetch + EXISTS)   : 234.898 +/- 1.49733 ms
-  PhaseD (count by priority)  : 57.923 +/- 1.2242 ms
-  TOTAL                       : 692.117 +/- 0.799587 ms
+  PhaseA (orders scan)        : 245.207 +/- 0.279689 ms
+  PhaseB (orderkey OR + ids)  : 159.323 +/- 0.465665 ms
+  PhaseC (BMFetch + EXISTS)   : 236.662 +/- 0.359925 ms
+  PhaseD (count by priority)  : 61.49 +/- 1.08624 ms
+  TOTAL                       : 702.635 +/- 1.92067 ms
 ================================================================
 
   [CSV] q4_results_SF10.csv
