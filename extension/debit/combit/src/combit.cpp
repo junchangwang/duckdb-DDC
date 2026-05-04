@@ -1111,3 +1111,63 @@ SparseComBit::storage_bytes() const {
     }
     return total;
 }
+
+ComBit
+SparseComBit::or_many(size_t count, const SparseComBit** sparses,
+                      size_t num_rows, size_t segment_bits) {
+    ComBit dst = ComBit::from_sparse_positions({}, num_rows, segment_bits);
+    if (count == 0) return dst;
+
+    // Bucket every input segment by its output segment index.  This
+    // turns 590k pairwise apply_or_to (each touching ~2 random output
+    // segments) into one sequential pass per output segment — same
+    // total work but vastly better cache behavior, no per-key
+    // function-call overhead, and dst-segment state transition
+    // (Compressed→Decompressed clone) happens at most once per output.
+    size_t num_segs = (num_rows + segment_bits - 1) / segment_bits;
+    std::vector<std::vector<const ComBitBtv*>> by_seg(num_segs);
+    // Reserve heuristically: total input segments / num_segs * 1.5.
+    size_t total_segs = 0;
+    for (size_t s = 0; s < count; s++) total_segs += sparses[s]->seg_indices_.size();
+    if (num_segs > 0) {
+        size_t avg = total_segs / num_segs + 4;
+        for (auto& v : by_seg) v.reserve(avg);
+    }
+    for (size_t s = 0; s < count; s++) {
+        const auto& sp = *sparses[s];
+        const auto& idxs = sp.seg_indices();
+        const auto& data = sp.seg_data();
+        for (size_t i = 0; i < idxs.size(); i++)
+            by_seg[idxs[i]].push_back(&data[i]);
+    }
+
+    auto& dst_segs = dst.segments();
+    for (uint32_t seg = 0; seg < num_segs; seg++) {
+        auto& srcs = by_seg[seg];
+        if (srcs.empty()) continue;
+        ComBitBtv& d = dst_segs[seg];
+        for (const ComBitBtv* src_ptr : srcs) {
+            const ComBitBtv& src = *src_ptr;
+            if (src.is_all_zero()) continue;
+            if (d.is_all_zero())   { d = src; continue; }
+            if (d.is_all_ones())   break;
+            if (src.is_all_ones()) {
+                d = ComBitBtv::make_all_fill(src.bit_count(), src.l2_count(), true);
+                break;
+            }
+            if (d.state() == ComBitBtv::State::Compressed
+                && src.state() == ComBitBtv::State::Compressed) {
+                d = d | src;
+            } else {
+                if (d.state() != ComBitBtv::State::Decompressed) {
+                    ComBitBtv tmp = d;
+                    tmp |= src;
+                    d = std::move(tmp);
+                } else {
+                    d |= src;
+                }
+            }
+        }
+    }
+    return dst;
+}

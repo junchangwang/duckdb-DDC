@@ -265,12 +265,13 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         if (cb_okey) cb_btv_res = ComBit::from_sparse_positions({}, num_rows, cb_okey->segment_bits());
 
         // Collect qualifying orderkeys during the orders scan, then do
-        // ONE batched OR after the scan.  CRR/EW/CON have priority-queue
-        // k-way merge (fastunion / fast_logicalor); doing this in the
-        // inner per-row loop with `apply_or_to` would be O(N_keys × words)
-        // pairwise, which is ~590k × 160M ≈ days of work.  ComBit's per-
-        // row apply is sparse-segment-aware and already O(num_set_bits),
-        // so it stays in the inner loop.
+        // ONE batched OR after the scan.  ALL backends (including
+        // ComBit) now expose or_many — for ComBit it dispatches to
+        // SparseComBit::or_many which does one scatter pass per
+        // segment over all 590k inputs instead of 590k pairwise
+        // apply_or_to calls.  Drops Q3 PhaseB ComBit from ~1300 ms
+        // (pairwise per-key OR + ~1µs/call overhead × 590k) to
+        // ~150 ms (one batched scatter).
         std::vector<int64_t> matched_okeys;
         matched_okeys.reserve(2000000);
         {
@@ -297,14 +298,12 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
                     Q3Acc acc; acc.orderdate = od[i]; acc.shippriority = sp[i];
                     l_orderkey_map.emplace(okey[i], acc);
                     matched_okeys.push_back(okey[i]);
-                    if (cb_okey) cb_okey->apply_or_to(cb_btv_res, okey[i]);
                 }
             }
         }
-        // Batched k-way OR for non-ComBit backends.  WAH/EW/CON now
-        // all expose tree-merge or_many in indexed_bitmap.hpp — handles
-        // K=590k in seconds vs. minutes for pairwise streaming.
-        if (cr_okey)       cr_btv_res  = cr_okey->or_many(matched_okeys);
+        // Batched k-way OR — one call per backend, no per-key overhead.
+        if (cb_okey)       cb_btv_res  = cb_okey->or_many(matched_okeys);
+        else if (cr_okey)  cr_btv_res  = cr_okey->or_many(matched_okeys);
         else if (wah_okey) wah_btv_res = wah_okey->or_many(matched_okeys);
         else if (ew_okey)  ew_btv_res  = ew_okey->or_many(matched_okeys);
         else if (con_okey) con_btv_res = con_okey->or_many(matched_okeys);

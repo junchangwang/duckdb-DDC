@@ -98,6 +98,25 @@ public:
             if (k >= lo && k <= hi) s.apply_or_to(dst);
     }
 
+    // K-way OR via SparseComBit::or_many — bucket every input
+    // SparseComBit segment by its output segment index, then OR all
+    // matching inputs into each output segment in one sequential pass.
+    // For Q3 PhaseB (K=590k orderkey OR) this avoids 590k function-call
+    // overhead + random output-segment writes.  Counterpart of CRR
+    // fastunion / EWAH fast_logicalor.
+    template <typename Iterable>
+    ComBit or_many(const Iterable& keys) const {
+        std::vector<const SparseComBit*> ptrs;
+        ptrs.reserve(index_.size());
+        for (auto& k : keys) {
+            auto it = index_.find(static_cast<int64_t>(k));
+            if (it != index_.end()) ptrs.push_back(&it->second);
+        }
+        if (ptrs.empty())
+            return ComBit::from_sparse_positions({}, num_rows_, segment_bits_);
+        return SparseComBit::or_many(ptrs.size(), ptrs.data(), num_rows_, segment_bits_);
+    }
+
     template <typename F>
     void for_each_key(F&& f) const { for (auto& [k, _] : index_) f(k); }
 
