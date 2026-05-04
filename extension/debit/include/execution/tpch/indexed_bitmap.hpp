@@ -450,18 +450,25 @@ public:
             by_key[keys[i]].push_back(static_cast<uint32_t>(i));
         index_.reserve(by_key.size());
         for (auto& [k, pos] : by_key) {
-            // WAH compresses runs of zeros — sequentially append bits, runs
-            // of zeros between set positions get RLE'd by compress().
-            // Pos already monotonic (built by row-order scan).
+            // Sparse-aware build: appendFill(0, gap) collapses a gap of N
+            // zero-bits into one fill word in O(1) instead of N `+= 0`
+            // appends.  This is what makes WAH per-value FK indexes
+            // tractable on high-cardinality columns (l_orderkey 15M /
+            // l_partkey 2M unique values at SF10) — the previous
+            // single-bit append loop was O(num_rows × num_keys) which
+            // exceeded a day for these columns; this is O(num_set_bits).
             ibis::bitvector bv;
             size_t cursor = 0;
             for (uint32_t p : pos) {
-                while (cursor < p) { bv += 0; cursor++; }
-                bv += 1; cursor++;
+                if (p > cursor) {
+                    bv.appendFill(0, static_cast<ibis::bitvector::word_t>(p - cursor));
+                    cursor = p;
+                }
+                bv += 1;
+                cursor++;
             }
-            // Pad trailing zeros to num_rows so OR/AND with sibling bitmaps
-            // align.  Cheap (compress() RLE-encodes the long zero run).
-            while (cursor < num_rows) { bv += 0; cursor++; }
+            if (cursor < num_rows)
+                bv.appendFill(0, static_cast<ibis::bitvector::word_t>(num_rows - cursor));
             bv.compress();
             index_.emplace(k, std::move(bv));
         }
