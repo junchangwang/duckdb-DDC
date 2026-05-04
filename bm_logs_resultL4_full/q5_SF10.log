@@ -6,10 +6,10 @@
 PRAGMA load_bitmap('orderkey');
 PRAGMA load_bitmap('suppkey');
 PRAGMA bm_tpch(5);
-[load_bitmap] orderkey: scanned 59986052 rows in 656 ms
-[load_bitmap] orderkey: built ComBit index (15000000 keys, 4448.84 MB) in 13178 ms
-[load_bitmap] suppkey: scanned 59986052 rows in 288 ms
-[load_bitmap] suppkey: built ComBit index (100000 keys, 13176 MB) in 32180 ms
+[load_bitmap] orderkey: scanned 59986052 rows in 647 ms
+[load_bitmap] orderkey: built ComBit index (15000000 keys, 4448.84 MB) in 13078 ms
+[load_bitmap] suppkey: scanned 59986052 rows in 290 ms
+[load_bitmap] suppkey: built ComBit index (100000 keys, 13176 MB) in 32004 ms
 
 ================================================================
   TPC-H Q5 (BitEngine pattern, BMFetch) — ComBit (SF10)
@@ -17,19 +17,19 @@ PRAGMA bm_tpch(5);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  ComBit:  PhaseA=399.127  PhaseB=950.442  PhaseC=267.089  Total=1616.66  rows=72985  ids=366425
+  ComBit:  PhaseA=395.38  PhaseB=940.434  PhaseC=261.868  Total=1597.68  rows=72985  ids=366425
 
 --- Iteration 2/5 ---
-  ComBit:  PhaseA=282.222  PhaseB=872.454  PhaseC=123.722  Total=1278.4  rows=72985  ids=366425
+  ComBit:  PhaseA=281.362  PhaseB=865.896  PhaseC=121.859  Total=1269.12  rows=72985  ids=366425
 
 --- Iteration 3/5 ---
-  ComBit:  PhaseA=279.546  PhaseB=886.942  PhaseC=123.715  Total=1290.2  rows=72985  ids=366425
+  ComBit:  PhaseA=298.135  PhaseB=914.739  PhaseC=121.915  Total=1334.79  rows=72985  ids=366425
 
 --- Iteration 4/5 ---
-  ComBit:  PhaseA=279.042  PhaseB=874.216  PhaseC=124.22  Total=1277.48  rows=72985  ids=366425
+  ComBit:  PhaseA=312.641  PhaseB=875.569  PhaseC=121.864  Total=1310.08  rows=72985  ids=366425
 
 --- Iteration 5/5 ---
-  ComBit:  PhaseA=280.273  PhaseB=892.582  PhaseC=123.904  Total=1296.76  rows=72985  ids=366425
+  ComBit:  PhaseA=280.082  PhaseB=869.06  PhaseC=121.732  Total=1270.88  rows=72985  ids=366425
 
 [OK] ComBit matches DuckDB SQL ground truth (5 nations).
 
@@ -44,10 +44,10 @@ PRAGMA bm_tpch(5);
 ================================================================
   Q5 RESULTS — ComBit only (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (small joins) : 279.9095 +/- 1.2086 ms
-  PhaseB (bitmap OR/AND): 880.5790 +/- 8.4750 ms
-  PhaseC (BMFetch+Agg) : 123.8130 +/- 0.2049 ms
-  TOTAL                : 1284.3020 +/- 8.1161 ms
+  PhaseA (small joins) : 289.7485 +/- 13.3645 ms
+  PhaseB (bitmap OR/AND): 872.3145 +/- 19.6094 ms
+  PhaseC (BMFetch+Agg) : 121.8615 +/- 0.0675 ms
+  TOTAL                : 1290.4755 +/- 27.6433 ms
   rows: 72985
 ================================================================
 
@@ -68,10 +68,10 @@ PRAGMA bm_tpch(5);
 PRAGMA load_bitmap('orderkey');
 PRAGMA load_bitmap('suppkey');
 PRAGMA bm_tpch(5);
-[load_bitmap] orderkey: scanned 59986052 rows in 686 ms
-[load_bitmap] orderkey: built CRoaring index (15000000 keys, 359.978 MB) in 6506 ms
-[load_bitmap] suppkey: scanned 59986052 rows in 287 ms
-[load_bitmap] suppkey: built CRoaring index (100000 keys, 472.836 MB) in 6206 ms
+[load_bitmap] orderkey: scanned 59986052 rows in 661 ms
+[load_bitmap] orderkey: built CRoaring index (15000000 keys, 359.978 MB) in 6509 ms
+[load_bitmap] suppkey: scanned 59986052 rows in 293 ms
+[load_bitmap] suppkey: built CRoaring index (100000 keys, 472.836 MB) in 6075 ms
 
 ================================================================
   TPC-H Q5 (BitEngine pattern, BMFetch) — CRoaring (SF10)
@@ -79,19 +79,19 @@ PRAGMA bm_tpch(5);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  CRoaring:  PhaseA=395.885  PhaseB=2718.11  PhaseC=263.218  Total=3377.22  rows=72985  ids=366425
+  CRoaring:  PhaseA=408.751  PhaseB=588.633  PhaseC=274.271  Total=1271.66  rows=72985  ids=366425
 
 --- Iteration 2/5 ---
-  CRoaring:  PhaseA=280.278  PhaseB=2642.32  PhaseC=123.379  Total=3045.97  rows=72985  ids=366425
+  CRoaring:  PhaseA=323.728  PhaseB=559.545  PhaseC=126.502  Total=1009.77  rows=72985  ids=366425
 
 --- Iteration 3/5 ---
-  CRoaring:  PhaseA=279.362  PhaseB=2654.86  PhaseC=123.614  Total=3057.84  rows=72985  ids=366425
+  CRoaring:  PhaseA=315.221  PhaseB=561.651  PhaseC=126.555  Total=1003.43  rows=72985  ids=366425
 
 --- Iteration 4/5 ---
-  CRoaring:  PhaseA=278.944  PhaseB=2603.42  PhaseC=123.858  Total=3006.22  rows=72985  ids=366425
+  CRoaring:  PhaseA=318.622  PhaseB=564.425  PhaseC=125.267  Total=1008.32  rows=72985  ids=366425
 
 --- Iteration 5/5 ---
-  CRoaring:  PhaseA=284.987  PhaseB=2605.59  PhaseC=123.411  Total=3013.99  rows=72985  ids=366425
+  CRoaring:  PhaseA=314.631  PhaseB=560.432  PhaseC=128.673  Total=1003.74  rows=72985  ids=366425
 
 [OK] CRoaring matches DuckDB SQL ground truth (5 nations).
 
@@ -106,10 +106,10 @@ PRAGMA bm_tpch(5);
 ================================================================
   Q5 RESULTS — CRoaring only (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (small joins) : 279.8200 +/- 2.4126 ms
-  PhaseB (bitmap OR/AND): 2623.9530 +/- 22.4971 ms
-  PhaseC (BMFetch+Agg) : 123.5125 +/- 0.1914 ms
-  TOTAL                : 3029.9815 +/- 21.4934 ms
+  PhaseA (small joins) : 316.9215 +/- 3.6145 ms
+  PhaseB (bitmap OR/AND): 561.0415 +/- 1.8399 ms
+  PhaseC (BMFetch+Agg) : 126.5285 +/- 1.2244 ms
+  TOTAL                : 1006.0260 +/- 2.7817 ms
   rows: 72985
 ================================================================
 
@@ -130,10 +130,10 @@ PRAGMA bm_tpch(5);
 PRAGMA load_bitmap('orderkey');
 PRAGMA load_bitmap('suppkey');
 PRAGMA bm_tpch(5);
-[load_bitmap] orderkey: scanned 59986052 rows in 647 ms
-[load_bitmap] orderkey: built CRoaringRun index (15000000 keys, 257.154 MB) in 6869 ms
+[load_bitmap] orderkey: scanned 59986052 rows in 646 ms
+[load_bitmap] orderkey: built CRoaringRun index (15000000 keys, 257.154 MB) in 6838 ms
 [load_bitmap] suppkey: scanned 59986052 rows in 290 ms
-[load_bitmap] suppkey: built CRoaringRun index (100000 keys, 472.836 MB) in 6433 ms
+[load_bitmap] suppkey: built CRoaringRun index (100000 keys, 472.836 MB) in 6516 ms
 
 ================================================================
   TPC-H Q5 (BitEngine pattern, BMFetch) — CRoaring+Run (SF10)
@@ -141,19 +141,19 @@ PRAGMA bm_tpch(5);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  CRoaringRun:  PhaseA=404.776  PhaseB=551.565  PhaseC=266.166  Total=1222.51  rows=72985  ids=366425
+  CRoaringRun:  PhaseA=390.158  PhaseB=563.369  PhaseC=261.824  Total=1215.35  rows=72985  ids=366425
 
 --- Iteration 2/5 ---
-  CRoaringRun:  PhaseA=318.174  PhaseB=525.171  PhaseC=125.839  Total=969.184  rows=72985  ids=366425
+  CRoaringRun:  PhaseA=278.811  PhaseB=525.809  PhaseC=122.349  Total=926.971  rows=72985  ids=366425
 
 --- Iteration 3/5 ---
-  CRoaringRun:  PhaseA=312.152  PhaseB=522.119  PhaseC=125.941  Total=960.213  rows=72985  ids=366425
+  CRoaringRun:  PhaseA=280.011  PhaseB=529.538  PhaseC=121.979  Total=931.53  rows=72985  ids=366425
 
 --- Iteration 4/5 ---
-  CRoaringRun:  PhaseA=311.496  PhaseB=524.143  PhaseC=125.598  Total=961.239  rows=72985  ids=366425
+  CRoaringRun:  PhaseA=281.388  PhaseB=526.368  PhaseC=121.93  Total=929.687  rows=72985  ids=366425
 
 --- Iteration 5/5 ---
-  CRoaringRun:  PhaseA=313.88  PhaseB=522.901  PhaseC=125.486  Total=962.268  rows=72985  ids=366425
+  CRoaringRun:  PhaseA=283.981  PhaseB=528.269  PhaseC=122.043  Total=934.294  rows=72985  ids=366425
 
 [OK] CRoaringRun matches DuckDB SQL ground truth (5 nations).
 
@@ -168,10 +168,10 @@ PRAGMA bm_tpch(5);
 ================================================================
   Q5 RESULTS — CRoaringRun only (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (small joins) : 313.0160 +/- 2.6029 ms
-  PhaseB (bitmap OR/AND): 523.5220 +/- 1.1666 ms
-  PhaseC (BMFetch+Agg) : 125.7185 +/- 0.1821 ms
-  TOTAL                : 961.7535 +/- 3.5157 ms
+  PhaseA (small joins) : 280.6995 +/- 1.9234 ms
+  PhaseB (bitmap OR/AND): 527.3185 +/- 1.4904 ms
+  PhaseC (BMFetch+Agg) : 122.0110 +/- 0.1630 ms
+  TOTAL                : 930.6085 +/- 2.6698 ms
   rows: 72985
 ================================================================
 
@@ -192,10 +192,10 @@ PRAGMA bm_tpch(5);
 PRAGMA load_bitmap('orderkey');
 PRAGMA load_bitmap('suppkey');
 PRAGMA bm_tpch(5);
-[load_bitmap] orderkey: scanned 59986052 rows in 641 ms
-[load_bitmap] orderkey: built WAH index (15000000 keys, 1265.8 MB) in 10572 ms
-[load_bitmap] suppkey: scanned 59986052 rows in 294 ms
-[load_bitmap] suppkey: built WAH index (100000 keys, 487.343 MB) in 3367 ms
+[load_bitmap] orderkey: scanned 59986052 rows in 642 ms
+[load_bitmap] orderkey: built WAH index (15000000 keys, 1265.8 MB) in 10624 ms
+[load_bitmap] suppkey: scanned 59986052 rows in 290 ms
+[load_bitmap] suppkey: built WAH index (100000 keys, 487.343 MB) in 3345 ms
 
 ================================================================
   TPC-H Q5 (BitEngine pattern, BMFetch) — WAH (SF10)
@@ -203,19 +203,19 @@ PRAGMA bm_tpch(5);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  WAH:  PhaseA=391.464  PhaseB=3206.96  PhaseC=260.841  Total=3859.26  rows=72985  ids=366425
+  WAH:  PhaseA=390.891  PhaseB=3200.67  PhaseC=261.332  Total=3852.89  rows=72985  ids=366425
 
 --- Iteration 2/5 ---
-  WAH:  PhaseA=283.258  PhaseB=3022.47  PhaseC=123.082  Total=3428.81  rows=72985  ids=366425
+  WAH:  PhaseA=286.265  PhaseB=3010.16  PhaseC=122.975  Total=3419.4  rows=72985  ids=366425
 
 --- Iteration 3/5 ---
-  WAH:  PhaseA=283.068  PhaseB=3022.04  PhaseC=123.851  Total=3428.96  rows=72985  ids=366425
+  WAH:  PhaseA=286.218  PhaseB=3011.06  PhaseC=124.294  Total=3421.58  rows=72985  ids=366425
 
 --- Iteration 4/5 ---
-  WAH:  PhaseA=281.044  PhaseB=3023.83  PhaseC=122.935  Total=3427.81  rows=72985  ids=366425
+  WAH:  PhaseA=287.694  PhaseB=3014.15  PhaseC=122.094  Total=3423.94  rows=72985  ids=366425
 
 --- Iteration 5/5 ---
-  WAH:  PhaseA=281.648  PhaseB=3016.8  PhaseC=123.067  Total=3421.51  rows=72985  ids=366425
+  WAH:  PhaseA=285.098  PhaseB=3006.83  PhaseC=122.55  Total=3414.48  rows=72985  ids=366425
 
 [OK] WAH matches DuckDB SQL ground truth (5 nations).
 
@@ -230,10 +230,10 @@ PRAGMA bm_tpch(5);
 ================================================================
   Q5 RESULTS — WAH only (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (small joins) : 282.3580 +/- 0.9357 ms
-  PhaseB (bitmap OR/AND): 3022.2550 +/- 2.6717 ms
-  PhaseC (BMFetch+Agg) : 123.0745 +/- 0.3609 ms
-  TOTAL                : 3428.3060 +/- 3.0679 ms
+  PhaseA (small joins) : 286.2415 +/- 0.9212 ms
+  PhaseB (bitmap OR/AND): 3010.6125 +/- 2.6079 ms
+  PhaseC (BMFetch+Agg) : 122.7625 +/- 0.8211 ms
+  TOTAL                : 3420.4895 +/- 3.4907 ms
   rows: 72985
 ================================================================
 
@@ -254,10 +254,10 @@ PRAGMA bm_tpch(5);
 PRAGMA load_bitmap('orderkey');
 PRAGMA load_bitmap('suppkey');
 PRAGMA bm_tpch(5);
-[load_bitmap] orderkey: scanned 59986052 rows in 653 ms
-[load_bitmap] orderkey: built EWAH index (15000000 keys, 365.622 MB) in 5194 ms
-[load_bitmap] suppkey: scanned 59986052 rows in 288 ms
-[load_bitmap] suppkey: built EWAH index (100000 keys, 959.969 MB) in 2797 ms
+[load_bitmap] orderkey: scanned 59986052 rows in 656 ms
+[load_bitmap] orderkey: built EWAH index (15000000 keys, 365.622 MB) in 5136 ms
+[load_bitmap] suppkey: scanned 59986052 rows in 296 ms
+[load_bitmap] suppkey: built EWAH index (100000 keys, 959.969 MB) in 2840 ms
 
 ================================================================
   TPC-H Q5 (BitEngine pattern, BMFetch) — EWAH (SF10)
@@ -265,19 +265,19 @@ PRAGMA bm_tpch(5);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  EWAH:  PhaseA=396.1  PhaseB=2692.21  PhaseC=263.675  Total=3351.99  rows=72985  ids=366425
+  EWAH:  PhaseA=400.406  PhaseB=2822.74  PhaseC=263.763  Total=3486.91  rows=72985  ids=366425
 
 --- Iteration 2/5 ---
-  EWAH:  PhaseA=300.444  PhaseB=2454.76  PhaseC=124.174  Total=2879.38  rows=72985  ids=366425
+  EWAH:  PhaseA=292.01  PhaseB=2530.29  PhaseC=124.106  Total=2946.4  rows=72985  ids=366425
 
 --- Iteration 3/5 ---
-  EWAH:  PhaseA=302.258  PhaseB=2452.86  PhaseC=124.734  Total=2879.85  rows=72985  ids=366425
+  EWAH:  PhaseA=290.513  PhaseB=2526.63  PhaseC=124.303  Total=2941.45  rows=72985  ids=366425
 
 --- Iteration 4/5 ---
-  EWAH:  PhaseA=300.658  PhaseB=2460.72  PhaseC=124.6  Total=2885.98  rows=72985  ids=366425
+  EWAH:  PhaseA=290.185  PhaseB=2530.76  PhaseC=124.363  Total=2945.3  rows=72985  ids=366425
 
 --- Iteration 5/5 ---
-  EWAH:  PhaseA=301.782  PhaseB=2452.96  PhaseC=124.115  Total=2878.86  rows=72985  ids=366425
+  EWAH:  PhaseA=290.181  PhaseB=2526.85  PhaseC=124.32  Total=2941.35  rows=72985  ids=366425
 
 [OK] EWAH matches DuckDB SQL ground truth (5 nations).
 
@@ -292,10 +292,10 @@ PRAGMA bm_tpch(5);
 ================================================================
   Q5 RESULTS — EWAH only (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (small joins) : 301.2200 +/- 0.7573 ms
-  PhaseB (bitmap OR/AND): 2453.8600 +/- 3.2052 ms
-  PhaseC (BMFetch+Agg) : 124.3870 +/- 0.2663 ms
-  TOTAL                : 2879.6125 +/- 2.8862 ms
+  PhaseA (small joins) : 290.3490 +/- 0.7556 ms
+  PhaseB (bitmap OR/AND): 2528.5685 +/- 1.8984 ms
+  PhaseC (BMFetch+Agg) : 124.3115 +/- 0.0989 ms
+  TOTAL                : 2943.3780 +/- 2.2599 ms
   rows: 72985
 ================================================================
 
@@ -316,10 +316,10 @@ PRAGMA bm_tpch(5);
 PRAGMA load_bitmap('orderkey');
 PRAGMA load_bitmap('suppkey');
 PRAGMA bm_tpch(5);
-[load_bitmap] orderkey: scanned 59986052 rows in 644 ms
-[load_bitmap] orderkey: built Concise index (15000000 keys, 239.944 MB) in 4922 ms
-[load_bitmap] suppkey: scanned 59986052 rows in 289 ms
-[load_bitmap] suppkey: built Concise index (100000 keys, 239.944 MB) in 2549 ms
+[load_bitmap] orderkey: scanned 59986052 rows in 648 ms
+[load_bitmap] orderkey: built Concise index (15000000 keys, 239.944 MB) in 4904 ms
+[load_bitmap] suppkey: scanned 59986052 rows in 291 ms
+[load_bitmap] suppkey: built Concise index (100000 keys, 239.944 MB) in 2512 ms
 
 ================================================================
   TPC-H Q5 (BitEngine pattern, BMFetch) — Concise (SF10)
@@ -327,19 +327,19 @@ PRAGMA bm_tpch(5);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  Concise:  PhaseA=397.432  PhaseB=2747.05  PhaseC=263.647  Total=3408.13  rows=72985  ids=366425
+  Concise:  PhaseA=401.788  PhaseB=2798.58  PhaseC=263.533  Total=3463.91  rows=72985  ids=366425
 
 --- Iteration 2/5 ---
-  Concise:  PhaseA=283.657  PhaseB=2626.69  PhaseC=123.236  Total=3033.58  rows=72985  ids=366425
+  Concise:  PhaseA=287.765  PhaseB=2663.53  PhaseC=122.971  Total=3074.26  rows=72985  ids=366425
 
 --- Iteration 3/5 ---
-  Concise:  PhaseA=283.953  PhaseB=2631.09  PhaseC=123.295  Total=3038.34  rows=72985  ids=366425
+  Concise:  PhaseA=286.413  PhaseB=2639.95  PhaseC=122.874  Total=3049.24  rows=72985  ids=366425
 
 --- Iteration 4/5 ---
-  Concise:  PhaseA=283.513  PhaseB=2627.51  PhaseC=123.798  Total=3034.82  rows=72985  ids=366425
+  Concise:  PhaseA=290.224  PhaseB=2641.56  PhaseC=123.384  Total=3055.17  rows=72985  ids=366425
 
 --- Iteration 5/5 ---
-  Concise:  PhaseA=282.872  PhaseB=2647.21  PhaseC=123.26  Total=3053.34  rows=72985  ids=366425
+  Concise:  PhaseA=286.696  PhaseB=2647.01  PhaseC=124.057  Total=3057.77  rows=72985  ids=366425
 
 [OK] Concise matches DuckDB SQL ground truth (5 nations).
 
@@ -354,10 +354,10 @@ PRAGMA bm_tpch(5);
 ================================================================
   Q5 RESULTS — Concise only (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (small joins) : 283.5850 +/- 0.3951 ms
-  PhaseB (bitmap OR/AND): 2629.2995 +/- 8.2977 ms
-  PhaseC (BMFetch+Agg) : 123.2775 +/- 0.2323 ms
-  TOTAL                : 3036.5810 +/- 7.8848 ms
+  PhaseA (small joins) : 287.2305 +/- 1.5014 ms
+  PhaseB (bitmap OR/AND): 2644.2870 +/- 9.3314 ms
+  PhaseC (BMFetch+Agg) : 123.1775 +/- 0.4658 ms
+  TOTAL                : 3056.4685 +/- 9.2793 ms
   rows: 72985
 ================================================================
 

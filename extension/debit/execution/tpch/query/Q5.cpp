@@ -380,37 +380,36 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
         std::vector<row_t> ids;
 
         // ---- ComBit ----
+        // Collect once, OR once per index — no pairwise apply_or_to.
+        std::vector<int64_t> okeys, skeys;
+        okeys.reserve(order_nation_map.size());
+        skeys.reserve(supp_nation_map.size());
+        for (auto& [k, _] : order_nation_map) okeys.push_back(k);
+        for (auto& [k, _] : supp_nation_map ) skeys.push_back(k);
         if (auto* cb_okey = dynamic_cast<bm_index::IndexedComBit*>(idx_okey_base)) {
             auto* cb_skey = dynamic_cast<bm_index::IndexedComBit*>(idx_skey_base);
             if (!cb_skey) { std::cerr << "[Q5] ERROR: orderkey is ComBit, suppkey isn't.\n"; return; }
-
-            // O(num_segs) empty seed (avoids 60M-bool scratch + compress sweep).
-            ComBit btv_or  = ComBit::from_sparse_positions({}, num_rows_lineitem, cb_okey->segment_bits());
-            ComBit btv_supp= ComBit::from_sparse_positions({}, num_rows_lineitem, cb_skey->segment_bits());
-            for (auto& [okey, _] : order_nation_map) cb_okey->apply_or_to(btv_or, okey);
-            for (auto& [skey, _] : supp_nation_map ) cb_skey->apply_or_to(btv_supp, skey);
+            // Q5 fan-out is moderate (~28k orderkeys + ~5k suppkeys at SF10)
+            // and suppkey is dense (~600 bits/key — 5k×600 = 3M segment
+            // pointers to bucket).  At this scale or_many's bucketing
+            // overhead exceeds what it saves over per-key apply_or_to.
+            // or_many wins when K >> 100k AND per-key bitmaps are sparse
+            // (orderkey 4 bits/key in Q3/Q4 — see Q3 PhaseB regression
+            // table in the SparseComBit::or_many commit).
+            ComBit btv_or   = ComBit::from_sparse_positions({}, num_rows_lineitem, cb_okey->segment_bits());
+            ComBit btv_supp = ComBit::from_sparse_positions({}, num_rows_lineitem, cb_skey->segment_bits());
+            for (int64_t k : okeys) cb_okey->apply_or_to(btv_or,   k);
+            for (int64_t k : skeys) cb_skey->apply_or_to(btv_supp, k);
             btv_or &= btv_supp;
             get_rowids(btv_or, ids);
         }
-        // ---- CRoaring (pairwise |=) / CRoaring+Run (fastunion) ----
-        // Same class; branch on run_optimized() so CRR uses the
-        // priority-queue merge (its publicised advantage).
+        // ---- CRoaring / CRoaring+Run — both via or_many (CR pairwise
+        // is wasteful at 28k orderkeys; CRR fastunion is the same call).
         else if (auto* cr_okey = dynamic_cast<bm_index::IndexedCRoaring*>(idx_okey_base)) {
             auto* cr_skey = dynamic_cast<bm_index::IndexedCRoaring*>(idx_skey_base);
             if (!cr_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
-            roaring::Roaring btv_or, btv_supp;
-            std::vector<int64_t> okeys, skeys;
-            okeys.reserve(order_nation_map.size());
-            skeys.reserve(supp_nation_map.size());
-            for (auto& [k, _] : order_nation_map) okeys.push_back(k);
-            for (auto& [k, _] : supp_nation_map ) skeys.push_back(k);
-            if (cr_okey->run_optimized()) {
-                btv_or   = cr_okey->or_many(okeys);
-                btv_supp = cr_skey->or_many(skeys);
-            } else {
-                for (auto k : okeys) cr_okey->apply_or_to(btv_or,   k);
-                for (auto k : skeys) cr_skey->apply_or_to(btv_supp, k);
-            }
+            roaring::Roaring btv_or   = cr_okey->or_many(okeys);
+            roaring::Roaring btv_supp = cr_skey->or_many(skeys);
             roaring::Roaring filt = btv_or & btv_supp;
             get_rowids(filt, ids);
         }
@@ -418,39 +417,24 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
         else if (auto* wah_okey = dynamic_cast<bm_index::IndexedWAH*>(idx_okey_base)) {
             auto* wah_skey = dynamic_cast<bm_index::IndexedWAH*>(idx_skey_base);
             if (!wah_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
-            std::vector<int64_t> okeys, skeys;
-            okeys.reserve(order_nation_map.size());
-            skeys.reserve(supp_nation_map.size());
-            for (auto& [k, _] : order_nation_map) okeys.push_back(k);
-            for (auto& [k, _] : supp_nation_map ) skeys.push_back(k);
             ibis::bitvector btv_or   = wah_okey->or_many(okeys);
             ibis::bitvector btv_supp = wah_skey->or_many(skeys);
             ibis::bitvector filt; filt.copy(btv_or); filt &= btv_supp;
             get_rowids(filt, ids);
         }
-        // ---- EWAH (always fast_logicalor — k-way priority-queue merge) ----
+        // ---- EWAH (tree-merge or_many) ----
         else if (auto* ew_okey = dynamic_cast<bm_index::IndexedEWAH*>(idx_okey_base)) {
             auto* ew_skey = dynamic_cast<bm_index::IndexedEWAH*>(idx_skey_base);
             if (!ew_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
-            std::vector<int64_t> okeys, skeys;
-            okeys.reserve(order_nation_map.size());
-            skeys.reserve(supp_nation_map.size());
-            for (auto& [k, _] : order_nation_map) okeys.push_back(k);
-            for (auto& [k, _] : supp_nation_map ) skeys.push_back(k);
             auto btv_or   = ew_okey->or_many(okeys);
             auto btv_supp = ew_skey->or_many(skeys);
             ewah::EWAHBoolArray<uint64_t> filt; btv_or.logicaland(btv_supp, filt);
             get_rowids(filt, ids);
         }
-        // ---- Concise (always fast_logicalor) ----
+        // ---- Concise (tree-merge or_many) ----
         else if (auto* con_okey = dynamic_cast<bm_index::IndexedConcise*>(idx_okey_base)) {
             auto* con_skey = dynamic_cast<bm_index::IndexedConcise*>(idx_skey_base);
             if (!con_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
-            std::vector<int64_t> okeys, skeys;
-            okeys.reserve(order_nation_map.size());
-            skeys.reserve(supp_nation_map.size());
-            for (auto& [k, _] : order_nation_map) okeys.push_back(k);
-            for (auto& [k, _] : supp_nation_map ) skeys.push_back(k);
             auto btv_or   = con_okey->or_many(okeys);
             auto btv_supp = con_skey->or_many(skeys);
             ConciseSet<false> filt = btv_or.logicaland(btv_supp);

@@ -192,8 +192,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         if (auto* cb_okey = dynamic_cast<bm_index::IndexedComBit*>(idx_okey)) {
             auto* cb_rf = dynamic_cast<bm_index::IndexedComBit*>(idx_rf);
             if (!cb_rf) { std::cerr << "[Q10] type mismatch.\n"; return; }
-            ComBit okey_filter = ComBit::from_sparse_positions({}, num_rows, cb_okey->segment_bits());
-            for (int64_t k : matched_okeys) cb_okey->apply_or_to(okey_filter, k);
+            ComBit okey_filter = cb_okey->or_many(matched_okeys);
             t_b = clk::now();
             ComBit rf_filter = ComBit::from_sparse_positions({}, num_rows, cb_rf->segment_bits());
             cb_rf->apply_or_to(rf_filter, Q10_RETURNFLAG_R);

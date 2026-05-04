@@ -359,10 +359,8 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         if (auto* cb_okey = dynamic_cast<bm_index::IndexedComBit*>(idx_okey)) {
             auto* cb_pk = dynamic_cast<bm_index::IndexedComBit*>(idx_pk);
             if (!cb_pk) { std::cerr << "[Q8] type mismatch.\n"; return; }
-            ComBit okey_filter = ComBit::from_sparse_positions({}, num_rows, cb_okey->segment_bits());
-            for (int64_t k : matched_okeys) cb_okey->apply_or_to(okey_filter, k);
-            ComBit part_filter = ComBit::from_sparse_positions({}, num_rows, cb_pk->segment_bits());
-            for (int64_t k : part_set) cb_pk->apply_or_to(part_filter, k);
+            ComBit okey_filter = cb_okey->or_many(matched_okeys);
+            ComBit part_filter = cb_pk->or_many(part_set);
             okey_filter &= part_filter;
             q8_get_rowids(okey_filter, &ids);
             t_cd = clk::now();

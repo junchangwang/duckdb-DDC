@@ -168,37 +168,23 @@ void BMTableScan::BMTPCH_Q4(ExecutionContext &context, const PhysicalTableScan &
         // ===== Phase B: OR matching orderkey bitmaps + get_rowids =====
         std::vector<row_t> ids;
         size_t num_rows = idx_okey->num_rows();
+        // Collect once, OR once.  Avoids 590k pairwise apply_or_to.
+        std::vector<int64_t> keys;
+        keys.reserve(orderkey_priority.size());
+        for (auto& [k, _] : orderkey_priority) keys.push_back(k);
         if (auto* cb = dynamic_cast<bm_index::IndexedComBit*>(idx_okey)) {
-            ComBit btv = ComBit::from_sparse_positions({}, num_rows, cb->segment_bits());
-            for (auto& [k, _] : orderkey_priority) cb->apply_or_to(btv, k);
+            ComBit btv = cb->or_many(keys);
             q4_get_rowids(btv, &ids);
         } else if (auto* cr = dynamic_cast<bm_index::IndexedCRoaring*>(idx_okey)) {
-            roaring::Roaring btv;
-            if (cr->run_optimized()) {
-                std::vector<int64_t> keys;
-                keys.reserve(orderkey_priority.size());
-                for (auto& [k, _] : orderkey_priority) keys.push_back(k);
-                btv = cr->or_many(keys);
-            } else {
-                for (auto& [k, _] : orderkey_priority) cr->apply_or_to(btv, k);
-            }
+            roaring::Roaring btv = cr->or_many(keys);
             q4_get_rowids(btv, &ids);
         } else if (auto* wah = dynamic_cast<bm_index::IndexedWAH*>(idx_okey)) {
-            std::vector<int64_t> keys;
-            keys.reserve(orderkey_priority.size());
-            for (auto& [k, _] : orderkey_priority) keys.push_back(k);
             ibis::bitvector btv = wah->or_many(keys);
             q4_get_rowids(btv, &ids);
         } else if (auto* ew = dynamic_cast<bm_index::IndexedEWAH*>(idx_okey)) {
-            std::vector<int64_t> keys;
-            keys.reserve(orderkey_priority.size());
-            for (auto& [k, _] : orderkey_priority) keys.push_back(k);
             ewah::EWAHBoolArray<uint64_t> btv = ew->or_many(keys);
             q4_get_rowids(btv, &ids);
         } else if (auto* con = dynamic_cast<bm_index::IndexedConcise*>(idx_okey)) {
-            std::vector<int64_t> keys;
-            keys.reserve(orderkey_priority.size());
-            for (auto& [k, _] : orderkey_priority) keys.push_back(k);
             ConciseSet<false> btv = con->or_many(keys);
             q4_get_rowids(btv, &ids);
         } else {

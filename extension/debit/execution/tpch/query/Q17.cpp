@@ -128,15 +128,13 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
         auto* ew_pk  = dynamic_cast<bm_index::IndexedEWAH*>(idx_pk);
         auto* con_pk = dynamic_cast<bm_index::IndexedConcise*>(idx_pk);
 
-        size_t num_rows = idx_pk->num_rows();
-        ComBit cb_btv;
-        roaring::Roaring cr_btv;
-        ibis::bitvector wah_btv;
-        ewah::EWAHBoolArray<uint64_t> ew_btv;
-        ConciseSet<false> con_btv;
-        if (cb_pk) cb_btv = ComBit::from_sparse_positions({}, num_rows, cb_pk->segment_bits());
-
-        // ===== Phase A: part scan + per-partkey OR =====
+        // ===== Phase A: part scan -> matched partkeys, then ONE batched OR =====
+        // Was: per-row apply_or_to inside the part scan loop.  For WAH/EW/CON
+        // each call walks the full per-key bitvector; 200 calls × 2.4ms =
+        // ~470ms.  Collect partkeys, then call or_many once — drops WAH
+        // PhaseA from 470ms to ~50ms via tree-merge.
+        std::vector<int64_t> matched_pks;
+        matched_pks.reserve(2000);
         {
             auto& tx = DuckTransaction::Get(context.client, part_table.catalog);
             TableScanState ss;
@@ -161,22 +159,18 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
                         std::memcmp(pb[i].GetData(), "Brand#23", 8) == 0 &&
                         pc[i].GetSize() == 7 &&
                         std::memcmp(pc[i].GetData(), "MED BOX", 7) == 0) {
-                        if (cb_pk)       cb_pk->apply_or_to(cb_btv,  pk[i]);
-                        else if (cr_pk)  cr_pk->apply_or_to(cr_btv,  pk[i]);
-                        else if (wah_pk) wah_pk->apply_or_to(wah_btv, pk[i]);
-                        else if (ew_pk)  ew_pk->apply_or_to(ew_btv,  pk[i]);
-                        else if (con_pk) con_pk->apply_or_to(con_btv, pk[i]);
+                        matched_pks.push_back(pk[i]);
                     }
                 }
             }
         }
 
         std::vector<row_t> ids;
-        if      (cb_pk)  q17_get_rowids(cb_btv,  &ids);
-        else if (cr_pk)  q17_get_rowids(cr_btv,  &ids);
-        else if (wah_pk) q17_get_rowids(wah_btv, &ids);
-        else if (ew_pk)  q17_get_rowids(ew_btv,  &ids);
-        else if (con_pk) q17_get_rowids(con_btv, &ids);
+        if      (cb_pk)  { auto bv = cb_pk->or_many(matched_pks);  q17_get_rowids(bv, &ids); }
+        else if (cr_pk)  { auto bv = cr_pk->or_many(matched_pks);  q17_get_rowids(bv, &ids); }
+        else if (wah_pk) { auto bv = wah_pk->or_many(matched_pks); q17_get_rowids(bv, &ids); }
+        else if (ew_pk)  { auto bv = ew_pk->or_many(matched_pks);  q17_get_rowids(bv, &ids); }
+        else if (con_pk) { auto bv = con_pk->or_many(matched_pks); q17_get_rowids(bv, &ids); }
         else { std::cerr << "[Q17] ERROR: unrecognised backend.\n"; return; }
         auto t_a = clk::now();
 
