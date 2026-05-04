@@ -5,8 +5,8 @@
 # sql=
 PRAGMA load_bitmap('partkey');
 PRAGMA bm_tpch(17);
-[load_bitmap] partkey: scanned 59986052 rows in 735 ms
-[load_bitmap] partkey: built ComBit index (2000000 keys, 13567.3 MB) in 36634 ms
+[load_bitmap] partkey: scanned 59986052 rows in 727 ms
+[load_bitmap] partkey: built ComBit index (2000000 keys, 431.944 MB) in 6548 ms
 
 ================================================================
   TPC-H Q17 (BitEngine pattern, runtime part-join)
@@ -14,29 +14,29 @@ PRAGMA bm_tpch(17);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  ComBit:  PhaseA(part_scan+pk_OR)=53.393  PhaseB(BMFetch+avg)=253.53  PhaseC(filter+sum)=0.901  Total=307.824  rows=61385  avg_yearly=3295493.512857
+  ComBit:  PhaseA(part_scan+pk_OR)=39.455  PhaseB(BMFetch+avg)=252.534  PhaseC(filter+sum)=0.916  Total=292.906  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 2/5 ---
-  ComBit:  PhaseA(part_scan+pk_OR)=41.082000  PhaseB(BMFetch+avg)=23.076000  PhaseC(filter+sum)=0.910000  Total=65.069000  rows=61385  avg_yearly=3295493.512857
+  ComBit:  PhaseA(part_scan+pk_OR)=28.601000  PhaseB(BMFetch+avg)=23.192000  PhaseC(filter+sum)=0.899000  Total=52.693000  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 3/5 ---
-  ComBit:  PhaseA(part_scan+pk_OR)=36.767000  PhaseB(BMFetch+avg)=23.085000  PhaseC(filter+sum)=0.911000  Total=60.765000  rows=61385  avg_yearly=3295493.512857
+  ComBit:  PhaseA(part_scan+pk_OR)=26.906000  PhaseB(BMFetch+avg)=22.456000  PhaseC(filter+sum)=0.899000  Total=50.261000  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 4/5 ---
-  ComBit:  PhaseA(part_scan+pk_OR)=35.876000  PhaseB(BMFetch+avg)=18.232000  PhaseC(filter+sum)=0.910000  Total=55.018000  rows=61385  avg_yearly=3295493.512857
+  ComBit:  PhaseA(part_scan+pk_OR)=26.347000  PhaseB(BMFetch+avg)=14.981000  PhaseC(filter+sum)=0.899000  Total=42.228000  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 5/5 ---
-  ComBit:  PhaseA(part_scan+pk_OR)=38.808000  PhaseB(BMFetch+avg)=18.269000  PhaseC(filter+sum)=0.920000  Total=57.998000  rows=61385  avg_yearly=3295493.512857
+  ComBit:  PhaseA(part_scan+pk_OR)=26.268000  PhaseB(BMFetch+avg)=13.118000  PhaseC(filter+sum)=0.907000  Total=40.294000  rows=61385  avg_yearly=3295493.512857
 
 [OK] ComBit matches DuckDB SQL (avg_yearly = 3295493.512857).
 
 ================================================================
   Q17 RESULTS — ComBit (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (part scan + partkey OR)    : 37.787500 +/- 2.007002 ms
-  PhaseB (BMFetch + per-pk avg)      : 20.672500 +/- 2.415038 ms
-  PhaseC (filter qty<avg + sum_price): 0.910500 +/- 0.004206 ms
-  TOTAL                              : 59.381500 +/- 3.700598 ms
+  PhaseA (part scan + partkey OR)    : 26.626500 +/- 0.939488 ms
+  PhaseB (BMFetch + per-pk avg)      : 18.718500 +/- 4.444043 ms
+  PhaseC (filter qty<avg + sum_price): 0.899000 +/- 0.003464 ms
+  TOTAL                              : 46.244500 +/- 5.224800 ms
 ================================================================
 
   [CSV] q17_results_SF10.csv
@@ -51,8 +51,8 @@ PRAGMA bm_tpch(17);
 # sql=
 PRAGMA load_bitmap('partkey');
 PRAGMA bm_tpch(17);
-[load_bitmap] partkey: scanned 59986052 rows in 718 ms
-[load_bitmap] partkey: built CRoaring index (2000000 keys, 608.089 MB) in 12098 ms
+[load_bitmap] partkey: scanned 59986052 rows in 730 ms
+[load_bitmap] partkey: built CRoaring index (2000000 keys, 608.089 MB) in 11753 ms
 
 ================================================================
   TPC-H Q17 (BitEngine pattern, runtime part-join)
@@ -60,29 +60,29 @@ PRAGMA bm_tpch(17);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  CRoaring:  PhaseA(part_scan+pk_OR)=38.155  PhaseB(BMFetch+avg)=255.365  PhaseC(filter+sum)=0.909  Total=294.43  rows=61385  avg_yearly=3295493.512857
+  CRoaring:  PhaseA(part_scan+pk_OR)=38.725  PhaseB(BMFetch+avg)=251.18  PhaseC(filter+sum)=0.984  Total=290.89  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 2/5 ---
-  CRoaring:  PhaseA(part_scan+pk_OR)=31.159000  PhaseB(BMFetch+avg)=23.564000  PhaseC(filter+sum)=0.904000  Total=55.628000  rows=61385  avg_yearly=3295493.512857
+  CRoaring:  PhaseA(part_scan+pk_OR)=32.530000  PhaseB(BMFetch+avg)=24.366000  PhaseC(filter+sum)=0.979000  Total=57.876000  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 3/5 ---
-  CRoaring:  PhaseA(part_scan+pk_OR)=31.049000  PhaseB(BMFetch+avg)=22.743000  PhaseC(filter+sum)=0.895000  Total=54.688000  rows=61385  avg_yearly=3295493.512857
+  CRoaring:  PhaseA(part_scan+pk_OR)=32.380000  PhaseB(BMFetch+avg)=23.668000  PhaseC(filter+sum)=0.981000  Total=57.030000  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 4/5 ---
-  CRoaring:  PhaseA(part_scan+pk_OR)=30.327000  PhaseB(BMFetch+avg)=17.684000  PhaseC(filter+sum)=0.903000  Total=48.915000  rows=61385  avg_yearly=3295493.512857
+  CRoaring:  PhaseA(part_scan+pk_OR)=31.029000  PhaseB(BMFetch+avg)=15.955000  PhaseC(filter+sum)=0.986000  Total=47.971000  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 5/5 ---
-  CRoaring:  PhaseA(part_scan+pk_OR)=29.639000  PhaseB(BMFetch+avg)=14.800000  PhaseC(filter+sum)=0.917000  Total=45.356000  rows=61385  avg_yearly=3295493.512857
+  CRoaring:  PhaseA(part_scan+pk_OR)=30.590000  PhaseB(BMFetch+avg)=13.246000  PhaseC(filter+sum)=0.976000  Total=44.812000  rows=61385  avg_yearly=3295493.512857
 
 [OK] CRoaring matches DuckDB SQL (avg_yearly = 3295493.512857).
 
 ================================================================
   Q17 RESULTS — CRoaring (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (part scan + partkey OR)    : 30.688000 +/- 0.612242 ms
-  PhaseB (BMFetch + per-pk avg)      : 20.213500 +/- 3.614712 ms
-  PhaseC (filter qty<avg + sum_price): 0.903500 +/- 0.007886 ms
-  TOTAL                              : 51.801500 +/- 4.217095 ms
+  PhaseA (part scan + partkey OR)    : 31.704500 +/- 0.838940 ms
+  PhaseB (BMFetch + per-pk avg)      : 19.811500 +/- 4.811014 ms
+  PhaseC (filter qty<avg + sum_price): 0.980000 +/- 0.003640 ms
+  TOTAL                              : 52.500500 +/- 5.650316 ms
 ================================================================
 
   [CSV] q17_results_SF10.csv
@@ -97,8 +97,8 @@ PRAGMA bm_tpch(17);
 # sql=
 PRAGMA load_bitmap('partkey');
 PRAGMA bm_tpch(17);
-[load_bitmap] partkey: scanned 59986052 rows in 740 ms
-[load_bitmap] partkey: built CRoaringRun index (2000000 keys, 608.089 MB) in 12510 ms
+[load_bitmap] partkey: scanned 59986052 rows in 725 ms
+[load_bitmap] partkey: built CRoaringRun index (2000000 keys, 608.089 MB) in 12022 ms
 
 ================================================================
   TPC-H Q17 (BitEngine pattern, runtime part-join)
@@ -106,29 +106,29 @@ PRAGMA bm_tpch(17);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  CRoaringRun:  PhaseA(part_scan+pk_OR)=43.197  PhaseB(BMFetch+avg)=256.058  PhaseC(filter+sum)=0.925  Total=300.181  rows=61385  avg_yearly=3295493.512857
+  CRoaringRun:  PhaseA(part_scan+pk_OR)=41.074  PhaseB(BMFetch+avg)=250.414  PhaseC(filter+sum)=0.97  Total=292.459  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 2/5 ---
-  CRoaringRun:  PhaseA(part_scan+pk_OR)=35.167000  PhaseB(BMFetch+avg)=23.553000  PhaseC(filter+sum)=0.914000  Total=59.636000  rows=61385  avg_yearly=3295493.512857
+  CRoaringRun:  PhaseA(part_scan+pk_OR)=34.373000  PhaseB(BMFetch+avg)=24.444000  PhaseC(filter+sum)=0.974000  Total=59.792000  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 3/5 ---
-  CRoaringRun:  PhaseA(part_scan+pk_OR)=31.837000  PhaseB(BMFetch+avg)=22.892000  PhaseC(filter+sum)=0.914000  Total=55.644000  rows=61385  avg_yearly=3295493.512857
+  CRoaringRun:  PhaseA(part_scan+pk_OR)=32.660000  PhaseB(BMFetch+avg)=23.728000  PhaseC(filter+sum)=0.975000  Total=57.363000  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 4/5 ---
-  CRoaringRun:  PhaseA(part_scan+pk_OR)=30.816000  PhaseB(BMFetch+avg)=15.308000  PhaseC(filter+sum)=0.906000  Total=47.031000  rows=61385  avg_yearly=3295493.512857
+  CRoaringRun:  PhaseA(part_scan+pk_OR)=31.234000  PhaseB(BMFetch+avg)=16.937000  PhaseC(filter+sum)=0.978000  Total=49.150000  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 5/5 ---
-  CRoaringRun:  PhaseA(part_scan+pk_OR)=30.455000  PhaseB(BMFetch+avg)=12.850000  PhaseC(filter+sum)=0.922000  Total=44.228000  rows=61385  avg_yearly=3295493.512857
+  CRoaringRun:  PhaseA(part_scan+pk_OR)=30.797000  PhaseB(BMFetch+avg)=14.360000  PhaseC(filter+sum)=0.980000  Total=46.137000  rows=61385  avg_yearly=3295493.512857
 
 [OK] CRoaringRun matches DuckDB SQL (avg_yearly = 3295493.512857).
 
 ================================================================
   Q17 RESULTS — CRoaringRun (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (part scan + partkey OR)    : 31.326500 +/- 1.859196 ms
-  PhaseB (BMFetch + per-pk avg)      : 19.100000 +/- 4.659478 ms
-  PhaseC (filter qty<avg + sum_price): 0.914000 +/- 0.005657 ms
-  TOTAL                              : 51.337500 +/- 6.247971 ms
+  PhaseA (part scan + partkey OR)    : 31.947000 +/- 1.398005 ms
+  PhaseB (BMFetch + per-pk avg)      : 20.332500 +/- 4.323430 ms
+  PhaseC (filter qty<avg + sum_price): 0.976500 +/- 0.002385 ms
+  TOTAL                              : 53.256500 +/- 5.635634 ms
 ================================================================
 
   [CSV] q17_results_SF10.csv
@@ -143,8 +143,8 @@ PRAGMA bm_tpch(17);
 # sql=
 PRAGMA load_bitmap('partkey');
 PRAGMA bm_tpch(17);
-[load_bitmap] partkey: scanned 59986052 rows in 745 ms
-[load_bitmap] partkey: built WAH index (2000000 keys, 631.881 MB) in 10214 ms
+[load_bitmap] partkey: scanned 59986052 rows in 733 ms
+[load_bitmap] partkey: built WAH index (2000000 keys, 631.881 MB) in 10174 ms
 
 ================================================================
   TPC-H Q17 (BitEngine pattern, runtime part-join)
@@ -152,29 +152,29 @@ PRAGMA bm_tpch(17);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  WAH:  PhaseA(part_scan+pk_OR)=38.787  PhaseB(BMFetch+avg)=252.826  PhaseC(filter+sum)=0.893  Total=292.506  rows=61385  avg_yearly=3295493.512857
+  WAH:  PhaseA(part_scan+pk_OR)=39.315  PhaseB(BMFetch+avg)=253.636  PhaseC(filter+sum)=0.902  Total=293.854  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 2/5 ---
-  WAH:  PhaseA(part_scan+pk_OR)=29.919000  PhaseB(BMFetch+avg)=23.015000  PhaseC(filter+sum)=0.897000  Total=53.832000  rows=61385  avg_yearly=3295493.512857
+  WAH:  PhaseA(part_scan+pk_OR)=30.043000  PhaseB(BMFetch+avg)=23.360000  PhaseC(filter+sum)=0.906000  Total=54.310000  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 3/5 ---
-  WAH:  PhaseA(part_scan+pk_OR)=28.374000  PhaseB(BMFetch+avg)=22.632000  PhaseC(filter+sum)=0.923000  Total=51.930000  rows=61385  avg_yearly=3295493.512857
+  WAH:  PhaseA(part_scan+pk_OR)=28.548000  PhaseB(BMFetch+avg)=23.113000  PhaseC(filter+sum)=0.909000  Total=52.570000  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 4/5 ---
-  WAH:  PhaseA(part_scan+pk_OR)=27.887000  PhaseB(BMFetch+avg)=15.856000  PhaseC(filter+sum)=0.892000  Total=44.635000  rows=61385  avg_yearly=3295493.512857
+  WAH:  PhaseA(part_scan+pk_OR)=28.064000  PhaseB(BMFetch+avg)=15.009000  PhaseC(filter+sum)=0.909000  Total=43.984000  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 5/5 ---
-  WAH:  PhaseA(part_scan+pk_OR)=27.647000  PhaseB(BMFetch+avg)=13.780000  PhaseC(filter+sum)=0.900000  Total=42.329000  rows=61385  avg_yearly=3295493.512857
+  WAH:  PhaseA(part_scan+pk_OR)=27.754000  PhaseB(BMFetch+avg)=12.921000  PhaseC(filter+sum)=0.897000  Total=41.573000  rows=61385  avg_yearly=3295493.512857
 
 [OK] WAH matches DuckDB SQL (avg_yearly = 3295493.512857).
 
 ================================================================
   Q17 RESULTS — WAH (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (part scan + partkey OR)    : 28.130500 +/- 0.883931 ms
-  PhaseB (BMFetch + per-pk avg)      : 19.244000 +/- 4.071740 ms
-  PhaseC (filter qty<avg + sum_price): 0.898500 +/- 0.011895 ms
-  TOTAL                              : 48.282500 +/- 4.816867 ms
+  PhaseA (part scan + partkey OR)    : 28.306000 +/- 0.878627 ms
+  PhaseB (BMFetch + per-pk avg)      : 19.061000 +/- 4.694973 ms
+  PhaseC (filter qty<avg + sum_price): 0.907500 +/- 0.004918 ms
+  TOTAL                              : 48.277000 +/- 5.433412 ms
 ================================================================
 
   [CSV] q17_results_SF10.csv
@@ -190,7 +190,7 @@ PRAGMA bm_tpch(17);
 PRAGMA load_bitmap('partkey');
 PRAGMA bm_tpch(17);
 [load_bitmap] partkey: scanned 59986052 rows in 739 ms
-[load_bitmap] partkey: built EWAH index (2000000 keys, 975.746 MB) in 7638 ms
+[load_bitmap] partkey: built EWAH index (2000000 keys, 975.746 MB) in 7507 ms
 
 ================================================================
   TPC-H Q17 (BitEngine pattern, runtime part-join)
@@ -198,29 +198,29 @@ PRAGMA bm_tpch(17);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  EWAH:  PhaseA(part_scan+pk_OR)=43.558  PhaseB(BMFetch+avg)=256.473  PhaseC(filter+sum)=1.164  Total=301.196  rows=61385  avg_yearly=3295493.512857
+  EWAH:  PhaseA(part_scan+pk_OR)=44.28  PhaseB(BMFetch+avg)=250.633  PhaseC(filter+sum)=0.907  Total=295.82  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 2/5 ---
-  EWAH:  PhaseA(part_scan+pk_OR)=37.119000  PhaseB(BMFetch+avg)=25.553000  PhaseC(filter+sum)=1.158000  Total=63.831000  rows=61385  avg_yearly=3295493.512857
+  EWAH:  PhaseA(part_scan+pk_OR)=37.169000  PhaseB(BMFetch+avg)=23.784000  PhaseC(filter+sum)=0.910000  Total=61.863000  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 3/5 ---
-  EWAH:  PhaseA(part_scan+pk_OR)=36.749000  PhaseB(BMFetch+avg)=25.627000  PhaseC(filter+sum)=1.218000  Total=63.595000  rows=61385  avg_yearly=3295493.512857
+  EWAH:  PhaseA(part_scan+pk_OR)=35.760000  PhaseB(BMFetch+avg)=23.179000  PhaseC(filter+sum)=0.908000  Total=59.848000  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 4/5 ---
-  EWAH:  PhaseA(part_scan+pk_OR)=36.706000  PhaseB(BMFetch+avg)=21.528000  PhaseC(filter+sum)=1.198000  Total=59.433000  rows=61385  avg_yearly=3295493.512857
+  EWAH:  PhaseA(part_scan+pk_OR)=35.493000  PhaseB(BMFetch+avg)=18.048000  PhaseC(filter+sum)=0.916000  Total=54.459000  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 5/5 ---
-  EWAH:  PhaseA(part_scan+pk_OR)=36.680000  PhaseB(BMFetch+avg)=18.416000  PhaseC(filter+sum)=1.184000  Total=56.281000  rows=61385  avg_yearly=3295493.512857
+  EWAH:  PhaseA(part_scan+pk_OR)=35.347000  PhaseB(BMFetch+avg)=14.788000  PhaseC(filter+sum)=0.912000  Total=51.048000  rows=61385  avg_yearly=3295493.512857
 
 [OK] EWAH matches DuckDB SQL (avg_yearly = 3295493.512857).
 
 ================================================================
   Q17 RESULTS — EWAH (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (part scan + partkey OR)    : 36.727500 +/- 0.178093 ms
-  PhaseB (BMFetch + per-pk avg)      : 23.540500 +/- 3.016908 ms
-  PhaseC (filter qty<avg + sum_price): 1.191000 +/- 0.021835 ms
-  TOTAL                              : 61.514000 +/- 3.134012 ms
+  PhaseA (part scan + partkey OR)    : 35.626500 +/- 0.723581 ms
+  PhaseB (BMFetch + per-pk avg)      : 20.613500 +/- 3.721218 ms
+  PhaseC (filter qty<avg + sum_price): 0.911000 +/- 0.002958 ms
+  TOTAL                              : 57.153500 +/- 4.286315 ms
 ================================================================
 
   [CSV] q17_results_SF10.csv
@@ -235,8 +235,8 @@ PRAGMA bm_tpch(17);
 # sql=
 PRAGMA load_bitmap('partkey');
 PRAGMA bm_tpch(17);
-[load_bitmap] partkey: scanned 59986052 rows in 735 ms
-[load_bitmap] partkey: built Concise index (2000000 keys, 239.944 MB) in 7371 ms
+[load_bitmap] partkey: scanned 59986052 rows in 738 ms
+[load_bitmap] partkey: built Concise index (2000000 keys, 239.944 MB) in 7171 ms
 
 ================================================================
   TPC-H Q17 (BitEngine pattern, runtime part-join)
@@ -244,29 +244,29 @@ PRAGMA bm_tpch(17);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  Concise:  PhaseA(part_scan+pk_OR)=41.691  PhaseB(BMFetch+avg)=258.287  PhaseC(filter+sum)=0.914  Total=300.894  rows=61385  avg_yearly=3295493.512857
+  Concise:  PhaseA(part_scan+pk_OR)=41.255  PhaseB(BMFetch+avg)=254.756  PhaseC(filter+sum)=0.912  Total=296.923  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 2/5 ---
-  Concise:  PhaseA(part_scan+pk_OR)=33.353000  PhaseB(BMFetch+avg)=23.949000  PhaseC(filter+sum)=0.918000  Total=58.220000  rows=61385  avg_yearly=3295493.512857
+  Concise:  PhaseA(part_scan+pk_OR)=33.259000  PhaseB(BMFetch+avg)=23.912000  PhaseC(filter+sum)=0.913000  Total=58.085000  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 3/5 ---
-  Concise:  PhaseA(part_scan+pk_OR)=33.337000  PhaseB(BMFetch+avg)=23.245000  PhaseC(filter+sum)=0.921000  Total=57.504000  rows=61385  avg_yearly=3295493.512857
+  Concise:  PhaseA(part_scan+pk_OR)=33.314000  PhaseB(BMFetch+avg)=23.484000  PhaseC(filter+sum)=0.899000  Total=57.698000  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 4/5 ---
-  Concise:  PhaseA(part_scan+pk_OR)=33.244000  PhaseB(BMFetch+avg)=17.849000  PhaseC(filter+sum)=0.917000  Total=52.011000  rows=61385  avg_yearly=3295493.512857
+  Concise:  PhaseA(part_scan+pk_OR)=32.967000  PhaseB(BMFetch+avg)=16.596000  PhaseC(filter+sum)=0.934000  Total=50.498000  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 5/5 ---
-  Concise:  PhaseA(part_scan+pk_OR)=32.891000  PhaseB(BMFetch+avg)=15.024000  PhaseC(filter+sum)=0.935000  Total=48.851000  rows=61385  avg_yearly=3295493.512857
+  Concise:  PhaseA(part_scan+pk_OR)=32.788000  PhaseB(BMFetch+avg)=13.752000  PhaseC(filter+sum)=0.924000  Total=47.465000  rows=61385  avg_yearly=3295493.512857
 
 [OK] Concise matches DuckDB SQL (avg_yearly = 3295493.512857).
 
 ================================================================
   Q17 RESULTS — Concise (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (part scan + partkey OR)    : 33.290500 +/- 0.186707 ms
-  PhaseB (BMFetch + per-pk avg)      : 20.547000 +/- 3.725281 ms
-  PhaseC (filter qty<avg + sum_price): 0.919500 +/- 0.007224 ms
-  TOTAL                              : 54.757500 +/- 3.888087 ms
+  PhaseA (part scan + partkey OR)    : 33.113000 +/- 0.214950 ms
+  PhaseB (BMFetch + per-pk avg)      : 20.040000 +/- 4.381619 ms
+  PhaseC (filter qty<avg + sum_price): 0.918500 +/- 0.013010 ms
+  TOTAL                              : 54.098000 +/- 4.584281 ms
 ================================================================
 
   [CSV] q17_results_SF10.csv

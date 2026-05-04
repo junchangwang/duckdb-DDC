@@ -132,6 +132,17 @@ public:
     size_t popcount() const;
     std::vector<size_t> set_bit_positions() const;
 
+    // Set a single bit at `pos_in_segment` in this segment's L1 byte
+    // array.  Pre: state_ == State::Decompressed, l1_literals_ already
+    // sized to l2_count_ bytes (i.e. the canonical Decompressed layout
+    // produced by ComBit::from_sparse_positions({}) seed segments).
+    // Used by SparseComBit's ultra-sparse fast path to scatter raw
+    // positions directly into a Decompressed-zero result without going
+    // through the L1/L2/L3/L4 hierarchy.
+    void set_bit_decompressed(uint32_t pos_in_segment) {
+        l1_literals_[pos_in_segment >> 3] |= (uint8_t)(0x80 >> (pos_in_segment & 7));
+    }
+
     /// Fused AND + popcount: returns popcount(*this & other) without
     /// materialising the intersection.  Mirrors CRoaring's
     /// `and_cardinality`, EWAH's `logicalandcount`, ibis::bitvector's
@@ -173,6 +184,15 @@ public:
     // Factory for an all-fill Compressed segment (no scratch buffers).
     static ComBitBtv make_all_fill(size_t bit_count, size_t l2_count,
                                    bool l1_fill_ones);
+
+    // Build a Decompressed-zero segment ready for in-place scatter:
+    // l1_literals_ is allocated to l2_count zero bytes, state =
+    // Decompressed (l2_fill_ones canonical), l3/l4 left empty.
+    // Used by ComBit::from_sparse_positions({}) for the OR-accumulator
+    // seed and by SparseComBit::or_many (ultra-sparse fast path) so
+    // that set_bit_decompressed can poke l1_literals_ without going
+    // through the Compressed→Decompressed upgrade path.
+    static ComBitBtv make_decompressed_zero(size_t bit_count, size_t l2_count);
 
     // Raw data access (used by bitwise operators).  In Compressed state
     // the canonical L3 bytes live in l4_bits_/l3_literals_; call
@@ -537,6 +557,24 @@ public:
     std::vector<ComBitBtv>& segments() { return segments_; }
     const ComBitBtv& segment(size_t i) const { return segments_[i]; }
 
+    // Bulk-scatter a sorted list of set positions into Decompressed segments.
+    // Pre: every segment that any position falls into is in Decompressed
+    // state (this is the canonical state of `from_sparse_positions({})`
+    // seeds used as Q5/Q3 OR accumulators).  Bypasses ComBitBtv's L1/L2/L3/L4
+    // hierarchy entirely — for ultra-sparse per-key bitmaps (orderkey at
+    // SF10: ~4 set bits in 60M rows) this is the fast path that lets
+    // ComBit's per-key memory rival CRoaring's array container without
+    // paying ~216 bytes/segment of struct overhead.
+    void scatter_or_decompressed(const uint32_t* positions, size_t n) {
+        const uint32_t seg_bits = static_cast<uint32_t>(segment_bits_);
+        for (size_t i = 0; i < n; i++) {
+            uint32_t p = positions[i];
+            uint32_t seg = p / seg_bits;
+            uint32_t in  = p - seg * seg_bits;
+            segments_[seg].set_bit_decompressed(in);
+        }
+    }
+
     // ----------------------------------------------------------------
     // Serialization
     // ----------------------------------------------------------------
@@ -574,11 +612,28 @@ class SparseComBit {
 public:
     SparseComBit() = default;
 
+    // Threshold below which a key's whole bitmap is stored as a raw
+    // sorted uint32_t position list (the "ultra-sparse" path) instead
+    // of the L1/L2/L3/L4 ComBitBtv hierarchy.  At SF10, FK columns
+    // average ~4 set bits per key (l_orderkey 60M/15M=4, l_partkey
+    // 60M/2M=30) — well under this threshold — so almost all per-key
+    // bitmaps avoid ComBitBtv's 216-byte-per-segment struct overhead.
+    // This is what brings ComBit per-key footprint into CRoaring's
+    // array-container league.  The threshold is set by the break-even
+    // point where ComBitBtv hierarchy starts saving more bytes than
+    // raw positions cost: ~64 set bits at seg_bits=4096.
+    static constexpr size_t ULTRA_SPARSE_THRESHOLD = 64;
+
     // Build a SparseComBit of `num_rows` bits where only `positions` are set.
     // Cost: O(positions.size() + segment_bits × non_empty_segments).
     static SparseComBit from_positions(const std::vector<uint32_t>& positions,
                                        size_t num_rows,
                                        size_t segment_bits = ComBit::default_segment_bits);
+
+    // True iff this SparseComBit is using the ultra-sparse storage
+    // mode (raw uint32_t position list, no ComBitBtv segments).
+    bool is_ultra_sparse() const { return !ultra_positions_.empty() || (num_set_bits_ <= ULTRA_SPARSE_THRESHOLD && seg_indices_.empty()); }
+    const std::vector<uint32_t>& ultra_positions() const { return ultra_positions_; }
 
     // OR this sparse bitmap into a dense ComBit (in-place).
     // Pre: dst.bit_count() == this->bit_count() and dst.segment_bits() ==
@@ -611,6 +666,13 @@ private:
     size_t bit_count_    = 0;
     size_t segment_bits_ = ComBit::default_segment_bits;
     size_t num_set_bits_ = 0;
+    // Ultra-sparse path: when num_set_bits_ <= ULTRA_SPARSE_THRESHOLD,
+    // `ultra_positions_` holds the sorted set positions and seg_indices_/
+    // seg_data_ are empty.  Avoids paying ~216 bytes/segment of
+    // ComBitBtv struct overhead for per-key bitmaps that have only a
+    // few bits set.
+    std::vector<uint32_t>  ultra_positions_;
+    // Hierarchy path: per-segment ComBitBtv storage.
     std::vector<uint32_t>  seg_indices_;  // sorted ascending
     std::vector<ComBitBtv> seg_data_;     // parallel to seg_indices_
 };

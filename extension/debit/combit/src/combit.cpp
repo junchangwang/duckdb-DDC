@@ -87,6 +87,25 @@ ComBitBtv::make_all_fill(size_t bit_count, size_t l2_count, bool l1_fill_ones) {
     return s;
 }
 
+ComBitBtv
+ComBitBtv::make_decompressed_zero(size_t bit_count, size_t l2_count) {
+    // Canonical Decompressed all-zero (matches the layout produced by
+    // any binary-OR result before recompression): l1_literals_ holds
+    // l2_count zero bytes (one byte per word_size=8 logical bits),
+    // l2_fill_ones=true means "all literal" (every L1 byte is stored,
+    // no L2 fill bits), and L3/L4 layers are unused.
+    ComBitBtv s(/*l1_fill_ones=*/false,
+                /*l2_fill_ones=*/true,
+                State::Decompressed);
+    s.bit_count_ = bit_count;
+    s.l2_count_  = l2_count;
+    s.l3_count_  = (l2_count + 7) / 8;
+    s.l2_literal_count_ = 0;
+    s.l1_literals_.assign(l2_count, 0x00);
+    s.l1_literal_count_ = l2_count;
+    return s;
+}
+
 // ----------------------------------------------------------------
 // Private helpers
 // ----------------------------------------------------------------
@@ -724,11 +743,20 @@ ComBit::from_sparse_positions(const std::vector<uint32_t>& positions,
     for (size_t s = 0; s < num_segs; s++) {
         size_t seg_len = std::min(segment_bits, num_rows - s * segment_bits);
         if (seg_positions[s].empty()) {
-            // Empty segment: l1_fill_ones=false, no literals, no L4 bits.
-            // make_all_fill(bit_count, l2_count, fill_ones=false).
+            // Empty segment — produce Decompressed-zero (canonical
+            // l1_literals_ all-zero of size l2_count) instead of
+            // Compressed all-fill.  This makes from_sparse_positions({})
+            // a ready-to-scatter seed: SparseComBit's ultra-sparse
+            // apply_or_to / or_many can poke positions directly into
+            // l1_literals_ without paying a per-segment lazy
+            // Compressed→Decompressed upgrade.  Memory cost: l2_count
+            // (≈ segment_bits/8) zero bytes per empty segment, ~7.5 MB
+            // total for a 60M-row seed at seg_bits=4096 — paid once
+            // per OR accumulator; recovered many times over by avoiding
+            // 216-byte ComBitBtv hierarchy per touched key.
             const size_t l2_count = (seg_len + 7) / 8;
             result.segments_.push_back(
-                ComBitBtv::make_all_fill(seg_len, l2_count, /*l1_fill_ones=*/false));
+                ComBitBtv::make_decompressed_zero(seg_len, l2_count));
         } else {
             // Non-empty: build a vector<bool> JUST for this segment and
             // compress.  Cost: O(seg_len) per non-empty segment.
@@ -1034,6 +1062,21 @@ SparseComBit::from_positions(const std::vector<uint32_t>& positions,
 
     if (positions.empty()) return s;
 
+    // ---- Ultra-sparse fast path ----------------------------------------
+    // For per-key bitmaps with only a handful of set bits (FK columns at
+    // SF10 average 4-30 bits per key), ComBitBtv's 216-byte-per-segment
+    // struct overhead dominates over actual bit data.  Store sorted
+    // positions directly; bypass the L1/L2/L3/L4 hierarchy entirely.
+    // SparseComBit::apply_or_to / or_many detect this mode and scatter
+    // positions into the result's L1 byte array without touching L2/L3/L4.
+    if (positions.size() <= ULTRA_SPARSE_THRESHOLD) {
+        s.ultra_positions_ = positions;
+        std::sort(s.ultra_positions_.begin(), s.ultra_positions_.end());
+        s.ultra_positions_.shrink_to_fit();
+        return s;
+    }
+
+    // ---- Regular hierarchy path ---------------------------------------
     // Bucket positions by segment.  std::map gives sorted order for the
     // parallel arrays (operators rely on seg_indices_ being ascending).
     std::map<uint32_t, std::vector<uint32_t>> by_seg;
@@ -1067,6 +1110,17 @@ void
 SparseComBit::apply_or_to(ComBit& dst) const {
     assert(dst.bit_count() == bit_count_);
     assert(dst.segment_bits() == segment_bits_);
+
+    // Ultra-sparse fast path: scatter raw positions directly into dst's
+    // Decompressed L1 bytes.  Pre: dst's segments are Decompressed (the
+    // canonical state of from_sparse_positions({}) seed segments — all
+    // Q5/Q3 OR accumulators in this codebase use that seed).  No L1/L2/
+    // L3/L4 traversal, no per-segment ComBitBtv allocation.
+    if (!ultra_positions_.empty()) {
+        dst.scatter_or_decompressed(ultra_positions_.data(), ultra_positions_.size());
+        return;
+    }
+
     auto& dst_segs = dst.segments();
     for (size_t i = 0; i < seg_indices_.size(); i++) {
         uint32_t idx = seg_indices_[i];
@@ -1118,6 +1172,11 @@ SparseComBit::apply_or_to(ComBit& dst) const {
 size_t
 SparseComBit::storage_bytes() const {
     size_t total = sizeof(*this);
+    if (!ultra_positions_.empty()) {
+        // Ultra-sparse: just the position list, no segment overhead.
+        total += ultra_positions_.capacity() * sizeof(uint32_t);
+        return total;
+    }
     total += seg_indices_.capacity() * sizeof(uint32_t);
     total += seg_data_.capacity()    * sizeof(ComBitBtv);
     for (const auto& s : seg_data_) {
@@ -1132,17 +1191,29 @@ SparseComBit::or_many(size_t count, const SparseComBit** sparses,
     ComBit dst = ComBit::from_sparse_positions({}, num_rows, segment_bits);
     if (count == 0) return dst;
 
-    // Bucket every input segment by its output segment index.  This
-    // turns 590k pairwise apply_or_to (each touching ~2 random output
-    // segments) into one sequential pass per output segment — same
-    // total work but vastly better cache behavior, no per-key
-    // function-call overhead, and dst-segment state transition
-    // (Compressed→Decompressed clone) happens at most once per output.
+    // ---- Pass 1: scatter ultra-sparse keys directly ------------------
+    // For ultra-sparse keys (the typical FK case at SF10), positions are
+    // already a sorted uint32_t list; just OR them straight into dst's
+    // L1 byte array.  Each key's contribution costs only N word writes
+    // (N = bits set), no ComBitBtv allocation, no L1/L2/L3/L4 walk.
+    for (size_t s = 0; s < count; s++) {
+        const auto& sp = *sparses[s];
+        if (!sp.ultra_positions_.empty()) {
+            dst.scatter_or_decompressed(sp.ultra_positions_.data(),
+                                        sp.ultra_positions_.size());
+        }
+    }
+
+    // ---- Pass 2: scatter-by-output-segment for hierarchy keys --------
+    // Bucket every hierarchy-mode input segment by its output segment
+    // index.  Only keys with > ULTRA_SPARSE_THRESHOLD set bits hit
+    // this pass — typically a small fraction of keys (e.g. shipdate
+    // per-day bitmaps which span ~24k rows each).
     size_t num_segs = (num_rows + segment_bits - 1) / segment_bits;
     std::vector<std::vector<const ComBitBtv*>> by_seg(num_segs);
-    // Reserve heuristically: total input segments / num_segs * 1.5.
     size_t total_segs = 0;
     for (size_t s = 0; s < count; s++) total_segs += sparses[s]->seg_indices_.size();
+    if (total_segs == 0) return dst;  // all inputs were ultra-sparse — done.
     if (num_segs > 0) {
         size_t avg = total_segs / num_segs + 4;
         for (auto& v : by_seg) v.reserve(avg);

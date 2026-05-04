@@ -6,10 +6,10 @@
 PRAGMA load_bitmap('orderkey');
 PRAGMA load_bitmap('returnflag');
 PRAGMA bm_tpch(10);
-[load_bitmap] orderkey: scanned 59986052 rows in 650 ms
-[load_bitmap] orderkey: built ComBit index (15000000 keys, 4448.84 MB) in 13112 ms
-[load_bitmap] returnflag: scanned 59986052 rows in 541 ms
-[load_bitmap] returnflag: built ComBit index (3 keys, 29.7765 MB) in 2314 ms
+[load_bitmap] orderkey: scanned 59986052 rows in 645 ms
+[load_bitmap] orderkey: built ComBit index (15000000 keys, 1679.94 MB) in 4903 ms
+[load_bitmap] returnflag: scanned 59986052 rows in 521 ms
+[load_bitmap] returnflag: built ComBit index (3 keys, 29.7766 MB) in 2329 ms
 
 ================================================================
   TPC-H Q10 (BitEngine pattern, runtime semi-joins)
@@ -17,32 +17,32 @@ PRAGMA bm_tpch(10);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  ComBit:  PhaseA(orders)=209.921  PhaseB(okey_OR)=123.346  PhaseC(rf_OR)=4.332  PhaseD(AND+rids)=22.801  PhaseE(BMFetch+agg)=376.542  PhaseF(top20)=7.65  Total=744.595  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  ComBit:  PhaseA(orders)=209.321  PhaseB(okey_OR)=80.309  PhaseC(rf_OR)=6.839  PhaseD(AND+rids)=22.407  PhaseE(BMFetch+agg)=374.852  PhaseF(top20)=7.69  Total=701.42  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 2/5 ---
-  ComBit:  PhaseA(orders)=104.938  PhaseB(okey_OR)=115.831  PhaseC(rf_OR)=2.866  PhaseD(AND+rids)=19.154  PhaseE(BMFetch+agg)=211.665  PhaseF(top20)=7.295  Total=461.752  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  ComBit:  PhaseA(orders)=105.655  PhaseB(okey_OR)=75.461  PhaseC(rf_OR)=2.594  PhaseD(AND+rids)=18.586  PhaseE(BMFetch+agg)=201.642  PhaseF(top20)=7.249  Total=411.19  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 3/5 ---
-  ComBit:  PhaseA(orders)=97.357  PhaseB(okey_OR)=114.422  PhaseC(rf_OR)=2.882  PhaseD(AND+rids)=19.026  PhaseE(BMFetch+agg)=210.475  PhaseF(top20)=7.317  Total=451.482  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  ComBit:  PhaseA(orders)=93.216  PhaseB(okey_OR)=74.325  PhaseC(rf_OR)=3.296  PhaseD(AND+rids)=21.791  PhaseE(BMFetch+agg)=201.942  PhaseF(top20)=7.28  Total=401.852  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 4/5 ---
-  ComBit:  PhaseA(orders)=98.311  PhaseB(okey_OR)=115.525  PhaseC(rf_OR)=2.853  PhaseD(AND+rids)=18.991  PhaseE(BMFetch+agg)=210.267  PhaseF(top20)=7.357  Total=453.307  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  ComBit:  PhaseA(orders)=92.907  PhaseB(okey_OR)=73.879  PhaseC(rf_OR)=3.239  PhaseD(AND+rids)=21.746  PhaseE(BMFetch+agg)=200.821  PhaseF(top20)=7.298  Total=399.893  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 5/5 ---
-  ComBit:  PhaseA(orders)=97.326  PhaseB(okey_OR)=114.881  PhaseC(rf_OR)=2.911  PhaseD(AND+rids)=19.086  PhaseE(BMFetch+agg)=213.926  PhaseF(top20)=7.609  Total=455.741  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  ComBit:  PhaseA(orders)=92.92  PhaseB(okey_OR)=74.43  PhaseC(rf_OR)=3.334  PhaseD(AND+rids)=21.902  PhaseE(BMFetch+agg)=205.133  PhaseF(top20)=7.411  Total=405.133  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 [OK] ComBit matches DuckDB SQL ground truth (top-1 custkey=1237537 revenue=884990).
 
 ================================================================
   Q10 RESULTS — ComBit (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (orders scan)       : 97.834 +/- 3.17424 ms
-  PhaseB (orderkey OR)       : 115.203 +/- 0.549058 ms
-  PhaseC (returnflag OR)     : 2.874 +/- 0.0216449 ms
-  PhaseD (AND + get_rowids)  : 19.056 +/- 0.0619612 ms
-  PhaseE (BMFetch + revenue) : 211.07 +/- 1.45395 ms
-  PhaseF (top-20 heap)       : 7.337 +/- 0.12582 ms
-  TOTAL                      : 454.524 +/- 3.87554 ms
+  PhaseA (orders scan)       : 93.068 +/- 5.47496 ms
+  PhaseB (orderkey OR)       : 74.3775 +/- 0.579317 ms
+  PhaseC (returnflag OR)     : 3.2675 +/- 0.303124 ms
+  PhaseD (AND + get_rowids)  : 21.7685 +/- 1.39848 ms
+  PhaseE (BMFetch + revenue) : 201.792 +/- 1.63905 ms
+  PhaseF (top-20 heap)       : 7.289 +/- 0.0611658 ms
+  TOTAL                      : 403.492 +/- 4.28346 ms
 ================================================================
 
   [CSV] q10_results_SF10.csv
@@ -79,10 +79,10 @@ PRAGMA bm_tpch(10);
 PRAGMA load_bitmap('orderkey');
 PRAGMA load_bitmap('returnflag');
 PRAGMA bm_tpch(10);
-[load_bitmap] orderkey: scanned 59986052 rows in 650 ms
-[load_bitmap] orderkey: built CRoaring index (15000000 keys, 359.978 MB) in 6449 ms
-[load_bitmap] returnflag: scanned 59986052 rows in 527 ms
-[load_bitmap] returnflag: built CRoaring index (3 keys, 22.5336 MB) in 580 ms
+[load_bitmap] orderkey: scanned 59986052 rows in 647 ms
+[load_bitmap] orderkey: built CRoaring index (15000000 keys, 359.978 MB) in 6387 ms
+[load_bitmap] returnflag: scanned 59986052 rows in 521 ms
+[load_bitmap] returnflag: built CRoaring index (3 keys, 22.5336 MB) in 582 ms
 
 ================================================================
   TPC-H Q10 (BitEngine pattern, runtime semi-joins)
@@ -90,32 +90,32 @@ PRAGMA bm_tpch(10);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  CRoaring:  PhaseA(orders)=182.549  PhaseB(okey_OR)=713.326  PhaseC(rf_OR)=1.147  PhaseD(AND+rids)=9.067  PhaseE(BMFetch+agg)=376.578  PhaseF(top20)=7.541  Total=1290.21  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  CRoaring:  PhaseA(orders)=181.932  PhaseB(okey_OR)=724.249  PhaseC(rf_OR)=1.323  PhaseD(AND+rids)=8.75  PhaseE(BMFetch+agg)=382.211  PhaseF(top20)=8.584  Total=1307.05  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 2/5 ---
-  CRoaring:  PhaseA(orders)=88.32  PhaseB(okey_OR)=711.084  PhaseC(rf_OR)=1.067  PhaseD(AND+rids)=8.828  PhaseE(BMFetch+agg)=207.985  PhaseF(top20)=7.378  Total=1024.66  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  CRoaring:  PhaseA(orders)=91.481  PhaseB(okey_OR)=724.776  PhaseC(rf_OR)=1.105  PhaseD(AND+rids)=8.933  PhaseE(BMFetch+agg)=208.073  PhaseF(top20)=7.521  Total=1041.89  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 3/5 ---
-  CRoaring:  PhaseA(orders)=89.485  PhaseB(okey_OR)=711.703  PhaseC(rf_OR)=1.028  PhaseD(AND+rids)=8.878  PhaseE(BMFetch+agg)=208.33  PhaseF(top20)=7.244  Total=1026.67  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  CRoaring:  PhaseA(orders)=94.541  PhaseB(okey_OR)=725.148  PhaseC(rf_OR)=1.138  PhaseD(AND+rids)=8.921  PhaseE(BMFetch+agg)=207.968  PhaseF(top20)=7.54  Total=1045.26  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 4/5 ---
-  CRoaring:  PhaseA(orders)=89.684  PhaseB(okey_OR)=711.835  PhaseC(rf_OR)=1.192  PhaseD(AND+rids)=9.116  PhaseE(BMFetch+agg)=212.771  PhaseF(top20)=7.411  Total=1032.01  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  CRoaring:  PhaseA(orders)=90.188  PhaseB(okey_OR)=725.53  PhaseC(rf_OR)=1.006  PhaseD(AND+rids)=8.953  PhaseE(BMFetch+agg)=208.836  PhaseF(top20)=7.484  Total=1042  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 5/5 ---
-  CRoaring:  PhaseA(orders)=90.933  PhaseB(okey_OR)=711.062  PhaseC(rf_OR)=1.326  PhaseD(AND+rids)=8.741  PhaseE(BMFetch+agg)=208.993  PhaseF(top20)=7.347  Total=1028.4  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  CRoaring:  PhaseA(orders)=90.908  PhaseB(okey_OR)=725.233  PhaseC(rf_OR)=1.115  PhaseD(AND+rids)=8.997  PhaseE(BMFetch+agg)=207.608  PhaseF(top20)=7.488  Total=1041.35  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 [OK] CRoaring matches DuckDB SQL ground truth (top-1 custkey=1237537 revenue=884990).
 
 ================================================================
   Q10 RESULTS — CRoaring (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (orders scan)       : 89.5845 +/- 0.926748 ms
-  PhaseB (orderkey OR)       : 711.393 +/- 0.351202 ms
-  PhaseC (returnflag OR)     : 1.1295 +/- 0.116695 ms
-  PhaseD (AND + get_rowids)  : 8.853 +/- 0.138981 ms
-  PhaseE (BMFetch + revenue) : 208.661 +/- 1.91174 ms
-  PhaseF (top-20 heap)       : 7.3625 +/- 0.06255 ms
-  TOTAL                      : 1027.54 +/- 2.69903 ms
+  PhaseA (orders scan)       : 91.1945 +/- 1.65887 ms
+  PhaseB (orderkey OR)       : 725.19 +/- 0.268922 ms
+  PhaseC (returnflag OR)     : 1.11 +/- 0.0505124 ms
+  PhaseD (AND + get_rowids)  : 8.943 +/- 0.0289137 ms
+  PhaseE (BMFetch + revenue) : 208.02 +/- 0.447243 ms
+  PhaseF (top-20 heap)       : 7.5045 +/- 0.0232849 ms
+  TOTAL                      : 1041.95 +/- 1.54033 ms
 ================================================================
 
   [CSV] q10_results_SF10.csv
@@ -152,10 +152,10 @@ PRAGMA bm_tpch(10);
 PRAGMA load_bitmap('orderkey');
 PRAGMA load_bitmap('returnflag');
 PRAGMA bm_tpch(10);
-[load_bitmap] orderkey: scanned 59986052 rows in 650 ms
-[load_bitmap] orderkey: built CRoaringRun index (15000000 keys, 257.154 MB) in 6835 ms
-[load_bitmap] returnflag: scanned 59986052 rows in 528 ms
-[load_bitmap] returnflag: built CRoaringRun index (3 keys, 22.5311 MB) in 615 ms
+[load_bitmap] orderkey: scanned 59986052 rows in 651 ms
+[load_bitmap] orderkey: built CRoaringRun index (15000000 keys, 257.154 MB) in 6740 ms
+[load_bitmap] returnflag: scanned 59986052 rows in 526 ms
+[load_bitmap] returnflag: built CRoaringRun index (3 keys, 22.5311 MB) in 596 ms
 
 ================================================================
   TPC-H Q10 (BitEngine pattern, runtime semi-joins)
@@ -163,32 +163,32 @@ PRAGMA bm_tpch(10);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  CRoaringRun:  PhaseA(orders)=186.878  PhaseB(okey_OR)=263.429  PhaseC(rf_OR)=0.87  PhaseD(AND+rids)=8.215  PhaseE(BMFetch+agg)=376.639  PhaseF(top20)=7.846  Total=843.879  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  CRoaringRun:  PhaseA(orders)=185.035  PhaseB(okey_OR)=257.848  PhaseC(rf_OR)=0.874  PhaseD(AND+rids)=8.838  PhaseE(BMFetch+agg)=369.166  PhaseF(top20)=7.82  Total=829.584  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 2/5 ---
-  CRoaringRun:  PhaseA(orders)=90.045  PhaseB(okey_OR)=259.615  PhaseC(rf_OR)=0.902  PhaseD(AND+rids)=8.717  PhaseE(BMFetch+agg)=204.232  PhaseF(top20)=7.388  Total=570.9  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  CRoaringRun:  PhaseA(orders)=90.803  PhaseB(okey_OR)=259.55  PhaseC(rf_OR)=0.907  PhaseD(AND+rids)=8.868  PhaseE(BMFetch+agg)=203.641  PhaseF(top20)=7.396  Total=571.167  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 3/5 ---
-  CRoaringRun:  PhaseA(orders)=90.825  PhaseB(okey_OR)=260.485  PhaseC(rf_OR)=0.911  PhaseD(AND+rids)=8.73  PhaseE(BMFetch+agg)=203.405  PhaseF(top20)=7.465  Total=571.824  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  CRoaringRun:  PhaseA(orders)=91.033  PhaseB(okey_OR)=259.93  PhaseC(rf_OR)=0.92  PhaseD(AND+rids)=8.545  PhaseE(BMFetch+agg)=203.72  PhaseF(top20)=7.521  Total=571.671  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 4/5 ---
-  CRoaringRun:  PhaseA(orders)=90.362  PhaseB(okey_OR)=261.519  PhaseC(rf_OR)=0.909  PhaseD(AND+rids)=8.553  PhaseE(BMFetch+agg)=204.555  PhaseF(top20)=7.447  Total=573.347  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  CRoaringRun:  PhaseA(orders)=91.249  PhaseB(okey_OR)=257.629  PhaseC(rf_OR)=0.895  PhaseD(AND+rids)=8.286  PhaseE(BMFetch+agg)=203.295  PhaseF(top20)=7.43  Total=568.785  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 5/5 ---
-  CRoaringRun:  PhaseA(orders)=90.845  PhaseB(okey_OR)=261.73  PhaseC(rf_OR)=0.94  PhaseD(AND+rids)=8.812  PhaseE(BMFetch+agg)=207.479  PhaseF(top20)=7.43  Total=577.238  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  CRoaringRun:  PhaseA(orders)=91.685  PhaseB(okey_OR)=258  PhaseC(rf_OR)=0.914  PhaseD(AND+rids)=8.177  PhaseE(BMFetch+agg)=202.287  PhaseF(top20)=7.543  Total=568.609  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 [OK] CRoaringRun matches DuckDB SQL ground truth (top-1 custkey=1237537 revenue=884990).
 
 ================================================================
   Q10 RESULTS — CRoaringRun (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (orders scan)       : 90.5935 +/- 0.335126 ms
-  PhaseB (orderkey OR)       : 261.002 +/- 0.848493 ms
-  PhaseC (returnflag OR)     : 0.91 +/- 0.0145344 ms
-  PhaseD (AND + get_rowids)  : 8.7235 +/- 0.0939495 ms
-  PhaseE (BMFetch + revenue) : 204.394 +/- 1.53706 ms
-  PhaseF (top-20 heap)       : 7.4385 +/- 0.0285175 ms
-  TOTAL                      : 572.585 +/- 2.42104 ms
+  PhaseA (orders scan)       : 91.141 +/- 0.325153 ms
+  PhaseB (orderkey OR)       : 258.775 +/- 0.980889 ms
+  PhaseC (returnflag OR)     : 0.9105 +/- 0.00930054 ms
+  PhaseD (AND + get_rowids)  : 8.4155 +/- 0.266332 ms
+  PhaseE (BMFetch + revenue) : 203.468 +/- 0.570606 ms
+  PhaseF (top-20 heap)       : 7.4755 +/- 0.0611984 ms
+  TOTAL                      : 569.976 +/- 1.37403 ms
 ================================================================
 
   [CSV] q10_results_SF10.csv
@@ -225,10 +225,10 @@ PRAGMA bm_tpch(10);
 PRAGMA load_bitmap('orderkey');
 PRAGMA load_bitmap('returnflag');
 PRAGMA bm_tpch(10);
-[load_bitmap] orderkey: scanned 59986052 rows in 651 ms
-[load_bitmap] orderkey: built WAH index (15000000 keys, 1265.8 MB) in 10597 ms
-[load_bitmap] returnflag: scanned 59986052 rows in 524 ms
-[load_bitmap] returnflag: built WAH index (3 keys, 23.218 MB) in 733 ms
+[load_bitmap] orderkey: scanned 59986052 rows in 646 ms
+[load_bitmap] orderkey: built WAH index (15000000 keys, 1265.8 MB) in 10646 ms
+[load_bitmap] returnflag: scanned 59986052 rows in 523 ms
+[load_bitmap] returnflag: built WAH index (3 keys, 23.218 MB) in 734 ms
 
 ================================================================
   TPC-H Q10 (BitEngine pattern, runtime semi-joins)
@@ -236,32 +236,32 @@ PRAGMA bm_tpch(10);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  WAH:  PhaseA(orders)=181.718  PhaseB(okey_OR)=100.758  PhaseC(rf_OR)=0.004  PhaseD(AND+rids)=29.238  PhaseE(BMFetch+agg)=374.425  PhaseF(top20)=7.862  Total=694.008  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  WAH:  PhaseA(orders)=178.93  PhaseB(okey_OR)=102.189  PhaseC(rf_OR)=0.005  PhaseD(AND+rids)=29.406  PhaseE(BMFetch+agg)=369.77  PhaseF(top20)=7.722  Total=688.023  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 2/5 ---
-  WAH:  PhaseA(orders)=91.416  PhaseB(okey_OR)=102.1  PhaseC(rf_OR)=0.006  PhaseD(AND+rids)=29.345  PhaseE(BMFetch+agg)=205.342  PhaseF(top20)=7.578  Total=435.791  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  WAH:  PhaseA(orders)=91.205  PhaseB(okey_OR)=102.689  PhaseC(rf_OR)=0.005  PhaseD(AND+rids)=29.551  PhaseE(BMFetch+agg)=202.226  PhaseF(top20)=7.404  Total=433.082  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 3/5 ---
-  WAH:  PhaseA(orders)=91.259  PhaseB(okey_OR)=101.315  PhaseC(rf_OR)=0.005  PhaseD(AND+rids)=29.414  PhaseE(BMFetch+agg)=203.299  PhaseF(top20)=7.582  Total=432.876  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  WAH:  PhaseA(orders)=90.843  PhaseB(okey_OR)=102.335  PhaseC(rf_OR)=0.005  PhaseD(AND+rids)=29.321  PhaseE(BMFetch+agg)=203.281  PhaseF(top20)=7.568  Total=433.355  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 4/5 ---
-  WAH:  PhaseA(orders)=91.393  PhaseB(okey_OR)=102.865  PhaseC(rf_OR)=0.005  PhaseD(AND+rids)=29.326  PhaseE(BMFetch+agg)=207.382  PhaseF(top20)=7.655  Total=438.629  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  WAH:  PhaseA(orders)=90.29  PhaseB(okey_OR)=101.702  PhaseC(rf_OR)=0.005  PhaseD(AND+rids)=29.293  PhaseE(BMFetch+agg)=207.566  PhaseF(top20)=7.446  Total=436.304  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 5/5 ---
-  WAH:  PhaseA(orders)=90.744  PhaseB(okey_OR)=102.688  PhaseC(rf_OR)=0.005  PhaseD(AND+rids)=29.527  PhaseE(BMFetch+agg)=207.672  PhaseF(top20)=7.708  Total=438.346  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  WAH:  PhaseA(orders)=90.109  PhaseB(okey_OR)=102.33  PhaseC(rf_OR)=0.005  PhaseD(AND+rids)=29.242  PhaseE(BMFetch+agg)=201.443  PhaseF(top20)=7.572  Total=430.704  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 [OK] WAH matches DuckDB SQL ground truth (top-1 custkey=1237537 revenue=884990).
 
 ================================================================
   Q10 RESULTS — WAH (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (orders scan)       : 91.326 +/- 0.271701 ms
-  PhaseB (orderkey OR)       : 102.394 +/- 0.605504 ms
-  PhaseC (returnflag OR)     : 0.005 +/- 0.000433013 ms
-  PhaseD (AND + get_rowids)  : 29.3795 +/- 0.0787242 ms
-  PhaseE (BMFetch + revenue) : 206.362 +/- 1.76144 ms
-  PhaseF (top-20 heap)       : 7.6185 +/- 0.0541173 ms
-  TOTAL                      : 437.068 +/- 2.3208 ms
+  PhaseA (orders scan)       : 90.5665 +/- 0.436378 ms
+  PhaseB (orderkey OR)       : 102.332 +/- 0.355621 ms
+  PhaseC (returnflag OR)     : 0.005 +/- 0 ms
+  PhaseD (AND + get_rowids)  : 29.307 +/- 0.118472 ms
+  PhaseE (BMFetch + revenue) : 202.754 +/- 2.36475 ms
+  PhaseF (top-20 heap)       : 7.507 +/- 0.0740186 ms
+  TOTAL                      : 433.219 +/- 1.98738 ms
 ================================================================
 
   [CSV] q10_results_SF10.csv
@@ -298,10 +298,10 @@ PRAGMA bm_tpch(10);
 PRAGMA load_bitmap('orderkey');
 PRAGMA load_bitmap('returnflag');
 PRAGMA bm_tpch(10);
-[load_bitmap] orderkey: scanned 59986052 rows in 647 ms
-[load_bitmap] orderkey: built EWAH index (15000000 keys, 365.622 MB) in 5151 ms
-[load_bitmap] returnflag: scanned 59986052 rows in 523 ms
-[load_bitmap] returnflag: built EWAH index (3 keys, 22.4948 MB) in 463 ms
+[load_bitmap] orderkey: scanned 59986052 rows in 653 ms
+[load_bitmap] orderkey: built EWAH index (15000000 keys, 365.622 MB) in 5186 ms
+[load_bitmap] returnflag: scanned 59986052 rows in 524 ms
+[load_bitmap] returnflag: built EWAH index (3 keys, 22.4948 MB) in 518 ms
 
 ================================================================
   TPC-H Q10 (BitEngine pattern, runtime semi-joins)
@@ -309,32 +309,32 @@ PRAGMA bm_tpch(10);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  EWAH:  PhaseA(orders)=206.568  PhaseB(okey_OR)=567.923  PhaseC(rf_OR)=1.796  PhaseD(AND+rids)=24.17  PhaseE(BMFetch+agg)=376.269  PhaseF(top20)=7.572  Total=1184.3  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  EWAH:  PhaseA(orders)=187.203  PhaseB(okey_OR)=540.752  PhaseC(rf_OR)=1.588  PhaseD(AND+rids)=17.976  PhaseE(BMFetch+agg)=381.093  PhaseF(top20)=8.155  Total=1136.77  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 2/5 ---
-  EWAH:  PhaseA(orders)=100.517  PhaseB(okey_OR)=553.891  PhaseC(rf_OR)=1.816  PhaseD(AND+rids)=24.917  PhaseE(BMFetch+agg)=208.773  PhaseF(top20)=7.36  Total=897.277  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  EWAH:  PhaseA(orders)=92.558  PhaseB(okey_OR)=540.27  PhaseC(rf_OR)=1.261  PhaseD(AND+rids)=17.988  PhaseE(BMFetch+agg)=209.423  PhaseF(top20)=7.651  Total=869.153  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 3/5 ---
-  EWAH:  PhaseA(orders)=92.025  PhaseB(okey_OR)=546.143  PhaseC(rf_OR)=1.312  PhaseD(AND+rids)=17.945  PhaseE(BMFetch+agg)=208.823  PhaseF(top20)=7.287  Total=873.538  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  EWAH:  PhaseA(orders)=91.896  PhaseB(okey_OR)=546.418  PhaseC(rf_OR)=1.354  PhaseD(AND+rids)=18.136  PhaseE(BMFetch+agg)=209.433  PhaseF(top20)=7.721  Total=874.96  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 4/5 ---
-  EWAH:  PhaseA(orders)=93.417  PhaseB(okey_OR)=554.158  PhaseC(rf_OR)=1.335  PhaseD(AND+rids)=18.11  PhaseE(BMFetch+agg)=210.067  PhaseF(top20)=7.335  Total=884.424  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  EWAH:  PhaseA(orders)=92.197  PhaseB(okey_OR)=545.431  PhaseC(rf_OR)=2.087  PhaseD(AND+rids)=18.179  PhaseE(BMFetch+agg)=210.987  PhaseF(top20)=7.862  Total=876.745  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 5/5 ---
-  EWAH:  PhaseA(orders)=92.844  PhaseB(okey_OR)=543.99  PhaseC(rf_OR)=1.339  PhaseD(AND+rids)=18.154  PhaseE(BMFetch+agg)=209.205  PhaseF(top20)=7.427  Total=872.962  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  EWAH:  PhaseA(orders)=92.098  PhaseB(okey_OR)=543.825  PhaseC(rf_OR)=1.627  PhaseD(AND+rids)=17.986  PhaseE(BMFetch+agg)=208.829  PhaseF(top20)=7.684  Total=872.051  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 [OK] EWAH matches DuckDB SQL ground truth (top-1 custkey=1237537 revenue=884990).
 
 ================================================================
   Q10 RESULTS — EWAH (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (orders scan)       : 93.1305 +/- 3.39426 ms
-  PhaseB (orderkey OR)       : 550.017 +/- 4.5442 ms
-  PhaseC (returnflag OR)     : 1.337 +/- 0.211273 ms
-  PhaseD (AND + get_rowids)  : 18.132 +/- 2.96601 ms
-  PhaseE (BMFetch + revenue) : 209.014 +/- 0.518415 ms
-  PhaseF (top-20 heap)       : 7.3475 +/- 0.0505043 ms
-  TOTAL                      : 878.981 +/- 9.90635 ms
+  PhaseA (orders scan)       : 92.1475 +/- 0.23997 ms
+  PhaseB (orderkey OR)       : 544.628 +/- 2.33652 ms
+  PhaseC (returnflag OR)     : 1.4905 +/- 0.320965 ms
+  PhaseD (AND + get_rowids)  : 18.062 +/- 0.0865978 ms
+  PhaseE (BMFetch + revenue) : 209.428 +/- 0.799833 ms
+  PhaseF (top-20 heap)       : 7.7025 +/- 0.0804068 ms
+  TOTAL                      : 873.505 +/- 2.88791 ms
 ================================================================
 
   [CSV] q10_results_SF10.csv
@@ -371,10 +371,10 @@ PRAGMA bm_tpch(10);
 PRAGMA load_bitmap('orderkey');
 PRAGMA load_bitmap('returnflag');
 PRAGMA bm_tpch(10);
-[load_bitmap] orderkey: scanned 59986052 rows in 648 ms
-[load_bitmap] orderkey: built Concise index (15000000 keys, 239.944 MB) in 4869 ms
-[load_bitmap] returnflag: scanned 59986052 rows in 524 ms
-[load_bitmap] returnflag: built Concise index (3 keys, 239.944 MB) in 633 ms
+[load_bitmap] orderkey: scanned 59986052 rows in 641 ms
+[load_bitmap] orderkey: built Concise index (15000000 keys, 239.944 MB) in 4902 ms
+[load_bitmap] returnflag: scanned 59986052 rows in 526 ms
+[load_bitmap] returnflag: built Concise index (3 keys, 239.944 MB) in 637 ms
 
 ================================================================
   TPC-H Q10 (BitEngine pattern, runtime semi-joins)
@@ -382,32 +382,32 @@ PRAGMA bm_tpch(10);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  Concise:  PhaseA(orders)=210.413  PhaseB(okey_OR)=561.35  PhaseC(rf_OR)=4.103  PhaseD(AND+rids)=48.744  PhaseE(BMFetch+agg)=377.714  PhaseF(top20)=7.815  Total=1210.14  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  Concise:  PhaseA(orders)=184.345  PhaseB(okey_OR)=528.636  PhaseC(rf_OR)=1.296  PhaseD(AND+rids)=38.568  PhaseE(BMFetch+agg)=378.618  PhaseF(top20)=7.769  Total=1139.24  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 2/5 ---
-  Concise:  PhaseA(orders)=108.91  PhaseB(okey_OR)=538.287  PhaseC(rf_OR)=4.064  PhaseD(AND+rids)=39.362  PhaseE(BMFetch+agg)=210.125  PhaseF(top20)=7.642  Total=908.393  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  Concise:  PhaseA(orders)=90.953  PhaseB(okey_OR)=534.999  PhaseC(rf_OR)=1.288  PhaseD(AND+rids)=38.467  PhaseE(BMFetch+agg)=207.816  PhaseF(top20)=7.423  Total=880.949  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 3/5 ---
-  Concise:  PhaseA(orders)=97.735  PhaseB(okey_OR)=540.75  PhaseC(rf_OR)=4.343  PhaseD(AND+rids)=50.213  PhaseE(BMFetch+agg)=210.697  PhaseF(top20)=7.617  Total=911.359  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  Concise:  PhaseA(orders)=89.878  PhaseB(okey_OR)=531.919  PhaseC(rf_OR)=1.266  PhaseD(AND+rids)=38.625  PhaseE(BMFetch+agg)=207.65  PhaseF(top20)=7.58  Total=876.921  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 4/5 ---
-  Concise:  PhaseA(orders)=97.658  PhaseB(okey_OR)=544.311  PhaseC(rf_OR)=5.392  PhaseD(AND+rids)=50.392  PhaseE(BMFetch+agg)=210.649  PhaseF(top20)=7.578  Total=915.983  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  Concise:  PhaseA(orders)=90.882  PhaseB(okey_OR)=533.173  PhaseC(rf_OR)=1.495  PhaseD(AND+rids)=38.196  PhaseE(BMFetch+agg)=209.225  PhaseF(top20)=7.607  Total=880.58  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 5/5 ---
-  Concise:  PhaseA(orders)=97.718  PhaseB(okey_OR)=543.525  PhaseC(rf_OR)=4.17  PhaseD(AND+rids)=50.082  PhaseE(BMFetch+agg)=211.192  PhaseF(top20)=7.732  Total=914.42  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  Concise:  PhaseA(orders)=90.068  PhaseB(okey_OR)=535.693  PhaseC(rf_OR)=1.44  PhaseD(AND+rids)=38.184  PhaseE(BMFetch+agg)=209.477  PhaseF(top20)=7.637  Total=882.501  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 [OK] Concise matches DuckDB SQL ground truth (top-1 custkey=1237537 revenue=884990).
 
 ================================================================
   Q10 RESULTS — Concise (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (orders scan)       : 97.7265 +/- 4.85257 ms
-  PhaseB (orderkey OR)       : 542.138 +/- 2.3821 ms
-  PhaseC (returnflag OR)     : 4.2565 +/- 0.52893 ms
-  PhaseD (AND + get_rowids)  : 50.1475 +/- 4.70684 ms
-  PhaseE (BMFetch + revenue) : 210.673 +/- 0.377693 ms
-  PhaseF (top-20 heap)       : 7.6295 +/- 0.0566144 ms
-  TOTAL                      : 912.889 +/- 2.91466 ms
+  PhaseA (orders scan)       : 90.475 +/- 0.477664 ms
+  PhaseB (orderkey OR)       : 534.086 +/- 1.48888 ms
+  PhaseC (returnflag OR)     : 1.364 +/- 0.0975253 ms
+  PhaseD (AND + get_rowids)  : 38.3315 +/- 0.186608 ms
+  PhaseE (BMFetch + revenue) : 208.52 +/- 0.816005 ms
+  PhaseF (top-20 heap)       : 7.5935 +/- 0.0826056 ms
+  TOTAL                      : 880.764 +/- 2.0461 ms
 ================================================================
 
   [CSV] q10_results_SF10.csv

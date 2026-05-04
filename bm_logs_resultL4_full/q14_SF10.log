@@ -5,8 +5,8 @@
 # sql=
 PRAGMA load_bitmap('shipdate');
 PRAGMA bm_tpch(14);
-[load_bitmap] shipdate: scanned 59986052 rows in 736 ms
-[load_bitmap] shipdate: built ComBit index (2526 keys, 6586.64 MB) in 23951 ms
+[load_bitmap] shipdate: scanned 59986052 rows in 728 ms
+[load_bitmap] shipdate: built ComBit index (2526 keys, 6586.7 MB) in 23898 ms
 
 ================================================================
   TPC-H Q14 (BitEngine pattern, runtime part-join)
@@ -14,29 +14,29 @@ PRAGMA bm_tpch(14);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  ComBit:  PhaseA(shipdate_OR)=35.287  PhaseB(part_scan)=92.164  PhaseC(BMFetch+agg)=443.428  Total=570.881  rows=749223  promo_pct=16.647595
+  ComBit:  PhaseA(shipdate_OR)=32.746  PhaseB(part_scan)=90.38  PhaseC(BMFetch+agg)=434.555  Total=557.683  rows=749223  promo_pct=16.647595
 
 --- Iteration 2/5 ---
-  ComBit:  PhaseA(shipdate_OR)=32.845000  PhaseB(part_scan)=83.619000  PhaseC(BMFetch+agg)=90.959000  Total=207.424000  rows=749223  promo_pct=16.647595
+  ComBit:  PhaseA(shipdate_OR)=31.818000  PhaseB(part_scan)=83.480000  PhaseC(BMFetch+agg)=89.328000  Total=204.626000  rows=749223  promo_pct=16.647595
 
 --- Iteration 3/5 ---
-  ComBit:  PhaseA(shipdate_OR)=32.780000  PhaseB(part_scan)=83.543000  PhaseC(BMFetch+agg)=90.627000  Total=206.951000  rows=749223  promo_pct=16.647595
+  ComBit:  PhaseA(shipdate_OR)=31.448000  PhaseB(part_scan)=83.396000  PhaseC(BMFetch+agg)=89.585000  Total=204.430000  rows=749223  promo_pct=16.647595
 
 --- Iteration 4/5 ---
-  ComBit:  PhaseA(shipdate_OR)=33.134000  PhaseB(part_scan)=83.695000  PhaseC(BMFetch+agg)=91.343000  Total=208.173000  rows=749223  promo_pct=16.647595
+  ComBit:  PhaseA(shipdate_OR)=31.202000  PhaseB(part_scan)=83.353000  PhaseC(BMFetch+agg)=90.839000  Total=205.394000  rows=749223  promo_pct=16.647595
 
 --- Iteration 5/5 ---
-  ComBit:  PhaseA(shipdate_OR)=32.930000  PhaseB(part_scan)=83.476000  PhaseC(BMFetch+agg)=91.014000  Total=207.421000  rows=749223  promo_pct=16.647595
+  ComBit:  PhaseA(shipdate_OR)=31.695000  PhaseB(part_scan)=83.401000  PhaseC(BMFetch+agg)=90.457000  Total=205.554000  rows=749223  promo_pct=16.647595
 
 [OK] ComBit matches DuckDB SQL (promo_revenue = 16.647595).
 
 ================================================================
   Q14 RESULTS — ComBit (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (shipdate range OR): 32.887500 +/- 0.133324 ms
-  PhaseB (part scan PROMO)  : 83.581000 +/- 0.081989 ms
-  PhaseC (BMFetch + agg)    : 90.986500 +/- 0.253891 ms
-  TOTAL                     : 207.422500 +/- 0.437638 ms
+  PhaseA (shipdate range OR): 31.571500 +/- 0.236651 ms
+  PhaseB (part scan PROMO)  : 83.398500 +/- 0.045828 ms
+  PhaseC (BMFetch + agg)    : 90.021000 +/- 0.617588 ms
+  TOTAL                     : 205.010000 +/- 0.481384 ms
 ================================================================
 
   [CSV] q14_results_SF10.csv
@@ -51,8 +51,8 @@ PRAGMA bm_tpch(14);
 # sql=
 PRAGMA load_bitmap('shipdate');
 PRAGMA bm_tpch(14);
-[load_bitmap] shipdate: scanned 59986052 rows in 738 ms
-[load_bitmap] shipdate: built CRoaring index (2526 keys, 138.443 MB) in 1419 ms
+[load_bitmap] shipdate: scanned 59986052 rows in 724 ms
+[load_bitmap] shipdate: built CRoaring index (2526 keys, 138.443 MB) in 1394 ms
 
 ================================================================
   TPC-H Q14 (BitEngine pattern, runtime part-join)
@@ -60,29 +60,29 @@ PRAGMA bm_tpch(14);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  CRoaring:  PhaseA(shipdate_OR)=19.895  PhaseB(part_scan)=86.242  PhaseC(BMFetch+agg)=444.459  Total=550.598  rows=749223  promo_pct=16.647595
+  CRoaring:  PhaseA(shipdate_OR)=19.832  PhaseB(part_scan)=86.619  PhaseC(BMFetch+agg)=433.713  Total=540.165  rows=749223  promo_pct=16.647595
 
 --- Iteration 2/5 ---
-  CRoaring:  PhaseA(shipdate_OR)=20.194000  PhaseB(part_scan)=79.631000  PhaseC(BMFetch+agg)=87.949000  Total=187.775000  rows=749223  promo_pct=16.647595
+  CRoaring:  PhaseA(shipdate_OR)=20.807000  PhaseB(part_scan)=80.190000  PhaseC(BMFetch+agg)=89.177000  Total=190.174000  rows=749223  promo_pct=16.647595
 
 --- Iteration 3/5 ---
-  CRoaring:  PhaseA(shipdate_OR)=20.089000  PhaseB(part_scan)=78.794000  PhaseC(BMFetch+agg)=88.129000  Total=187.014000  rows=749223  promo_pct=16.647595
+  CRoaring:  PhaseA(shipdate_OR)=20.533000  PhaseB(part_scan)=79.894000  PhaseC(BMFetch+agg)=89.198000  Total=189.626000  rows=749223  promo_pct=16.647595
 
 --- Iteration 4/5 ---
-  CRoaring:  PhaseA(shipdate_OR)=20.095000  PhaseB(part_scan)=79.294000  PhaseC(BMFetch+agg)=88.336000  Total=187.726000  rows=749223  promo_pct=16.647595
+  CRoaring:  PhaseA(shipdate_OR)=20.148000  PhaseB(part_scan)=79.709000  PhaseC(BMFetch+agg)=89.283000  Total=189.141000  rows=749223  promo_pct=16.647595
 
 --- Iteration 5/5 ---
-  CRoaring:  PhaseA(shipdate_OR)=20.232000  PhaseB(part_scan)=79.302000  PhaseC(BMFetch+agg)=88.430000  Total=187.965000  rows=749223  promo_pct=16.647595
+  CRoaring:  PhaseA(shipdate_OR)=20.361000  PhaseB(part_scan)=79.721000  PhaseC(BMFetch+agg)=90.031000  Total=190.115000  rows=749223  promo_pct=16.647595
 
 [OK] CRoaring matches DuckDB SQL (promo_revenue = 16.647595).
 
 ================================================================
   Q14 RESULTS — CRoaring (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (shipdate range OR): 20.144500 +/- 0.062010 ms
-  PhaseB (part scan PROMO)  : 79.298000 +/- 0.299010 ms
-  PhaseC (BMFetch + agg)    : 88.232500 +/- 0.186383 ms
-  TOTAL                     : 187.750500 +/- 0.361082 ms
+  PhaseA (shipdate range OR): 20.447000 +/- 0.241279 ms
+  PhaseB (part scan PROMO)  : 79.807500 +/- 0.194171 ms
+  PhaseC (BMFetch + agg)    : 89.240500 +/- 0.353696 ms
+  TOTAL                     : 189.870500 +/- 0.417874 ms
 ================================================================
 
   [CSV] q14_results_SF10.csv
@@ -97,8 +97,8 @@ PRAGMA bm_tpch(14);
 # sql=
 PRAGMA load_bitmap('shipdate');
 PRAGMA bm_tpch(14);
-[load_bitmap] shipdate: scanned 59986052 rows in 710 ms
-[load_bitmap] shipdate: built CRoaringRun index (2526 keys, 138.443 MB) in 1497 ms
+[load_bitmap] shipdate: scanned 59986052 rows in 718 ms
+[load_bitmap] shipdate: built CRoaringRun index (2526 keys, 138.443 MB) in 1478 ms
 
 ================================================================
   TPC-H Q14 (BitEngine pattern, runtime part-join)
@@ -106,29 +106,29 @@ PRAGMA bm_tpch(14);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  CRoaringRun:  PhaseA(shipdate_OR)=11.545  PhaseB(part_scan)=85.277  PhaseC(BMFetch+agg)=435.648  Total=532.471  rows=749223  promo_pct=16.647595
+  CRoaringRun:  PhaseA(shipdate_OR)=11.312  PhaseB(part_scan)=85.819  PhaseC(BMFetch+agg)=437.577  Total=534.709  rows=749223  promo_pct=16.647595
 
 --- Iteration 2/5 ---
-  CRoaringRun:  PhaseA(shipdate_OR)=10.804000  PhaseB(part_scan)=78.677000  PhaseC(BMFetch+agg)=89.162000  Total=178.644000  rows=749223  promo_pct=16.647595
+  CRoaringRun:  PhaseA(shipdate_OR)=10.917000  PhaseB(part_scan)=78.656000  PhaseC(BMFetch+agg)=87.753000  Total=177.327000  rows=749223  promo_pct=16.647595
 
 --- Iteration 3/5 ---
-  CRoaringRun:  PhaseA(shipdate_OR)=10.718000  PhaseB(part_scan)=78.541000  PhaseC(BMFetch+agg)=89.138000  Total=178.398000  rows=749223  promo_pct=16.647595
+  CRoaringRun:  PhaseA(shipdate_OR)=10.591000  PhaseB(part_scan)=78.447000  PhaseC(BMFetch+agg)=87.780000  Total=176.819000  rows=749223  promo_pct=16.647595
 
 --- Iteration 4/5 ---
-  CRoaringRun:  PhaseA(shipdate_OR)=11.017000  PhaseB(part_scan)=78.591000  PhaseC(BMFetch+agg)=89.060000  Total=178.668000  rows=749223  promo_pct=16.647595
+  CRoaringRun:  PhaseA(shipdate_OR)=10.630000  PhaseB(part_scan)=78.423000  PhaseC(BMFetch+agg)=88.008000  Total=177.062000  rows=749223  promo_pct=16.647595
 
 --- Iteration 5/5 ---
-  CRoaringRun:  PhaseA(shipdate_OR)=10.730000  PhaseB(part_scan)=78.493000  PhaseC(BMFetch+agg)=88.716000  Total=177.941000  rows=749223  promo_pct=16.647595
+  CRoaringRun:  PhaseA(shipdate_OR)=10.559000  PhaseB(part_scan)=78.514000  PhaseC(BMFetch+agg)=88.069000  Total=177.142000  rows=749223  promo_pct=16.647595
 
 [OK] CRoaringRun matches DuckDB SQL (promo_revenue = 16.647595).
 
 ================================================================
   Q14 RESULTS — CRoaringRun (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (shipdate range OR): 10.767000 +/- 0.119936 ms
-  PhaseB (part scan PROMO)  : 78.566000 +/- 0.068079 ms
-  PhaseC (BMFetch + agg)    : 89.099000 +/- 0.178955 ms
-  TOTAL                     : 178.521000 +/- 0.292145 ms
+  PhaseA (shipdate range OR): 10.610500 +/- 0.142389 ms
+  PhaseB (part scan PROMO)  : 78.480500 +/- 0.090650 ms
+  PhaseC (BMFetch + agg)    : 87.894000 +/- 0.138030 ms
+  TOTAL                     : 177.102000 +/- 0.182396 ms
 ================================================================
 
   [CSV] q14_results_SF10.csv
@@ -143,8 +143,8 @@ PRAGMA bm_tpch(14);
 # sql=
 PRAGMA load_bitmap('shipdate');
 PRAGMA bm_tpch(14);
-[load_bitmap] shipdate: scanned 59986052 rows in 731 ms
-[load_bitmap] shipdate: built WAH index (2526 keys, 467.132 MB) in 1919 ms
+[load_bitmap] shipdate: scanned 59986052 rows in 722 ms
+[load_bitmap] shipdate: built WAH index (2526 keys, 467.132 MB) in 1996 ms
 
 ================================================================
   TPC-H Q14 (BitEngine pattern, runtime part-join)
@@ -152,29 +152,29 @@ PRAGMA bm_tpch(14);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  WAH:  PhaseA(shipdate_OR)=27.623  PhaseB(part_scan)=85.651  PhaseC(BMFetch+agg)=445.471  Total=558.746  rows=749223  promo_pct=16.647595
+  WAH:  PhaseA(shipdate_OR)=27.681  PhaseB(part_scan)=85.561  PhaseC(BMFetch+agg)=437.161  Total=550.404  rows=749223  promo_pct=16.647595
 
 --- Iteration 2/5 ---
-  WAH:  PhaseA(shipdate_OR)=27.623000  PhaseB(part_scan)=78.642000  PhaseC(BMFetch+agg)=93.437000  Total=199.704000  rows=749223  promo_pct=16.647595
+  WAH:  PhaseA(shipdate_OR)=27.317000  PhaseB(part_scan)=78.788000  PhaseC(BMFetch+agg)=88.203000  Total=194.309000  rows=749223  promo_pct=16.647595
 
 --- Iteration 3/5 ---
-  WAH:  PhaseA(shipdate_OR)=27.090000  PhaseB(part_scan)=78.285000  PhaseC(BMFetch+agg)=93.816000  Total=199.192000  rows=749223  promo_pct=16.647595
+  WAH:  PhaseA(shipdate_OR)=26.763000  PhaseB(part_scan)=78.618000  PhaseC(BMFetch+agg)=88.200000  Total=193.582000  rows=749223  promo_pct=16.647595
 
 --- Iteration 4/5 ---
-  WAH:  PhaseA(shipdate_OR)=26.948000  PhaseB(part_scan)=78.312000  PhaseC(BMFetch+agg)=93.851000  Total=199.112000  rows=749223  promo_pct=16.647595
+  WAH:  PhaseA(shipdate_OR)=26.655000  PhaseB(part_scan)=78.809000  PhaseC(BMFetch+agg)=88.640000  Total=194.105000  rows=749223  promo_pct=16.647595
 
 --- Iteration 5/5 ---
-  WAH:  PhaseA(shipdate_OR)=27.193000  PhaseB(part_scan)=78.205000  PhaseC(BMFetch+agg)=93.300000  Total=198.699000  rows=749223  promo_pct=16.647595
+  WAH:  PhaseA(shipdate_OR)=26.857000  PhaseB(part_scan)=78.880000  PhaseC(BMFetch+agg)=89.340000  Total=195.078000  rows=749223  promo_pct=16.647595
 
 [OK] WAH matches DuckDB SQL (promo_revenue = 16.647595).
 
 ================================================================
   Q14 RESULTS — WAH (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (shipdate range OR): 27.141500 +/- 0.251919 ms
-  PhaseB (part scan PROMO)  : 78.298500 +/- 0.166939 ms
-  PhaseC (BMFetch + agg)    : 93.626500 +/- 0.237814 ms
-  TOTAL                     : 199.152000 +/- 0.357303 ms
+  PhaseA (shipdate range OR): 26.810000 +/- 0.252248 ms
+  PhaseB (part scan PROMO)  : 78.798500 +/- 0.096167 ms
+  PhaseC (BMFetch + agg)    : 88.421500 +/- 0.465493 ms
+  TOTAL                     : 194.207000 +/- 0.537342 ms
 ================================================================
 
   [CSV] q14_results_SF10.csv
@@ -189,8 +189,8 @@ PRAGMA bm_tpch(14);
 # sql=
 PRAGMA load_bitmap('shipdate');
 PRAGMA bm_tpch(14);
-[load_bitmap] shipdate: scanned 59986052 rows in 724 ms
-[load_bitmap] shipdate: built EWAH index (2526 keys, 921.388 MB) in 1516 ms
+[load_bitmap] shipdate: scanned 59986052 rows in 718 ms
+[load_bitmap] shipdate: built EWAH index (2526 keys, 921.388 MB) in 1510 ms
 
 ================================================================
   TPC-H Q14 (BitEngine pattern, runtime part-join)
@@ -198,29 +198,29 @@ PRAGMA bm_tpch(14);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  EWAH:  PhaseA(shipdate_OR)=63.058  PhaseB(part_scan)=85.434  PhaseC(BMFetch+agg)=440.556  Total=589.048  rows=749223  promo_pct=16.647595
+  EWAH:  PhaseA(shipdate_OR)=63.344  PhaseB(part_scan)=85.023  PhaseC(BMFetch+agg)=432.043  Total=580.411  rows=749223  promo_pct=16.647595
 
 --- Iteration 2/5 ---
-  EWAH:  PhaseA(shipdate_OR)=63.326000  PhaseB(part_scan)=78.389000  PhaseC(BMFetch+agg)=89.787000  Total=231.503000  rows=749223  promo_pct=16.647595
+  EWAH:  PhaseA(shipdate_OR)=63.288000  PhaseB(part_scan)=78.401000  PhaseC(BMFetch+agg)=88.839000  Total=230.530000  rows=749223  promo_pct=16.647595
 
 --- Iteration 3/5 ---
-  EWAH:  PhaseA(shipdate_OR)=62.889000  PhaseB(part_scan)=78.353000  PhaseC(BMFetch+agg)=89.738000  Total=230.981000  rows=749223  promo_pct=16.647595
+  EWAH:  PhaseA(shipdate_OR)=63.164000  PhaseB(part_scan)=78.429000  PhaseC(BMFetch+agg)=89.290000  Total=230.884000  rows=749223  promo_pct=16.647595
 
 --- Iteration 4/5 ---
-  EWAH:  PhaseA(shipdate_OR)=63.026000  PhaseB(part_scan)=78.530000  PhaseC(BMFetch+agg)=89.057000  Total=230.615000  rows=749223  promo_pct=16.647595
+  EWAH:  PhaseA(shipdate_OR)=63.423000  PhaseB(part_scan)=78.276000  PhaseC(BMFetch+agg)=88.720000  Total=230.420000  rows=749223  promo_pct=16.647595
 
 --- Iteration 5/5 ---
-  EWAH:  PhaseA(shipdate_OR)=63.189000  PhaseB(part_scan)=78.579000  PhaseC(BMFetch+agg)=89.402000  Total=231.171000  rows=749223  promo_pct=16.647595
+  EWAH:  PhaseA(shipdate_OR)=62.919000  PhaseB(part_scan)=78.394000  PhaseC(BMFetch+agg)=88.933000  Total=230.246000  rows=749223  promo_pct=16.647595
 
 [OK] EWAH matches DuckDB SQL (promo_revenue = 16.647595).
 
 ================================================================
   Q14 RESULTS — EWAH (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (shipdate range OR): 63.107500 +/- 0.164901 ms
-  PhaseB (part scan PROMO)  : 78.459500 +/- 0.094235 ms
-  PhaseC (BMFetch + agg)    : 89.570000 +/- 0.293599 ms
-  TOTAL                     : 231.076000 +/- 0.321174 ms
+  PhaseA (shipdate range OR): 63.226000 +/- 0.185554 ms
+  PhaseB (part scan PROMO)  : 78.397500 +/- 0.058639 ms
+  PhaseC (BMFetch + agg)    : 88.886000 +/- 0.212738 ms
+  TOTAL                     : 230.475000 +/- 0.233277 ms
 ================================================================
 
   [CSV] q14_results_SF10.csv
@@ -235,7 +235,7 @@ PRAGMA bm_tpch(14);
 # sql=
 PRAGMA load_bitmap('shipdate');
 PRAGMA bm_tpch(14);
-[load_bitmap] shipdate: scanned 59986052 rows in 734 ms
+[load_bitmap] shipdate: scanned 59986052 rows in 714 ms
 [load_bitmap] shipdate: built Concise index (2526 keys, 239.944 MB) in 1421 ms
 
 ================================================================
@@ -244,18 +244,35 @@ PRAGMA bm_tpch(14);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  Concise:  PhaseA(shipdate_OR)=68.9  PhaseB(part_scan)=88.298  PhaseC(BMFetch+agg)=440.475  Total=597.675  rows=749223  promo_pct=16.647595
+  Concise:  PhaseA(shipdate_OR)=69.881  PhaseB(part_scan)=87.79  PhaseC(BMFetch+agg)=433.88  Total=591.552  rows=749223  promo_pct=16.647595
 
 --- Iteration 2/5 ---
-  Concise:  PhaseA(shipdate_OR)=69.019000  PhaseB(part_scan)=79.494000  PhaseC(BMFetch+agg)=89.340000  Total=237.855000  rows=749223  promo_pct=16.647595
+  Concise:  PhaseA(shipdate_OR)=69.808000  PhaseB(part_scan)=79.051000  PhaseC(BMFetch+agg)=88.436000  Total=237.296000  rows=749223  promo_pct=16.647595
 
 --- Iteration 3/5 ---
-  Concise:  PhaseA(shipdate_OR)=68.536000  PhaseB(part_scan)=79.329000  PhaseC(BMFetch+agg)=90.966000  Total=238.832000  rows=749223  promo_pct=16.647595
+  Concise:  PhaseA(shipdate_OR)=69.426000  PhaseB(part_scan)=78.923000  PhaseC(BMFetch+agg)=88.783000  Total=237.133000  rows=749223  promo_pct=16.647595
 
 --- Iteration 4/5 ---
-  Concise:  PhaseA(shipdate_OR)=68.707000  PhaseB(part_scan)=79.301000  PhaseC(BMFetch+agg)=89.951000  Total=237.960000  rows=749223  promo_pct=16.647595
+  Concise:  PhaseA(shipdate_OR)=69.463000  PhaseB(part_scan)=78.922000  PhaseC(BMFetch+agg)=89.024000  Total=237.411000  rows=749223  promo_pct=16.647595
 
 --- Iteration 5/5 ---
-  Concise:  PhaseA(shipdate_OR)=69.149000  PhaseB(part_scan)=79.517000  PhaseC(BMFetch+agg)=89.686000  Total=238.352000  rows=749223  promo_pct=16.647595
+  Concise:  PhaseA(shipdate_OR)=69.144000  PhaseB(part_scan)=79.013000  PhaseC(BMFetch+agg)=89.384000  Total=237.542000  rows=749223  promo_pct=16.647595
 
-# Backend CON returncode=-11
+[OK] Concise matches DuckDB SQL (promo_revenue = 16.647595).
+
+================================================================
+  Q14 RESULTS — Concise (4 measured iter, median +/- stddev)
+================================================================
+  PhaseA (shipdate range OR): 69.444500 +/- 0.235651 ms
+  PhaseB (part scan PROMO)  : 78.968000 +/- 0.056375 ms
+  PhaseC (BMFetch + agg)    : 88.903500 +/- 0.345845 ms
+  TOTAL                     : 237.353500 +/- 0.150424 ms
+================================================================
+
+  [CSV] q14_results_SF10.csv
+┌────────────────────┐
+│   promo_revenue    │
+│       double       │
+├────────────────────┤
+│ 16.647594941615097 │
+└────────────────────┘
