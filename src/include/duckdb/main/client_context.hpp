@@ -114,6 +114,8 @@ public:
 	void* bitmap_quantity   = nullptr;   // lineitem.l_quantity
 	void* bitmap_shipmode   = nullptr;   // lineitem.l_shipmode
 	void* bitmap_shipinstr  = nullptr;   // lineitem.l_shipinstruct
+	void* bitmap_receiptdate = nullptr;  // lineitem.l_receiptdate (Q12)
+	void* bitmap_commitdate  = nullptr;  // lineitem.l_commitdate (reserved)
 	// Group-Encoded variants (per teacher Q6): one bitmap per group
 	// instead of per-value.  E.g. `bitmap_shipdate_GE` = 1 bitmap per
 	// 3-month / per-year group.

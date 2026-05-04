@@ -105,6 +105,8 @@ static ColInfo resolve_column(const std::string& col) {
     if (col == "quantity")    return {"lineitem", 4,  Q1ColKind::Int64};
     if (col == "shipmode")    return {"lineitem", 14, Q1ColKind::VarChar};
     if (col == "shipinstruct")return {"lineitem", 13, Q1ColKind::VarChar};
+    if (col == "receiptdate") return {"lineitem", 12, Q1ColKind::Int32};
+    if (col == "commitdate")  return {"lineitem", 11, Q1ColKind::Int32};
     return {"", -1, Q1ColKind::Int64};
 }
 
@@ -124,6 +126,8 @@ static void** resolve_context_field(ClientContext& ctx, const std::string& col) 
     if (col == "quantity")    return &ctx.bitmap_quantity;
     if (col == "shipmode")    return &ctx.bitmap_shipmode;
     if (col == "shipinstruct")return &ctx.bitmap_shipinstr;
+    if (col == "receiptdate") return &ctx.bitmap_receiptdate;
+    if (col == "commitdate")  return &ctx.bitmap_commitdate;
     return nullptr;
 }
 
