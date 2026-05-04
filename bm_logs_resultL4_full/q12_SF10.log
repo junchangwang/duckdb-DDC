@@ -1,82 +1,314 @@
 # cwd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev
-# cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(12);
+# pattern_qs_per_backend Q12
+
+# === Backend CB (DEBIT_BM=cb) ===
+# sql=
+PRAGMA load_bitmap('shipmode');
+PRAGMA load_bitmap('receiptdate');
+PRAGMA bm_tpch(12);
+[load_bitmap] shipmode: scanned 59986052 rows in 963 ms
+[load_bitmap] shipmode: built ComBit index (6 keys, 58.126 MB) in 2758 ms
+[load_bitmap] receiptdate: scanned 59986052 rows in 664 ms
+[load_bitmap] receiptdate: built ComBit index (2555 keys, 6593.2 MB) in 23662 ms
 
 ================================================================
-  TPC-H Q12 Benchmark — ComBit vs WAH vs CRoaring vs EWAH (SF10)
-  OR receiptdate days 731..1095 (365 bitmaps)
-  AND commit_lt_receipt, ship_lt_commit, then per-shipmode AND + 2x popcount_and
-  TPC-H params: shipmodes={MAIL, SHIP}, receiptdate [1994-01-01, 1995-01-01)
-  Bitmap dirs: tpch_q12_combit tpch_q12_croaring tpch_q12_wah tpch_q12_ewah
-  Iterations: 10 (first 2 = warm-up)
+  TPC-H Q12 (BitEngine pattern, runtime semi-joins)
+  Pre-loaded: bitmap_shipmode + bitmap_receiptdate
 ================================================================
-[Build priority] high=24010385 low=35975667 in 2128.27 ms
 
-[Load] Loading bitmaps (mode=ALL)...
-  WAH load:      953.893 ms
-  ComBit load:   1858.94 ms
-  CRoaring load: 726.755 ms
-  CRR load:      341.717 ms
-  EWAH load:     1200.81 ms
-  Bitset load:   1585.43 ms (shared by BS / BSA)
-  Concise load:  1067.88 ms
-  WAH      on disk: 97.15 MiB
-  ComBit   on disk: 100.81 MiB
-  CRoaring on disk: 48.56 MiB (shared by CR / CRR)
-  EWAH     on disk: 162.00 MiB
+--- Iteration 1/5 (warm-up) ---
+  ComBit:  PhaseA(orders)=762.138  PhaseB(shipmode_OR)=9.863  PhaseC(rdate_OR)=263.859  PhaseD(AND+rids)=42.768  PhaseE(BMFetch+agg)=578.433  Total=1657.06  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
 
---- Iteration 1/10 (warm-up) ---
-  CB:   OR=79.53  AND_pred=2.05  AND+Pop=10.28  Total=91.86  MAIL=(62071,93045)  SHIP=(62426,93261)
-  CR:   OR=205.99  AND_pred=11.05  AND+Pop=5.25  Total=222.29
-  CRR:  OR=35.36  AND_pred=11.03  AND+Pop=5.12  Total=51.51
-  WAH:  OR=40.26  AND_pred=1.39  AND+Pop=15.07  Total=56.73
-  EW:   OR=876.93  AND_pred=13.87  AND+Pop=22.61  Total=913.42
-  BS:   OR=356.12  AND_pred=1.95  AND+Pop=8.32  Total=366.39
-  BSA:  OR=236.08  AND_pred=1.30  AND+Pop=6.28  Total=243.65
-  CON:  OR=982.83  AND_pred=71.28  AND+Pop=81.20  Total=1135.31
+--- Iteration 2/5 ---
+  ComBit:  PhaseA(orders)=606.749  PhaseB(shipmode_OR)=6.383  PhaseC(rdate_OR)=263.558  PhaseD(AND+rids)=42.698  PhaseE(BMFetch+agg)=419.091  Total=1338.48  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
 
---- Iteration 2/10 (warm-up) ---
-  CB:   OR=79.47  AND_pred=2.05  AND+Pop=10.29  Total=91.82  MAIL=(62071,93045)  SHIP=(62426,93261)
-  CR:   OR=206.16  AND_pred=11.04  AND+Pop=5.15  Total=222.36
-  CRR:  OR=35.26  AND_pred=11.03  AND+Pop=5.04  Total=51.33
-  WAH:  OR=38.09  AND_pred=1.40  AND+Pop=13.03  Total=52.52
-  EW:   OR=873.03  AND_pred=15.85  AND+Pop=22.52  Total=911.40
-  BS:   OR=355.62  AND_pred=1.96  AND+Pop=8.30  Total=365.89
-  BSA:  OR=235.35  AND_pred=1.29  AND+Pop=6.01  Total=242.65
-  CON:  OR=979.61  AND_pred=71.00  AND+Pop=81.67  Total=1132.28
+--- Iteration 3/5 ---
+  ComBit:  PhaseA(orders)=604.678  PhaseB(shipmode_OR)=6.354  PhaseC(rdate_OR)=263.414  PhaseD(AND+rids)=42.609  PhaseE(BMFetch+agg)=416.079  Total=1333.14  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
 
---- Iteration 3/10 ---
-  CB:   OR=79.09  AND_pred=2.04  AND+Pop=10.34  Total=91.47  MAIL=(62071,93045)  SHIP=(62426,93261)
-  CR:   OR=206.69  AND_pred=10.96  AND+Pop=5.18  Total=222.85
-  CRR:  OR=35.43  AND_pred=11.04  AND+Pop=5.03  Total=51.50
-  WAH:  OR=38.74  AND_pred=1.41  AND+Pop=13.06  Total=53.21
-  EW:   OR=875.32  AND_pred=12.16  AND+Pop=21.93  Total=909.42
-  BS:   OR=356.50  AND_pred=1.93  AND+Pop=11.24  Total=369.68
-  BSA:  OR=235.78  AND_pred=1.29  AND+Pop=6.09  Total=243.17
-  CON:  OR=981.92  AND_pred=70.19  AND+Pop=81.36  Total=1133.47
+--- Iteration 4/5 ---
+  ComBit:  PhaseA(orders)=607.63  PhaseB(shipmode_OR)=6.396  PhaseC(rdate_OR)=262.979  PhaseD(AND+rids)=42.578  PhaseE(BMFetch+agg)=420.753  Total=1340.34  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
 
---- Iteration 4/10 ---
-  CB:   OR=79.53  AND_pred=2.04  AND+Pop=10.36  Total=91.94  MAIL=(62071,93045)  SHIP=(62426,93261)
-  CR:   OR=206.36  AND_pred=11.04  AND+Pop=5.17  Total=222.57
-  CRR:  OR=35.42  AND_pred=11.06  AND+Pop=5.03  Total=51.50
-  WAH:  OR=38.17  AND_pred=1.40  AND+Pop=13.16  Total=52.74
-  EW:   OR=879.73  AND_pred=11.97  AND+Pop=21.81  Total=913.51
-  BS:   OR=355.96  AND_pred=1.94  AND+Pop=10.68  Total=368.58
-  BSA:  OR=236.42  AND_pred=1.29  AND+Pop=6.12  Total=243.84
-  CON:  OR=988.28  AND_pred=70.53  AND+Pop=81.17  Total=1139.98
+--- Iteration 5/5 ---
+  ComBit:  PhaseA(orders)=607.643  PhaseB(shipmode_OR)=6.388  PhaseC(rdate_OR)=263.888  PhaseD(AND+rids)=43.219  PhaseE(BMFetch+agg)=418.932  Total=1340.07  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
 
---- Iteration 5/10 ---
-  CB:   OR=79.80  AND_pred=2.04  AND+Pop=10.34  Total=92.18  MAIL=(62071,93045)  SHIP=(62426,93261)
-  CR:   OR=206.72  AND_pred=10.99  AND+Pop=5.17  Total=222.88
-  CRR:  OR=35.25  AND_pred=11.06  AND+Pop=5.08  Total=51.40
-  WAH:  OR=38.24  AND_pred=1.40  AND+Pop=13.17  Total=52.81
-  EW:   OR=878.86  AND_pred=12.02  AND+Pop=21.81  Total=912.70
-  BS:   OR=354.11  AND_pred=1.94  AND+Pop=11.03  Total=367.08
-  BSA:  OR=235.49  AND_pred=1.28  AND+Pop=5.96  Total=242.74
-  CON:  OR=984.98  AND_pred=70.66  AND+Pop=80.96  Total=1136.60
+[OK] ComBit matches DuckDB SQL ground truth (MAIL 62071/93045, SHIP 62426/93261).
 
---- Iteration 6/10 ---
-  CB:   OR=80.05  AND_pred=2.04  AND+Pop=10.43  Total=92.52  MAIL=(62071,93045)  SHIP=(62426,93261)
-  CR:   OR=206.73  AND_pred=11.11  AND+Pop=5.14  Total=222.98
-  CRR:  OR=35.47  AND_pred=11.05  AND+Pop=5.04  Total=51.56
-  WAH:  OR=38.11  AND_pred=1.39  AND+Pop=13.14  Total=52.65
-  EW:   OR=879.63  AND_pred=12.05  AND+Pop=21.89  Total=913.58
+================================================================
+  Q12 RESULTS — ComBit (4 measured iter, median +/- stddev)
+================================================================
+  PhaseA (orders scan)         : 607.189 +/- 1.20857 ms
+  PhaseB (shipmode OR)         : 6.3855 +/- 0.0158489 ms
+  PhaseC (receiptdate range OR): 263.486 +/- 0.326445 ms
+  PhaseD (AND + get_rowids)    : 42.6535 +/- 0.259531 ms
+  PhaseE (BMFetch + agg)       : 419.012 +/- 1.68006 ms
+  TOTAL                        : 1339.28 +/- 2.90023 ms
+================================================================
+
+  [CSV] q12_results_SF10.csv
+┌────────────┬─────────────────┬────────────────┐
+│ l_shipmode │ high_line_count │ low_line_count │
+│  varchar   │     int128      │     int128     │
+├────────────┼─────────────────┼────────────────┤
+│ MAIL       │           62071 │          93045 │
+│ SHIP       │           62426 │          93261 │
+└────────────┴─────────────────┴────────────────┘
+
+# === Backend CR (DEBIT_BM=cr) ===
+# sql=
+PRAGMA load_bitmap('shipmode');
+PRAGMA load_bitmap('receiptdate');
+PRAGMA bm_tpch(12);
+[load_bitmap] shipmode: scanned 59986052 rows in 985 ms
+[load_bitmap] shipmode: built CRoaring index (6 keys, 45.0559 MB) in 903 ms
+[load_bitmap] receiptdate: scanned 59986052 rows in 680 ms
+[load_bitmap] receiptdate: built CRoaring index (2555 keys, 138.516 MB) in 1457 ms
+
+================================================================
+  TPC-H Q12 (BitEngine pattern, runtime semi-joins)
+  Pre-loaded: bitmap_shipmode + bitmap_receiptdate
+================================================================
+
+--- Iteration 1/5 (warm-up) ---
+  CRoaring:  PhaseA(orders)=766.758  PhaseB(shipmode_OR)=4.369  PhaseC(rdate_OR)=258.94  PhaseD(AND+rids)=27.916  PhaseE(BMFetch+agg)=578.578  Total=1636.56  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+--- Iteration 2/5 ---
+  CRoaring:  PhaseA(orders)=604.11  PhaseB(shipmode_OR)=1.687  PhaseC(rdate_OR)=255.565  PhaseD(AND+rids)=27.74  PhaseE(BMFetch+agg)=406.239  Total=1295.34  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+--- Iteration 3/5 ---
+  CRoaring:  PhaseA(orders)=606.493  PhaseB(shipmode_OR)=1.691  PhaseC(rdate_OR)=255.408  PhaseD(AND+rids)=25.12  PhaseE(BMFetch+agg)=398.692  Total=1287.4  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+--- Iteration 4/5 ---
+  CRoaring:  PhaseA(orders)=606.281  PhaseB(shipmode_OR)=1.684  PhaseC(rdate_OR)=256.3  PhaseD(AND+rids)=25.141  PhaseE(BMFetch+agg)=403.404  Total=1292.81  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+--- Iteration 5/5 ---
+  CRoaring:  PhaseA(orders)=606.691  PhaseB(shipmode_OR)=1.686  PhaseC(rdate_OR)=254.465  PhaseD(AND+rids)=25.167  PhaseE(BMFetch+agg)=403.334  Total=1291.35  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+[OK] CRoaring matches DuckDB SQL ground truth (MAIL 62071/93045, SHIP 62426/93261).
+
+================================================================
+  Q12 RESULTS — CRoaring (4 measured iter, median +/- stddev)
+================================================================
+  PhaseA (orders scan)         : 606.387 +/- 1.04 ms
+  PhaseB (shipmode OR)         : 1.6865 +/- 0.00254951 ms
+  PhaseC (receiptdate range OR): 255.486 +/- 0.653214 ms
+  PhaseD (AND + get_rowids)    : 25.154 +/- 1.1248 ms
+  PhaseE (BMFetch + agg)       : 403.369 +/- 2.70635 ms
+  TOTAL                        : 1292.08 +/- 2.87584 ms
+================================================================
+
+  [CSV] q12_results_SF10.csv
+┌────────────┬─────────────────┬────────────────┐
+│ l_shipmode │ high_line_count │ low_line_count │
+│  varchar   │     int128      │     int128     │
+├────────────┼─────────────────┼────────────────┤
+│ MAIL       │           62071 │          93045 │
+│ SHIP       │           62426 │          93261 │
+└────────────┴─────────────────┴────────────────┘
+
+# === Backend CRR (DEBIT_BM=crr) ===
+# sql=
+PRAGMA load_bitmap('shipmode');
+PRAGMA load_bitmap('receiptdate');
+PRAGMA bm_tpch(12);
+[load_bitmap] shipmode: scanned 59986052 rows in 966 ms
+[load_bitmap] shipmode: built CRoaringRun index (6 keys, 45.0559 MB) in 901 ms
+[load_bitmap] receiptdate: scanned 59986052 rows in 669 ms
+[load_bitmap] receiptdate: built CRoaringRun index (2555 keys, 138.516 MB) in 1521 ms
+
+================================================================
+  TPC-H Q12 (BitEngine pattern, runtime semi-joins)
+  Pre-loaded: bitmap_shipmode + bitmap_receiptdate
+================================================================
+
+--- Iteration 1/5 (warm-up) ---
+  CRoaringRun:  PhaseA(orders)=765.378  PhaseB(shipmode_OR)=4.48  PhaseC(rdate_OR)=40.73  PhaseD(AND+rids)=27.502  PhaseE(BMFetch+agg)=577.656  Total=1415.75  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+--- Iteration 2/5 ---
+  CRoaringRun:  PhaseA(orders)=603.152  PhaseB(shipmode_OR)=1.62  PhaseC(rdate_OR)=38.907  PhaseD(AND+rids)=27.374  PhaseE(BMFetch+agg)=408.622  Total=1079.68  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+--- Iteration 3/5 ---
+  CRoaringRun:  PhaseA(orders)=604.731  PhaseB(shipmode_OR)=1.617  PhaseC(rdate_OR)=38.069  PhaseD(AND+rids)=24.378  PhaseE(BMFetch+agg)=410.893  Total=1079.69  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+--- Iteration 4/5 ---
+  CRoaringRun:  PhaseA(orders)=605.129  PhaseB(shipmode_OR)=1.634  PhaseC(rdate_OR)=38.073  PhaseD(AND+rids)=24.624  PhaseE(BMFetch+agg)=407.628  Total=1077.09  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+--- Iteration 5/5 ---
+  CRoaringRun:  PhaseA(orders)=604.611  PhaseB(shipmode_OR)=1.633  PhaseC(rdate_OR)=37.907  PhaseD(AND+rids)=24.981  PhaseE(BMFetch+agg)=414.481  Total=1083.61  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+[OK] CRoaringRun matches DuckDB SQL ground truth (MAIL 62071/93045, SHIP 62426/93261).
+
+================================================================
+  Q12 RESULTS — CRoaringRun (4 measured iter, median +/- stddev)
+================================================================
+  PhaseA (orders scan)         : 604.671 +/- 0.748815 ms
+  PhaseB (shipmode OR)         : 1.6265 +/- 0.00758288 ms
+  PhaseC (receiptdate range OR): 38.071 +/- 0.391441 ms
+  PhaseD (AND + get_rowids)    : 24.8025 +/- 1.19417 ms
+  PhaseE (BMFetch + agg)       : 409.757 +/- 2.63357 ms
+  TOTAL                        : 1079.68 +/- 2.33068 ms
+================================================================
+
+  [CSV] q12_results_SF10.csv
+┌────────────┬─────────────────┬────────────────┐
+│ l_shipmode │ high_line_count │ low_line_count │
+│  varchar   │     int128      │     int128     │
+├────────────┼─────────────────┼────────────────┤
+│ MAIL       │           62071 │          93045 │
+│ SHIP       │           62426 │          93261 │
+└────────────┴─────────────────┴────────────────┘
+
+# === Backend WAH (DEBIT_BM=wah) ===
+# sql=
+PRAGMA load_bitmap('shipmode');
+PRAGMA load_bitmap('receiptdate');
+PRAGMA bm_tpch(12);
+[load_bitmap] shipmode: scanned 59986052 rows in 974 ms
+[load_bitmap] shipmode: built WAH index (6 keys, 46.4385 MB) in 1157 ms
+[load_bitmap] receiptdate: scanned 59986052 rows in 672 ms
+[load_bitmap] receiptdate: built WAH index (2555 keys, 467.733 MB) in 1936 ms
+
+================================================================
+  TPC-H Q12 (BitEngine pattern, runtime semi-joins)
+  Pre-loaded: bitmap_shipmode + bitmap_receiptdate
+================================================================
+
+--- Iteration 1/5 (warm-up) ---
+  WAH:  PhaseA(orders)=750.415  PhaseB(shipmode_OR)=20.013  PhaseC(rdate_OR)=862.905  PhaseD(AND+rids)=64.378  PhaseE(BMFetch+agg)=580.997  Total=2278.71  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+--- Iteration 2/5 ---
+  WAH:  PhaseA(orders)=604.784  PhaseB(shipmode_OR)=17.337  PhaseC(rdate_OR)=865.05  PhaseD(AND+rids)=75.261  PhaseE(BMFetch+agg)=411.452  Total=1973.88  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+--- Iteration 3/5 ---
+  WAH:  PhaseA(orders)=604.251  PhaseB(shipmode_OR)=17.039  PhaseC(rdate_OR)=868.903  PhaseD(AND+rids)=75.074  PhaseE(BMFetch+agg)=415.061  Total=1980.33  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+--- Iteration 4/5 ---
+  WAH:  PhaseA(orders)=604.659  PhaseB(shipmode_OR)=17.653  PhaseC(rdate_OR)=869.009  PhaseD(AND+rids)=75.424  PhaseE(BMFetch+agg)=415.543  Total=1982.29  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+--- Iteration 5/5 ---
+  WAH:  PhaseA(orders)=604.224  PhaseB(shipmode_OR)=17.464  PhaseC(rdate_OR)=865.699  PhaseD(AND+rids)=78.21  PhaseE(BMFetch+agg)=409.304  Total=1974.9  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+[OK] WAH matches DuckDB SQL ground truth (MAIL 62071/93045, SHIP 62426/93261).
+
+================================================================
+  Q12 RESULTS — WAH (4 measured iter, median +/- stddev)
+================================================================
+  PhaseA (orders scan)         : 604.455 +/- 0.246187 ms
+  PhaseB (shipmode OR)         : 17.4005 +/- 0.223345 ms
+  PhaseC (receiptdate range OR): 867.301 +/- 1.80578 ms
+  PhaseD (AND + get_rowids)    : 75.3425 +/- 1.28639 ms
+  PhaseE (BMFetch + agg)       : 413.256 +/- 2.5821 ms
+  TOTAL                        : 1977.62 +/- 3.54507 ms
+================================================================
+
+  [CSV] q12_results_SF10.csv
+┌────────────┬─────────────────┬────────────────┐
+│ l_shipmode │ high_line_count │ low_line_count │
+│  varchar   │     int128      │     int128     │
+├────────────┼─────────────────┼────────────────┤
+│ MAIL       │           62071 │          93045 │
+│ SHIP       │           62426 │          93261 │
+└────────────┴─────────────────┴────────────────┘
+
+# === Backend EW (DEBIT_BM=ew) ===
+# sql=
+PRAGMA load_bitmap('shipmode');
+PRAGMA load_bitmap('receiptdate');
+PRAGMA bm_tpch(12);
+[load_bitmap] shipmode: scanned 59986052 rows in 980 ms
+[load_bitmap] shipmode: built EWAH index (6 keys, 44.9896 MB) in 807 ms
+[load_bitmap] receiptdate: scanned 59986052 rows in 679 ms
+[load_bitmap] receiptdate: built EWAH index (2555 keys, 922.612 MB) in 1525 ms
+
+================================================================
+  TPC-H Q12 (BitEngine pattern, runtime semi-joins)
+  Pre-loaded: bitmap_shipmode + bitmap_receiptdate
+================================================================
+
+--- Iteration 1/5 (warm-up) ---
+  EWAH:  PhaseA(orders)=759.3  PhaseB(shipmode_OR)=13.396  PhaseC(rdate_OR)=959.829  PhaseD(AND+rids)=49.119  PhaseE(BMFetch+agg)=576.02  Total=2357.67  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+--- Iteration 2/5 ---
+  EWAH:  PhaseA(orders)=605.837  PhaseB(shipmode_OR)=4.807  PhaseC(rdate_OR)=954.845  PhaseD(AND+rids)=48.568  PhaseE(BMFetch+agg)=410.958  Total=2025.02  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+--- Iteration 3/5 ---
+  EWAH:  PhaseA(orders)=606.607  PhaseB(shipmode_OR)=4.057  PhaseC(rdate_OR)=954.367  PhaseD(AND+rids)=49.173  PhaseE(BMFetch+agg)=411.499  Total=2025.7  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+--- Iteration 4/5 ---
+  EWAH:  PhaseA(orders)=603.335  PhaseB(shipmode_OR)=4.087  PhaseC(rdate_OR)=955.249  PhaseD(AND+rids)=49.432  PhaseE(BMFetch+agg)=412.876  Total=2024.98  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+--- Iteration 5/5 ---
+  EWAH:  PhaseA(orders)=607.601  PhaseB(shipmode_OR)=4.066  PhaseC(rdate_OR)=958.043  PhaseD(AND+rids)=49.018  PhaseE(BMFetch+agg)=410.802  Total=2029.53  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+[OK] EWAH matches DuckDB SQL ground truth (MAIL 62071/93045, SHIP 62426/93261).
+
+================================================================
+  Q12 RESULTS — EWAH (4 measured iter, median +/- stddev)
+================================================================
+  PhaseA (orders scan)         : 606.222 +/- 1.57832 ms
+  PhaseB (shipmode OR)         : 4.0765 +/- 0.319316 ms
+  PhaseC (receiptdate range OR): 955.047 +/- 1.42995 ms
+  PhaseD (AND + get_rowids)    : 49.0955 +/- 0.313999 ms
+  PhaseE (BMFetch + agg)       : 411.229 +/- 0.816974 ms
+  TOTAL                        : 2025.36 +/- 1.88326 ms
+================================================================
+
+  [CSV] q12_results_SF10.csv
+┌────────────┬─────────────────┬────────────────┐
+│ l_shipmode │ high_line_count │ low_line_count │
+│  varchar   │     int128      │     int128     │
+├────────────┼─────────────────┼────────────────┤
+│ MAIL       │           62071 │          93045 │
+│ SHIP       │           62426 │          93261 │
+└────────────┴─────────────────┴────────────────┘
+
+# === Backend CON (DEBIT_BM=con) ===
+# sql=
+PRAGMA load_bitmap('shipmode');
+PRAGMA load_bitmap('receiptdate');
+PRAGMA bm_tpch(12);
+[load_bitmap] shipmode: scanned 59986052 rows in 975 ms
+[load_bitmap] shipmode: built Concise index (6 keys, 239.944 MB) in 1055 ms
+[load_bitmap] receiptdate: scanned 59986052 rows in 675 ms
+[load_bitmap] receiptdate: built Concise index (2555 keys, 239.944 MB) in 1463 ms
+
+================================================================
+  TPC-H Q12 (BitEngine pattern, runtime semi-joins)
+  Pre-loaded: bitmap_shipmode + bitmap_receiptdate
+================================================================
+
+--- Iteration 1/5 (warm-up) ---
+  Concise:  PhaseA(orders)=758.53  PhaseB(shipmode_OR)=33.166  PhaseC(rdate_OR)=1056.22  PhaseD(AND+rids)=88.97  PhaseE(BMFetch+agg)=582.522  Total=2519.41  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+--- Iteration 2/5 ---
+  Concise:  PhaseA(orders)=603.987  PhaseB(shipmode_OR)=33.619  PhaseC(rdate_OR)=1054.68  PhaseD(AND+rids)=88.188  PhaseE(BMFetch+agg)=412.258  Total=2192.73  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+--- Iteration 3/5 ---
+  Concise:  PhaseA(orders)=603.469  PhaseB(shipmode_OR)=33.206  PhaseC(rdate_OR)=1052.38  PhaseD(AND+rids)=88.673  PhaseE(BMFetch+agg)=416.442  Total=2194.18  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+--- Iteration 4/5 ---
+  Concise:  PhaseA(orders)=602.052  PhaseB(shipmode_OR)=33.224  PhaseC(rdate_OR)=1054.44  PhaseD(AND+rids)=88.71  PhaseE(BMFetch+agg)=413.591  Total=2192.02  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+--- Iteration 5/5 ---
+  Concise:  PhaseA(orders)=604.198  PhaseB(shipmode_OR)=32.894  PhaseC(rdate_OR)=1053.43  PhaseD(AND+rids)=88.615  PhaseE(BMFetch+agg)=413.365  Total=2192.5  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+
+[OK] Concise matches DuckDB SQL ground truth (MAIL 62071/93045, SHIP 62426/93261).
+
+================================================================
+  Q12 RESULTS — Concise (4 measured iter, median +/- stddev)
+================================================================
+  PhaseA (orders scan)         : 603.728 +/- 0.836724 ms
+  PhaseB (shipmode OR)         : 33.215 +/- 0.257243 ms
+  PhaseC (receiptdate range OR): 1053.93 +/- 0.908396 ms
+  PhaseD (AND + get_rowids)    : 88.644 +/- 0.209731 ms
+  PhaseE (BMFetch + agg)       : 413.478 +/- 1.54425 ms
+  TOTAL                        : 2192.62 +/- 0.804322 ms
+================================================================
+
+  [CSV] q12_results_SF10.csv
+┌────────────┬─────────────────┬────────────────┐
+│ l_shipmode │ high_line_count │ low_line_count │
+│  varchar   │     int128      │     int128     │
+├────────────┼─────────────────┼────────────────┤
+│ MAIL       │           62071 │          93045 │
+│ SHIP       │           62426 │          93261 │
+└────────────┴─────────────────┴────────────────┘

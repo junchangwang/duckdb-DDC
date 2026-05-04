@@ -7,12 +7,12 @@ PRAGMA load_bitmap('shipdate');
 PRAGMA load_bitmap('linestatus');
 PRAGMA load_bitmap('returnflag');
 PRAGMA bm_tpch(1);
-[load_bitmap] shipdate: scanned 59986052 rows in 698 ms
-[load_bitmap] shipdate: built ComBit index (2526 keys, 6586.64 MB) in 23719 ms
-[load_bitmap] linestatus: scanned 59986052 rows in 870 ms
-[load_bitmap] linestatus: built ComBit index (2 keys, 20.6325 MB) in 2366 ms
-[load_bitmap] returnflag: scanned 59986052 rows in 850 ms
-[load_bitmap] returnflag: built ComBit index (3 keys, 29.7765 MB) in 2425 ms
+[load_bitmap] shipdate: scanned 59986052 rows in 720 ms
+[load_bitmap] shipdate: built ComBit index (2526 keys, 6586.64 MB) in 23668 ms
+[load_bitmap] linestatus: scanned 59986052 rows in 889 ms
+[load_bitmap] linestatus: built ComBit index (2 keys, 20.6325 MB) in 2323 ms
+[load_bitmap] returnflag: scanned 59986052 rows in 871 ms
+[load_bitmap] returnflag: built ComBit index (3 keys, 29.7765 MB) in 2389 ms
 
 ================================================================
   TPC-H Q1 (BitEngine normal-path: complement OR + bit-stream + seq scan) — ComBit (SF10)
@@ -20,19 +20,19 @@ PRAGMA bm_tpch(1);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  ComBit:  PhaseA=42.138  PhaseB=180.949  PhaseC=1010.47  Total=1233.56
+  ComBit:  PhaseA=42.576  PhaseB=181.194  PhaseC=979.29  Total=1203.06
 
 --- Iteration 2/5 ---
-  ComBit:  PhaseA=41.443  PhaseB=179.264  PhaseC=806.478  Total=1027.18
+  ComBit:  PhaseA=42.051  PhaseB=178.917  PhaseC=778.794  Total=999.763
 
 --- Iteration 3/5 ---
-  ComBit:  PhaseA=41.656  PhaseB=178.881  PhaseC=805.34  Total=1025.88
+  ComBit:  PhaseA=42.305  PhaseB=178.602  PhaseC=780.705  Total=1001.61
 
 --- Iteration 4/5 ---
-  ComBit:  PhaseA=41.999  PhaseB=179.655  PhaseC=807.796  Total=1029.45
+  ComBit:  PhaseA=42.057  PhaseB=179.309  PhaseC=779.987  Total=1001.35
 
 --- Iteration 5/5 ---
-  ComBit:  PhaseA=41.516  PhaseB=179.107  PhaseC=806.619  Total=1027.24
+  ComBit:  PhaseA=42.142  PhaseB=178.637  PhaseC=781.784  Total=1002.56
 
 [OK] ComBit matches DuckDB SQL ground truth (4 (rf,ls) groups).
 
@@ -45,10 +45,10 @@ PRAGMA bm_tpch(1);
 ================================================================
   Q1 RESULTS — ComBit only (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (shipdate ~OR + flip): 41.59 +/- 0.21 ms
-  PhaseB (per-group AND→bs)   : 179.19 +/- 0.28 ms
-  PhaseC (seq-scan + agg)     : 806.55 +/- 0.87 ms
-  TOTAL                       : 1027.21 +/- 1.28 ms
+  PhaseA (shipdate ~OR + flip): 42.10 +/- 0.10 ms
+  PhaseB (per-group AND→bs)   : 178.78 +/- 0.28 ms
+  PhaseC (seq-scan + agg)     : 780.35 +/- 1.09 ms
+  TOTAL                       : 1001.48 +/- 1.01 ms
 ================================================================
 
   [CSV] q1_results_SF10.csv
@@ -68,12 +68,12 @@ PRAGMA load_bitmap('shipdate');
 PRAGMA load_bitmap('linestatus');
 PRAGMA load_bitmap('returnflag');
 PRAGMA bm_tpch(1);
-[load_bitmap] shipdate: scanned 59986052 rows in 706 ms
-[load_bitmap] shipdate: built CRoaring index (2526 keys, 138.443 MB) in 1378 ms
-[load_bitmap] linestatus: scanned 59986052 rows in 872 ms
-[load_bitmap] linestatus: built CRoaring index (2 keys, 15.0224 MB) in 729 ms
-[load_bitmap] returnflag: scanned 59986052 rows in 859 ms
-[load_bitmap] returnflag: built CRoaring index (3 keys, 22.5336 MB) in 717 ms
+[load_bitmap] shipdate: scanned 59986052 rows in 715 ms
+[load_bitmap] shipdate: built CRoaring index (2526 keys, 138.443 MB) in 1427 ms
+[load_bitmap] linestatus: scanned 59986052 rows in 894 ms
+[load_bitmap] linestatus: built CRoaring index (2 keys, 15.0224 MB) in 740 ms
+[load_bitmap] returnflag: scanned 59986052 rows in 872 ms
+[load_bitmap] returnflag: built CRoaring index (3 keys, 22.5336 MB) in 724 ms
 
 ================================================================
   TPC-H Q1 (BitEngine normal-path: complement OR + bit-stream + seq scan) — CRoaring (SF10)
@@ -81,19 +81,19 @@ PRAGMA bm_tpch(1);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  CRoaring:  PhaseA=34.908  PhaseB=763.698  PhaseC=1013  Total=1811.6
+  CRoaring:  PhaseA=38.255  PhaseB=760.693  PhaseC=983.508  Total=1782.46
 
 --- Iteration 2/5 ---
-  CRoaring:  PhaseA=34.571  PhaseB=761.799  PhaseC=806.8  Total=1603.17
+  CRoaring:  PhaseA=37.598  PhaseB=760.567  PhaseC=780.647  Total=1578.81
 
 --- Iteration 3/5 ---
-  CRoaring:  PhaseA=34.92  PhaseB=761.643  PhaseC=807.376  Total=1603.94
+  CRoaring:  PhaseA=38.193  PhaseB=760.562  PhaseC=781.477  Total=1580.23
 
 --- Iteration 4/5 ---
-  CRoaring:  PhaseA=34.969  PhaseB=761.937  PhaseC=807.458  Total=1604.37
+  CRoaring:  PhaseA=37.774  PhaseB=761.225  PhaseC=780.464  Total=1579.46
 
 --- Iteration 5/5 ---
-  CRoaring:  PhaseA=35.206  PhaseB=762.128  PhaseC=808.13  Total=1605.46
+  CRoaring:  PhaseA=38.318  PhaseB=760.059  PhaseC=780.69  Total=1579.07
 
 [OK] CRoaring matches DuckDB SQL ground truth (4 (rf,ls) groups).
 
@@ -106,10 +106,10 @@ PRAGMA bm_tpch(1);
 ================================================================
   Q1 RESULTS — CRoaring only (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (shipdate ~OR + flip): 34.94 +/- 0.23 ms
-  PhaseB (per-group AND→bs)   : 761.87 +/- 0.18 ms
-  PhaseC (seq-scan + agg)     : 807.42 +/- 0.47 ms
-  TOTAL                       : 1604.15 +/- 0.83 ms
+  PhaseA (shipdate ~OR + flip): 37.98 +/- 0.29 ms
+  PhaseB (per-group AND→bs)   : 760.56 +/- 0.41 ms
+  PhaseC (seq-scan + agg)     : 780.67 +/- 0.39 ms
+  TOTAL                       : 1579.27 +/- 0.54 ms
 ================================================================
 
   [CSV] q1_results_SF10.csv
@@ -129,12 +129,12 @@ PRAGMA load_bitmap('shipdate');
 PRAGMA load_bitmap('linestatus');
 PRAGMA load_bitmap('returnflag');
 PRAGMA bm_tpch(1);
-[load_bitmap] shipdate: scanned 59986052 rows in 705 ms
-[load_bitmap] shipdate: built CRoaringRun index (2526 keys, 138.443 MB) in 1471 ms
-[load_bitmap] linestatus: scanned 59986052 rows in 873 ms
-[load_bitmap] linestatus: built CRoaringRun index (2 keys, 15.0175 MB) in 726 ms
-[load_bitmap] returnflag: scanned 59986052 rows in 855 ms
-[load_bitmap] returnflag: built CRoaringRun index (3 keys, 22.5311 MB) in 718 ms
+[load_bitmap] shipdate: scanned 59986052 rows in 718 ms
+[load_bitmap] shipdate: built CRoaringRun index (2526 keys, 138.443 MB) in 1518 ms
+[load_bitmap] linestatus: scanned 59986052 rows in 901 ms
+[load_bitmap] linestatus: built CRoaringRun index (2 keys, 15.0175 MB) in 751 ms
+[load_bitmap] returnflag: scanned 59986052 rows in 877 ms
+[load_bitmap] returnflag: built CRoaringRun index (3 keys, 22.5311 MB) in 728 ms
 
 ================================================================
   TPC-H Q1 (BitEngine normal-path: complement OR + bit-stream + seq scan) — CRoaring+Run (SF10)
@@ -142,19 +142,19 @@ PRAGMA bm_tpch(1);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  CRoaringRun:  PhaseA=12.976  PhaseB=759.62  PhaseC=1012.7  Total=1785.3
+  CRoaringRun:  PhaseA=13.544  PhaseB=759.948  PhaseC=982.361  Total=1755.85
 
 --- Iteration 2/5 ---
-  CRoaringRun:  PhaseA=13  PhaseB=762.24  PhaseC=807.844  Total=1583.08
+  CRoaringRun:  PhaseA=13.05  PhaseB=759.49  PhaseC=780.387  Total=1552.93
 
 --- Iteration 3/5 ---
-  CRoaringRun:  PhaseA=12.721  PhaseB=760.827  PhaseC=804.51  Total=1578.06
+  CRoaringRun:  PhaseA=13.186  PhaseB=761.136  PhaseC=779.722  Total=1554.05
 
 --- Iteration 4/5 ---
-  CRoaringRun:  PhaseA=12.831  PhaseB=760.576  PhaseC=805.316  Total=1578.72
+  CRoaringRun:  PhaseA=13.106  PhaseB=760.757  PhaseC=778.66  Total=1552.52
 
 --- Iteration 5/5 ---
-  CRoaringRun:  PhaseA=12.578  PhaseB=759.831  PhaseC=815.817  Total=1588.23
+  CRoaringRun:  PhaseA=12.924  PhaseB=759.803  PhaseC=779.658  Total=1552.39
 
 [OK] CRoaringRun matches DuckDB SQL ground truth (4 (rf,ls) groups).
 
@@ -167,10 +167,10 @@ PRAGMA bm_tpch(1);
 ================================================================
   Q1 RESULTS — CRoaringRun only (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (shipdate ~OR + flip): 12.78 +/- 0.15 ms
-  PhaseB (per-group AND→bs)   : 760.70 +/- 0.87 ms
-  PhaseC (seq-scan + agg)     : 806.58 +/- 4.47 ms
-  TOTAL                       : 1580.90 +/- 4.07 ms
+  PhaseA (shipdate ~OR + flip): 13.08 +/- 0.10 ms
+  PhaseB (per-group AND→bs)   : 760.28 +/- 0.67 ms
+  PhaseC (seq-scan + agg)     : 779.69 +/- 0.62 ms
+  TOTAL                       : 1552.73 +/- 0.65 ms
 ================================================================
 
   [CSV] q1_results_SF10.csv
@@ -190,12 +190,12 @@ PRAGMA load_bitmap('shipdate');
 PRAGMA load_bitmap('linestatus');
 PRAGMA load_bitmap('returnflag');
 PRAGMA bm_tpch(1);
-[load_bitmap] shipdate: scanned 59986052 rows in 705 ms
-[load_bitmap] shipdate: built WAH index (2526 keys, 467.132 MB) in 131043 ms
-[load_bitmap] linestatus: scanned 59986052 rows in 871 ms
-[load_bitmap] linestatus: built WAH index (2 keys, 15.4797 MB) in 793 ms
-[load_bitmap] returnflag: scanned 59986052 rows in 851 ms
-[load_bitmap] returnflag: built WAH index (3 keys, 23.218 MB) in 1029 ms
+[load_bitmap] shipdate: scanned 59986052 rows in 710 ms
+[load_bitmap] shipdate: built WAH index (2526 keys, 467.132 MB) in 1930 ms
+[load_bitmap] linestatus: scanned 59986052 rows in 889 ms
+[load_bitmap] linestatus: built WAH index (2 keys, 15.4797 MB) in 708 ms
+[load_bitmap] returnflag: scanned 59986052 rows in 871 ms
+[load_bitmap] returnflag: built WAH index (3 keys, 23.218 MB) in 844 ms
 
 ================================================================
   TPC-H Q1 (BitEngine normal-path: complement OR + bit-stream + seq scan) — WAH (SF10)
@@ -203,19 +203,19 @@ PRAGMA bm_tpch(1);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  WAH:  PhaseA=248.176  PhaseB=992.473  PhaseC=1012.22  Total=2252.87
+  WAH:  PhaseA=247.559  PhaseB=1000.88  PhaseC=978.757  Total=2227.19
 
 --- Iteration 2/5 ---
-  WAH:  PhaseA=247.648  PhaseB=992.244  PhaseC=802.384  Total=2042.28
+  WAH:  PhaseA=247.951  PhaseB=1001.11  PhaseC=884.023  Total=2133.09
 
 --- Iteration 3/5 ---
-  WAH:  PhaseA=247.116  PhaseB=992.751  PhaseC=802.986  Total=2042.85
+  WAH:  PhaseA=247.286  PhaseB=1002.08  PhaseC=777.06  Total=2026.43
 
 --- Iteration 4/5 ---
-  WAH:  PhaseA=299.663  PhaseB=1027.69  PhaseC=802.422  Total=2129.78
+  WAH:  PhaseA=248.298  PhaseB=1000.97  PhaseC=776.53  Total=2025.8
 
 --- Iteration 5/5 ---
-  WAH:  PhaseA=247.497  PhaseB=993.84  PhaseC=804.715  Total=2046.05
+  WAH:  PhaseA=248.11  PhaseB=1003.5  PhaseC=778.169  Total=2029.78
 
 [OK] WAH matches DuckDB SQL ground truth (4 (rf,ls) groups).
 
@@ -228,10 +228,10 @@ PRAGMA bm_tpch(1);
 ================================================================
   Q1 RESULTS — WAH only (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (shipdate ~OR + flip): 247.57 +/- 22.62 ms
-  PhaseB (per-group AND→bs)   : 993.30 +/- 15.06 ms
-  PhaseC (seq-scan + agg)     : 802.70 +/- 0.95 ms
-  TOTAL                       : 2044.45 +/- 37.29 ms
+  PhaseA (shipdate ~OR + flip): 248.03 +/- 0.38 ms
+  PhaseB (per-group AND→bs)   : 1001.60 +/- 1.01 ms
+  PhaseC (seq-scan + agg)     : 777.61 +/- 46.24 ms
+  TOTAL                       : 2028.10 +/- 45.82 ms
 ================================================================
 
   [CSV] q1_results_SF10.csv
@@ -251,12 +251,12 @@ PRAGMA load_bitmap('shipdate');
 PRAGMA load_bitmap('linestatus');
 PRAGMA load_bitmap('returnflag');
 PRAGMA bm_tpch(1);
-[load_bitmap] shipdate: scanned 59986052 rows in 705 ms
-[load_bitmap] shipdate: built EWAH index (2526 keys, 921.388 MB) in 1488 ms
-[load_bitmap] linestatus: scanned 59986052 rows in 870 ms
-[load_bitmap] linestatus: built EWAH index (2 keys, 14.9965 MB) in 622 ms
-[load_bitmap] returnflag: scanned 59986052 rows in 852 ms
-[load_bitmap] returnflag: built EWAH index (3 keys, 22.4948 MB) in 614 ms
+[load_bitmap] shipdate: scanned 59986052 rows in 715 ms
+[load_bitmap] shipdate: built EWAH index (2526 keys, 921.388 MB) in 1527 ms
+[load_bitmap] linestatus: scanned 59986052 rows in 889 ms
+[load_bitmap] linestatus: built EWAH index (2 keys, 14.9965 MB) in 618 ms
+[load_bitmap] returnflag: scanned 59986052 rows in 874 ms
+[load_bitmap] returnflag: built EWAH index (3 keys, 22.4948 MB) in 601 ms
 
 ================================================================
   TPC-H Q1 (BitEngine normal-path: complement OR + bit-stream + seq scan) — EWAH (SF10)
@@ -264,19 +264,19 @@ PRAGMA bm_tpch(1);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  EWAH:  PhaseA=77.997  PhaseB=371.945  PhaseC=1005.99  Total=1455.93
+  EWAH:  PhaseA=79.166  PhaseB=415.394  PhaseC=980.424  Total=1474.98
 
 --- Iteration 2/5 ---
-  EWAH:  PhaseA=77.855  PhaseB=370.324  PhaseC=803.996  Total=1252.18
+  EWAH:  PhaseA=79.033  PhaseB=416.992  PhaseC=777.19  Total=1273.21
 
 --- Iteration 3/5 ---
-  EWAH:  PhaseA=78.1  PhaseB=372.063  PhaseC=809.699  Total=1259.86
+  EWAH:  PhaseA=78.859  PhaseB=416.791  PhaseC=777.249  Total=1272.9
 
 --- Iteration 4/5 ---
-  EWAH:  PhaseA=78.175  PhaseB=368.931  PhaseC=803.804  Total=1250.91
+  EWAH:  PhaseA=78.96  PhaseB=416.358  PhaseC=776.761  Total=1272.08
 
 --- Iteration 5/5 ---
-  EWAH:  PhaseA=77.615  PhaseB=367.869  PhaseC=804.85  Total=1250.34
+  EWAH:  PhaseA=79.349  PhaseB=417.625  PhaseC=779.529  Total=1276.5
 
 [OK] EWAH matches DuckDB SQL ground truth (4 (rf,ls) groups).
 
@@ -289,10 +289,10 @@ PRAGMA bm_tpch(1);
 ================================================================
   Q1 RESULTS — EWAH only (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (shipdate ~OR + flip): 77.98 +/- 0.22 ms
-  PhaseB (per-group AND→bs)   : 369.63 +/- 1.57 ms
-  PhaseC (seq-scan + agg)     : 804.42 +/- 2.41 ms
-  TOTAL                       : 1251.54 +/- 3.84 ms
+  PhaseA (shipdate ~OR + flip): 79.00 +/- 0.18 ms
+  PhaseB (per-group AND→bs)   : 416.89 +/- 0.46 ms
+  PhaseC (seq-scan + agg)     : 777.22 +/- 1.08 ms
+  TOTAL                       : 1273.06 +/- 1.69 ms
 ================================================================
 
   [CSV] q1_results_SF10.csv
@@ -312,12 +312,12 @@ PRAGMA load_bitmap('shipdate');
 PRAGMA load_bitmap('linestatus');
 PRAGMA load_bitmap('returnflag');
 PRAGMA bm_tpch(1);
-[load_bitmap] shipdate: scanned 59986052 rows in 702 ms
-[load_bitmap] shipdate: built Concise index (2526 keys, 239.944 MB) in 1429 ms
-[load_bitmap] linestatus: scanned 59986052 rows in 871 ms
-[load_bitmap] linestatus: built Concise index (2 keys, 239.944 MB) in 773 ms
-[load_bitmap] returnflag: scanned 59986052 rows in 853 ms
-[load_bitmap] returnflag: built Concise index (3 keys, 239.944 MB) in 784 ms
+[load_bitmap] shipdate: scanned 59986052 rows in 703 ms
+[load_bitmap] shipdate: built Concise index (2526 keys, 239.944 MB) in 1442 ms
+[load_bitmap] linestatus: scanned 59986052 rows in 880 ms
+[load_bitmap] linestatus: built Concise index (2 keys, 239.944 MB) in 780 ms
+[load_bitmap] returnflag: scanned 59986052 rows in 868 ms
+[load_bitmap] returnflag: built Concise index (3 keys, 239.944 MB) in 794 ms
 
 ================================================================
   TPC-H Q1 (BitEngine normal-path: complement OR + bit-stream + seq scan) — Concise (SF10)
@@ -325,19 +325,19 @@ PRAGMA bm_tpch(1);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  Concise:  PhaseA=85.768  PhaseB=407.101  PhaseC=1007.08  Total=1499.95
+  Concise:  PhaseA=90.887  PhaseB=420.347  PhaseC=979.192  Total=1490.43
 
 --- Iteration 2/5 ---
-  Concise:  PhaseA=85.792  PhaseB=406.314  PhaseC=803.346  Total=1295.45
+  Concise:  PhaseA=91.193  PhaseB=420.913  PhaseC=778.643  Total=1290.75
 
 --- Iteration 3/5 ---
-  Concise:  PhaseA=85.402  PhaseB=406.397  PhaseC=802.476  Total=1294.28
+  Concise:  PhaseA=90.765  PhaseB=420.999  PhaseC=778.526  Total=1290.29
 
 --- Iteration 4/5 ---
-  Concise:  PhaseA=85.364  PhaseB=407.629  PhaseC=802.769  Total=1295.76
+  Concise:  PhaseA=91.052  PhaseB=420.671  PhaseC=778.913  Total=1290.64
 
 --- Iteration 5/5 ---
-  Concise:  PhaseA=85.339  PhaseB=407.118  PhaseC=803.18  Total=1295.64
+  Concise:  PhaseA=90.581  PhaseB=422.306  PhaseC=780.915  Total=1293.8
 
 [OK] Concise matches DuckDB SQL ground truth (4 (rf,ls) groups).
 
@@ -347,4 +347,22 @@ PRAGMA bm_tpch(1);
   (N,O): 743124873.00  1114302286901.88  1058580922144.96  1100937000170.59  1457241.21  29144351
   (R,F): 377732830.00  566431054976.00  538110922664.77  559634780885.09  740361.65  14808183
 
-# Backend CON returncode=-11
+================================================================
+  Q1 RESULTS — Concise only (4 measured iter, median +/- stddev)
+================================================================
+  PhaseA (shipdate ~OR + flip): 90.91 +/- 0.24 ms
+  PhaseB (per-group AND→bs)   : 420.96 +/- 0.64 ms
+  PhaseC (seq-scan + agg)     : 778.78 +/- 0.97 ms
+  TOTAL                       : 1290.69 +/- 1.41 ms
+================================================================
+
+  [CSV] q1_results_SF10.csv
+┌──────────────┬──────────────┬───────────────┬──────────────────┬────────────────────┬──────────────────────┬────────────────────┬────────────────────┬─────────────────────┬─────────────┐
+│ l_returnflag │ l_linestatus │    sum_qty    │  sum_base_price  │   sum_disc_price   │      sum_charge      │      avg_qty       │     avg_price      │      avg_disc       │ count_order │
+│   varchar    │   varchar    │ decimal(38,2) │  decimal(38,2)   │   decimal(38,4)    │    decimal(38,6)     │       double       │       double       │       double        │    int64    │
+├──────────────┼──────────────┼───────────────┼──────────────────┼────────────────────┼──────────────────────┼────────────────────┼────────────────────┼─────────────────────┼─────────────┤
+│ A            │ F            │  377518399.00 │  566065727797.25 │  537759104278.0656 │  559276670892.116819 │ 25.500975103007097 │  38237.15100895854 │  0.0500065745402432 │    14804077 │
+│ N            │ F            │    9851614.00 │   14767438399.17 │   14028805792.2114 │   14590490998.366737 │ 25.522448302840946 │  38257.81066008114 │ 0.04997336773765667 │      385998 │
+│ N            │ O            │  743124873.00 │ 1114302286901.88 │ 1058580922144.9638 │ 1100937000170.591854 │ 25.498075870689316 │  38233.90292348181 │ 0.05000081182113131 │    29144351 │
+│ R            │ F            │  377732830.00 │  566431054976.00 │  538110922664.7677 │  559634780885.086257 │  25.50838478968014 │ 38251.219273559764 │ 0.04999679231408742 │    14808183 │
+└──────────────┴──────────────┴───────────────┴──────────────────┴────────────────────┴──────────────────────┴────────────────────┴────────────────────┴─────────────────────┴─────────────┘

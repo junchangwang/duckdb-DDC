@@ -6,10 +6,10 @@
 PRAGMA load_bitmap('shipmode');
 PRAGMA load_bitmap('shipinstruct');
 PRAGMA bm_tpch(19);
-[load_bitmap] shipmode: scanned 59986052 rows in 949 ms
-[load_bitmap] shipmode: built ComBit index (6 keys, 58.126 MB) in 2763 ms
-[load_bitmap] shipinstruct: scanned 59986052 rows in 1913 ms
-[load_bitmap] shipinstruct: built ComBit index (4 keys, 42.5373 MB) in 2569 ms
+[load_bitmap] shipmode: scanned 59986052 rows in 979 ms
+[load_bitmap] shipmode: built ComBit index (6 keys, 58.126 MB) in 2754 ms
+[load_bitmap] shipinstruct: scanned 59986052 rows in 1918 ms
+[load_bitmap] shipinstruct: built ComBit index (4 keys, 42.5373 MB) in 2538 ms
 
 ================================================================
   TPC-H Q19 (BitEngine pattern, runtime 3-OR part-join)
@@ -17,29 +17,29 @@ PRAGMA bm_tpch(19);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  ComBit:  PhaseA(shipmode AND ship_instr)=37.147  PhaseB(part_scan)=36.087  PhaseC(BMFetch+agg)=596.574  Total=669.809  rows=2141904  revenue=30104438.0911
+  ComBit:  PhaseA(shipmode AND ship_instr)=37.456  PhaseB(part_scan)=35.872  PhaseC(BMFetch+agg)=599.879  Total=673.209  rows=2141904  revenue=30104438.0911
 
 --- Iteration 2/5 ---
-  ComBit:  PhaseA(shipmode AND ship_instr)=30.4890  PhaseB(part_scan)=28.2090  PhaseC(BMFetch+agg)=160.5220  Total=219.2210  rows=2141904  revenue=30104438.0911
+  ComBit:  PhaseA(shipmode AND ship_instr)=30.9200  PhaseB(part_scan)=28.0670  PhaseC(BMFetch+agg)=161.8580  Total=220.8460  rows=2141904  revenue=30104438.0911
 
 --- Iteration 3/5 ---
-  ComBit:  PhaseA(shipmode AND ship_instr)=29.5910  PhaseB(part_scan)=28.0970  PhaseC(BMFetch+agg)=161.2290  Total=218.9190  rows=2141904  revenue=30104438.0911
+  ComBit:  PhaseA(shipmode AND ship_instr)=30.0200  PhaseB(part_scan)=28.2500  PhaseC(BMFetch+agg)=161.9440  Total=220.2140  rows=2141904  revenue=30104438.0911
 
 --- Iteration 4/5 ---
-  ComBit:  PhaseA(shipmode AND ship_instr)=29.6290  PhaseB(part_scan)=28.2440  PhaseC(BMFetch+agg)=161.2360  Total=219.1110  rows=2141904  revenue=30104438.0911
+  ComBit:  PhaseA(shipmode AND ship_instr)=30.3720  PhaseB(part_scan)=28.1410  PhaseC(BMFetch+agg)=162.0770  Total=220.5920  rows=2141904  revenue=30104438.0911
 
 --- Iteration 5/5 ---
-  ComBit:  PhaseA(shipmode AND ship_instr)=29.6330  PhaseB(part_scan)=28.6800  PhaseC(BMFetch+agg)=162.1800  Total=220.4940  rows=2141904  revenue=30104438.0911
+  ComBit:  PhaseA(shipmode AND ship_instr)=29.9460  PhaseB(part_scan)=28.0370  PhaseC(BMFetch+agg)=162.3660  Total=220.3510  rows=2141904  revenue=30104438.0911
 
 [OK] ComBit matches DuckDB SQL (revenue = 30104438.0911).
 
 ================================================================
   Q19 RESULTS — ComBit (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (shipmode AND shipinstruct): 29.6310 +/- 0.3777 ms
-  PhaseB (part scan + group map)    : 28.2265 +/- 0.2218 ms
-  PhaseC (BMFetch + per-row pred)   : 161.2325 +/- 0.5892 ms
-  TOTAL                             : 219.1660 +/- 0.6202 ms
+  PhaseA (shipmode AND shipinstruct): 30.1960 +/- 0.3849 ms
+  PhaseB (part scan + group map)    : 28.1040 +/- 0.0821 ms
+  PhaseC (BMFetch + per-row pred)   : 162.0105 +/- 0.1925 ms
+  TOTAL                             : 220.4715 +/- 0.2409 ms
 ================================================================
 
   [CSV] q19_results_SF10.csv
@@ -55,10 +55,10 @@ PRAGMA bm_tpch(19);
 PRAGMA load_bitmap('shipmode');
 PRAGMA load_bitmap('shipinstruct');
 PRAGMA bm_tpch(19);
-[load_bitmap] shipmode: scanned 59986052 rows in 958 ms
-[load_bitmap] shipmode: built CRoaring index (6 keys, 45.0559 MB) in 872 ms
-[load_bitmap] shipinstruct: scanned 59986052 rows in 1930 ms
-[load_bitmap] shipinstruct: built CRoaring index (4 keys, 30.0448 MB) in 773 ms
+[load_bitmap] shipmode: scanned 59986052 rows in 973 ms
+[load_bitmap] shipmode: built CRoaring index (6 keys, 45.0559 MB) in 891 ms
+[load_bitmap] shipinstruct: scanned 59986052 rows in 1937 ms
+[load_bitmap] shipinstruct: built CRoaring index (4 keys, 30.0448 MB) in 783 ms
 
 ================================================================
   TPC-H Q19 (BitEngine pattern, runtime 3-OR part-join)
@@ -66,29 +66,29 @@ PRAGMA bm_tpch(19);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  CRoaring:  PhaseA(shipmode AND ship_instr)=30.948  PhaseB(part_scan)=36.336  PhaseC(BMFetch+agg)=600.246  Total=667.531  rows=2141904  revenue=30104438.0911
+  CRoaring:  PhaseA(shipmode AND ship_instr)=30.83  PhaseB(part_scan)=36.029  PhaseC(BMFetch+agg)=596.106  Total=662.965  rows=2141904  revenue=30104438.0911
 
 --- Iteration 2/5 ---
-  CRoaring:  PhaseA(shipmode AND ship_instr)=27.0090  PhaseB(part_scan)=28.3930  PhaseC(BMFetch+agg)=157.0300  Total=212.4330  rows=2141904  revenue=30104438.0911
+  CRoaring:  PhaseA(shipmode AND ship_instr)=26.8140  PhaseB(part_scan)=28.0290  PhaseC(BMFetch+agg)=157.8310  Total=212.6740  rows=2141904  revenue=30104438.0911
 
 --- Iteration 3/5 ---
-  CRoaring:  PhaseA(shipmode AND ship_instr)=22.4130  PhaseB(part_scan)=28.1720  PhaseC(BMFetch+agg)=160.2330  Total=210.8190  rows=2141904  revenue=30104438.0911
+  CRoaring:  PhaseA(shipmode AND ship_instr)=23.3750  PhaseB(part_scan)=27.9190  PhaseC(BMFetch+agg)=159.2590  Total=210.5540  rows=2141904  revenue=30104438.0911
 
 --- Iteration 4/5 ---
-  CRoaring:  PhaseA(shipmode AND ship_instr)=22.7970  PhaseB(part_scan)=28.1850  PhaseC(BMFetch+agg)=161.1390  Total=212.1220  rows=2141904  revenue=30104438.0911
+  CRoaring:  PhaseA(shipmode AND ship_instr)=23.3370  PhaseB(part_scan)=28.1430  PhaseC(BMFetch+agg)=160.6060  Total=212.0880  rows=2141904  revenue=30104438.0911
 
 --- Iteration 5/5 ---
-  CRoaring:  PhaseA(shipmode AND ship_instr)=22.7910  PhaseB(part_scan)=28.2000  PhaseC(BMFetch+agg)=161.8880  Total=212.8790  rows=2141904  revenue=30104438.0911
+  CRoaring:  PhaseA(shipmode AND ship_instr)=23.4560  PhaseB(part_scan)=28.0460  PhaseC(BMFetch+agg)=161.3190  Total=212.8220  rows=2141904  revenue=30104438.0911
 
 [OK] CRoaring matches DuckDB SQL (revenue = 30104438.0911).
 
 ================================================================
   Q19 RESULTS — CRoaring (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (shipmode AND shipinstruct): 22.7940 +/- 1.8866 ms
-  PhaseB (part scan + group map)    : 28.1925 +/- 0.0903 ms
-  PhaseC (BMFetch + per-row pred)   : 160.6860 +/- 1.8518 ms
-  TOTAL                             : 212.2775 +/- 0.7671 ms
+  PhaseA (shipmode AND shipinstruct): 23.4155 +/- 1.4835 ms
+  PhaseB (part scan + group map)    : 28.0375 +/- 0.0795 ms
+  PhaseC (BMFetch + per-row pred)   : 159.9325 +/- 1.3340 ms
+  TOTAL                             : 212.3810 +/- 0.8978 ms
 ================================================================
 
   [CSV] q19_results_SF10.csv
@@ -104,10 +104,10 @@ PRAGMA bm_tpch(19);
 PRAGMA load_bitmap('shipmode');
 PRAGMA load_bitmap('shipinstruct');
 PRAGMA bm_tpch(19);
-[load_bitmap] shipmode: scanned 59986052 rows in 957 ms
-[load_bitmap] shipmode: built CRoaringRun index (6 keys, 45.0559 MB) in 877 ms
-[load_bitmap] shipinstruct: scanned 59986052 rows in 1919 ms
-[load_bitmap] shipinstruct: built CRoaringRun index (4 keys, 30.0448 MB) in 771 ms
+[load_bitmap] shipmode: scanned 59986052 rows in 978 ms
+[load_bitmap] shipmode: built CRoaringRun index (6 keys, 45.0559 MB) in 894 ms
+[load_bitmap] shipinstruct: scanned 59986052 rows in 1934 ms
+[load_bitmap] shipinstruct: built CRoaringRun index (4 keys, 30.0448 MB) in 784 ms
 
 ================================================================
   TPC-H Q19 (BitEngine pattern, runtime 3-OR part-join)
@@ -115,29 +115,29 @@ PRAGMA bm_tpch(19);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  CRoaringRun:  PhaseA(shipmode AND ship_instr)=30.744  PhaseB(part_scan)=36.021  PhaseC(BMFetch+agg)=598.819  Total=665.585  rows=2141904  revenue=30104438.0911
+  CRoaringRun:  PhaseA(shipmode AND ship_instr)=30.442  PhaseB(part_scan)=36.003  PhaseC(BMFetch+agg)=593.475  Total=659.921  rows=2141904  revenue=30104438.0911
 
 --- Iteration 2/5 ---
-  CRoaringRun:  PhaseA(shipmode AND ship_instr)=27.0170  PhaseB(part_scan)=28.1480  PhaseC(BMFetch+agg)=158.7880  Total=213.9540  rows=2141904  revenue=30104438.0911
+  CRoaringRun:  PhaseA(shipmode AND ship_instr)=26.7580  PhaseB(part_scan)=28.1040  PhaseC(BMFetch+agg)=157.9720  Total=212.8350  rows=2141904  revenue=30104438.0911
 
 --- Iteration 3/5 ---
-  CRoaringRun:  PhaseA(shipmode AND ship_instr)=22.9480  PhaseB(part_scan)=28.2790  PhaseC(BMFetch+agg)=161.4510  Total=212.6790  rows=2141904  revenue=30104438.0911
+  CRoaringRun:  PhaseA(shipmode AND ship_instr)=22.7590  PhaseB(part_scan)=28.1360  PhaseC(BMFetch+agg)=159.7320  Total=210.6280  rows=2141904  revenue=30104438.0911
 
 --- Iteration 4/5 ---
-  CRoaringRun:  PhaseA(shipmode AND ship_instr)=23.5470  PhaseB(part_scan)=28.0970  PhaseC(BMFetch+agg)=161.4570  Total=213.1020  rows=2141904  revenue=30104438.0911
+  CRoaringRun:  PhaseA(shipmode AND ship_instr)=22.6970  PhaseB(part_scan)=28.2720  PhaseC(BMFetch+agg)=162.0140  Total=212.9840  rows=2141904  revenue=30104438.0911
 
 --- Iteration 5/5 ---
-  CRoaringRun:  PhaseA(shipmode AND ship_instr)=23.5190  PhaseB(part_scan)=27.9570  PhaseC(BMFetch+agg)=162.4290  Total=213.9060  rows=2141904  revenue=30104438.0911
+  CRoaringRun:  PhaseA(shipmode AND ship_instr)=22.9530  PhaseB(part_scan)=28.2030  PhaseC(BMFetch+agg)=163.1840  Total=214.3410  rows=2141904  revenue=30104438.0911
 
 [OK] CRoaringRun matches DuckDB SQL (revenue = 30104438.0911).
 
 ================================================================
   Q19 RESULTS — CRoaringRun (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (shipmode AND shipinstruct): 23.5330 +/- 1.6109 ms
-  PhaseB (part scan + group map)    : 28.1225 +/- 0.1153 ms
-  PhaseC (BMFetch + per-row pred)   : 161.4540 +/- 1.3549 ms
-  TOTAL                             : 213.5040 +/- 0.5411 ms
+  PhaseA (shipmode AND shipinstruct): 22.8560 +/- 1.7152 ms
+  PhaseB (part scan + group map)    : 28.1695 +/- 0.0646 ms
+  PhaseC (BMFetch + per-row pred)   : 160.8730 +/- 2.0170 ms
+  TOTAL                             : 212.9095 +/- 1.3309 ms
 ================================================================
 
   [CSV] q19_results_SF10.csv
@@ -153,10 +153,10 @@ PRAGMA bm_tpch(19);
 PRAGMA load_bitmap('shipmode');
 PRAGMA load_bitmap('shipinstruct');
 PRAGMA bm_tpch(19);
-[load_bitmap] shipmode: scanned 59986052 rows in 962 ms
-[load_bitmap] shipmode: built WAH index (6 keys, 46.4385 MB) in 1559 ms
-[load_bitmap] shipinstruct: scanned 59986052 rows in 1921 ms
-[load_bitmap] shipinstruct: built WAH index (4 keys, 30.9608 MB) in 1299 ms
+[load_bitmap] shipmode: scanned 59986052 rows in 972 ms
+[load_bitmap] shipmode: built WAH index (6 keys, 46.4385 MB) in 1154 ms
+[load_bitmap] shipinstruct: scanned 59986052 rows in 1923 ms
+[load_bitmap] shipinstruct: built WAH index (4 keys, 30.9608 MB) in 999 ms
 
 ================================================================
   TPC-H Q19 (BitEngine pattern, runtime 3-OR part-join)
@@ -164,29 +164,29 @@ PRAGMA bm_tpch(19);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  WAH:  PhaseA(shipmode AND ship_instr)=74.35  PhaseB(part_scan)=36.207  PhaseC(BMFetch+agg)=601.179  Total=711.737  rows=2141904  revenue=30104438.0911
+  WAH:  PhaseA(shipmode AND ship_instr)=74.182  PhaseB(part_scan)=35.87  PhaseC(BMFetch+agg)=595.351  Total=705.404  rows=2141904  revenue=30104438.0911
 
 --- Iteration 2/5 ---
-  WAH:  PhaseA(shipmode AND ship_instr)=68.9200  PhaseB(part_scan)=28.3300  PhaseC(BMFetch+agg)=157.7410  Total=254.9920  rows=2141904  revenue=30104438.0911
+  WAH:  PhaseA(shipmode AND ship_instr)=68.3800  PhaseB(part_scan)=27.9240  PhaseC(BMFetch+agg)=158.0390  Total=254.3440  rows=2141904  revenue=30104438.0911
 
 --- Iteration 3/5 ---
-  WAH:  PhaseA(shipmode AND ship_instr)=80.3890  PhaseB(part_scan)=28.1500  PhaseC(BMFetch+agg)=159.9800  Total=268.5200  rows=2141904  revenue=30104438.0911
+  WAH:  PhaseA(shipmode AND ship_instr)=80.4500  PhaseB(part_scan)=28.1100  PhaseC(BMFetch+agg)=159.9950  Total=268.5550  rows=2141904  revenue=30104438.0911
 
 --- Iteration 4/5 ---
-  WAH:  PhaseA(shipmode AND ship_instr)=81.2570  PhaseB(part_scan)=28.2360  PhaseC(BMFetch+agg)=161.7300  Total=271.2240  rows=2141904  revenue=30104438.0911
+  WAH:  PhaseA(shipmode AND ship_instr)=80.7010  PhaseB(part_scan)=27.9890  PhaseC(BMFetch+agg)=160.9980  Total=269.6880  rows=2141904  revenue=30104438.0911
 
 --- Iteration 5/5 ---
-  WAH:  PhaseA(shipmode AND ship_instr)=80.5790  PhaseB(part_scan)=28.2360  PhaseC(BMFetch+agg)=166.4700  Total=275.2860  rows=2141904  revenue=30104438.0911
+  WAH:  PhaseA(shipmode AND ship_instr)=80.3040  PhaseB(part_scan)=27.8920  PhaseC(BMFetch+agg)=161.6500  Total=269.8470  rows=2141904  revenue=30104438.0911
 
 [OK] WAH matches DuckDB SQL (revenue = 30104438.0911).
 
 ================================================================
   Q19 RESULTS — WAH (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (shipmode AND shipinstruct): 80.4840 +/- 5.1291 ms
-  PhaseB (part scan + group map)    : 28.2360 +/- 0.0637 ms
-  PhaseC (BMFetch + per-row pred)   : 160.8550 +/- 3.2091 ms
-  TOTAL                             : 269.8720 +/- 7.6155 ms
+  PhaseA (shipmode AND shipinstruct): 80.3770 +/- 5.2435 ms
+  PhaseB (part scan + group map)    : 27.9565 +/- 0.0834 ms
+  PhaseC (BMFetch + per-row pred)   : 160.4965 +/- 1.3645 ms
+  TOTAL                             : 269.1215 +/- 6.5226 ms
 ================================================================
 
   [CSV] q19_results_SF10.csv
@@ -202,10 +202,10 @@ PRAGMA bm_tpch(19);
 PRAGMA load_bitmap('shipmode');
 PRAGMA load_bitmap('shipinstruct');
 PRAGMA bm_tpch(19);
-[load_bitmap] shipmode: scanned 59986052 rows in 958 ms
-[load_bitmap] shipmode: built EWAH index (6 keys, 44.9896 MB) in 787 ms
-[load_bitmap] shipinstruct: scanned 59986052 rows in 1913 ms
-[load_bitmap] shipinstruct: built EWAH index (4 keys, 29.9931 MB) in 666 ms
+[load_bitmap] shipmode: scanned 59986052 rows in 968 ms
+[load_bitmap] shipmode: built EWAH index (6 keys, 44.9896 MB) in 804 ms
+[load_bitmap] shipinstruct: scanned 59986052 rows in 1931 ms
+[load_bitmap] shipinstruct: built EWAH index (4 keys, 29.9931 MB) in 658 ms
 
 ================================================================
   TPC-H Q19 (BitEngine pattern, runtime 3-OR part-join)
@@ -213,29 +213,29 @@ PRAGMA bm_tpch(19);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  EWAH:  PhaseA(shipmode AND ship_instr)=54.138  PhaseB(part_scan)=35.552  PhaseC(BMFetch+agg)=596.117  Total=685.809  rows=2141904  revenue=30104438.0911
+  EWAH:  PhaseA(shipmode AND ship_instr)=55.486  PhaseB(part_scan)=35.138  PhaseC(BMFetch+agg)=597.052  Total=687.677  rows=2141904  revenue=30104438.0911
 
 --- Iteration 2/5 ---
-  EWAH:  PhaseA(shipmode AND ship_instr)=53.5780  PhaseB(part_scan)=28.0600  PhaseC(BMFetch+agg)=158.1530  Total=239.7920  rows=2141904  revenue=30104438.0911
+  EWAH:  PhaseA(shipmode AND ship_instr)=53.9720  PhaseB(part_scan)=27.9630  PhaseC(BMFetch+agg)=157.4320  Total=239.3680  rows=2141904  revenue=30104438.0911
 
 --- Iteration 3/5 ---
-  EWAH:  PhaseA(shipmode AND ship_instr)=50.8420  PhaseB(part_scan)=28.0800  PhaseC(BMFetch+agg)=160.5570  Total=239.4800  rows=2141904  revenue=30104438.0911
+  EWAH:  PhaseA(shipmode AND ship_instr)=50.5950  PhaseB(part_scan)=27.9690  PhaseC(BMFetch+agg)=159.2130  Total=237.7780  rows=2141904  revenue=30104438.0911
 
 --- Iteration 4/5 ---
-  EWAH:  PhaseA(shipmode AND ship_instr)=50.1560  PhaseB(part_scan)=27.9510  PhaseC(BMFetch+agg)=161.8500  Total=239.9590  rows=2141904  revenue=30104438.0911
+  EWAH:  PhaseA(shipmode AND ship_instr)=50.7800  PhaseB(part_scan)=28.2710  PhaseC(BMFetch+agg)=160.7500  Total=239.8020  rows=2141904  revenue=30104438.0911
 
 --- Iteration 5/5 ---
-  EWAH:  PhaseA(shipmode AND ship_instr)=50.0840  PhaseB(part_scan)=27.9730  PhaseC(BMFetch+agg)=162.6880  Total=240.7450  rows=2141904  revenue=30104438.0911
+  EWAH:  PhaseA(shipmode AND ship_instr)=51.6610  PhaseB(part_scan)=28.0140  PhaseC(BMFetch+agg)=162.5530  Total=242.2290  rows=2141904  revenue=30104438.0911
 
 [OK] EWAH matches DuckDB SQL (revenue = 30104438.0911).
 
 ================================================================
   Q19 RESULTS — EWAH (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (shipmode AND shipinstruct): 50.4990 +/- 1.4242 ms
-  PhaseB (part scan + group map)    : 28.0165 +/- 0.0550 ms
-  PhaseC (BMFetch + per-row pred)   : 161.2035 +/- 1.7126 ms
-  TOTAL                             : 239.8755 +/- 0.4664 ms
+  PhaseA (shipmode AND shipinstruct): 51.2205 +/- 1.3435 ms
+  PhaseB (part scan + group map)    : 27.9915 +/- 0.1267 ms
+  PhaseC (BMFetch + per-row pred)   : 159.9815 +/- 1.8903 ms
+  TOTAL                             : 239.5850 +/- 1.5949 ms
 ================================================================
 
   [CSV] q19_results_SF10.csv
@@ -251,10 +251,10 @@ PRAGMA bm_tpch(19);
 PRAGMA load_bitmap('shipmode');
 PRAGMA load_bitmap('shipinstruct');
 PRAGMA bm_tpch(19);
-[load_bitmap] shipmode: scanned 59986052 rows in 959 ms
-[load_bitmap] shipmode: built Concise index (6 keys, 239.944 MB) in 1033 ms
-[load_bitmap] shipinstruct: scanned 59986052 rows in 1924 ms
-[load_bitmap] shipinstruct: built Concise index (4 keys, 239.944 MB) in 873 ms
+[load_bitmap] shipmode: scanned 59986052 rows in 982 ms
+[load_bitmap] shipmode: built Concise index (6 keys, 239.944 MB) in 1049 ms
+[load_bitmap] shipinstruct: scanned 59986052 rows in 1942 ms
+[load_bitmap] shipinstruct: built Concise index (4 keys, 239.944 MB) in 910 ms
 
 ================================================================
   TPC-H Q19 (BitEngine pattern, runtime 3-OR part-join)
@@ -262,29 +262,29 @@ PRAGMA bm_tpch(19);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  Concise:  PhaseA(shipmode AND ship_instr)=91.484  PhaseB(part_scan)=36.06  PhaseC(BMFetch+agg)=595.173  Total=722.719  rows=2141904  revenue=30104438.0911
+  Concise:  PhaseA(shipmode AND ship_instr)=91.462  PhaseB(part_scan)=36.209  PhaseC(BMFetch+agg)=600.073  Total=727.745  rows=2141904  revenue=30104438.0911
 
 --- Iteration 2/5 ---
-  Concise:  PhaseA(shipmode AND ship_instr)=82.3120  PhaseB(part_scan)=28.2300  PhaseC(BMFetch+agg)=156.8160  Total=267.3590  rows=2141904  revenue=30104438.0911
+  Concise:  PhaseA(shipmode AND ship_instr)=82.9370  PhaseB(part_scan)=28.1570  PhaseC(BMFetch+agg)=157.0330  Total=268.1280  rows=2141904  revenue=30104438.0911
 
 --- Iteration 3/5 ---
-  Concise:  PhaseA(shipmode AND ship_instr)=80.0500  PhaseB(part_scan)=28.0840  PhaseC(BMFetch+agg)=159.2060  Total=267.3410  rows=2141904  revenue=30104438.0911
+  Concise:  PhaseA(shipmode AND ship_instr)=80.2360  PhaseB(part_scan)=28.2580  PhaseC(BMFetch+agg)=159.5800  Total=268.0750  rows=2141904  revenue=30104438.0911
 
 --- Iteration 4/5 ---
-  Concise:  PhaseA(shipmode AND ship_instr)=79.8560  PhaseB(part_scan)=28.0770  PhaseC(BMFetch+agg)=161.9200  Total=269.8540  rows=2141904  revenue=30104438.0911
+  Concise:  PhaseA(shipmode AND ship_instr)=80.4930  PhaseB(part_scan)=28.1220  PhaseC(BMFetch+agg)=160.8920  Total=269.5080  rows=2141904  revenue=30104438.0911
 
 --- Iteration 5/5 ---
-  Concise:  PhaseA(shipmode AND ship_instr)=80.2210  PhaseB(part_scan)=28.0710  PhaseC(BMFetch+agg)=162.8260  Total=271.1180  rows=2141904  revenue=30104438.0911
+  Concise:  PhaseA(shipmode AND ship_instr)=80.8580  PhaseB(part_scan)=28.0790  PhaseC(BMFetch+agg)=162.5720  Total=271.5100  rows=2141904  revenue=30104438.0911
 
 [OK] Concise matches DuckDB SQL (revenue = 30104438.0911).
 
 ================================================================
   Q19 RESULTS — Concise (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (shipmode AND shipinstruct): 80.1355 +/- 0.9912 ms
-  PhaseB (part scan + group map)    : 28.0805 +/- 0.0663 ms
-  PhaseC (BMFetch + per-row pred)   : 160.5630 +/- 2.3608 ms
-  TOTAL                             : 268.6065 +/- 1.6305 ms
+  PhaseA (shipmode AND shipinstruct): 80.6755 +/- 1.0659 ms
+  PhaseB (part scan + group map)    : 28.1395 +/- 0.0661 ms
+  PhaseC (BMFetch + per-row pred)   : 160.2360 +/- 2.0242 ms
+  TOTAL                             : 268.8180 +/- 1.3966 ms
 ================================================================
 
   [CSV] q19_results_SF10.csv
