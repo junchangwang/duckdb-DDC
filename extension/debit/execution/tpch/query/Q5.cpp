@@ -379,59 +379,78 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
 
         std::vector<row_t> ids;
 
-        // ---- ComBit ----
-        // Collect once, OR once per index — no pairwise apply_or_to.
+        // ============================================================
+        // Teacher's BitEngine BMTPCH_Q5 logic + apples-to-apples
+        // multi-key OR per backend's natural primitive (Plan A):
+        //
+        //   ComBit  → SparseComBit::or_many (sca scatter-by-segment)
+        //   CR      → pairwise `|=` (no run-opt → no fastunion design)
+        //   CRR     → roaring::Roaring::fastunion (run-opt's natural k-way)
+        //   WAH     → copy + decompress + pairwise `|=` (FastBit has no
+        //             k-way primitive — this IS teacher's verbatim Q5)
+        //   EW      → ewah::fast_logicalor (EWAH's natural k-way)
+        //   CON     → ConciseSet::fast_logicalor (Concise's natural k-way)
+        //
+        // Final &= between btv_or and btv_supp is shared by all backends
+        // (in-place dense AND, the same shape as teacher's `&=`).
+        // ============================================================
         std::vector<int64_t> okeys, skeys;
         okeys.reserve(order_nation_map.size());
         skeys.reserve(supp_nation_map.size());
         for (auto& [k, _] : order_nation_map) okeys.push_back(k);
         for (auto& [k, _] : supp_nation_map ) skeys.push_back(k);
+
+        // ---- ComBit (scatter-by-segment or_many — sca optimization) ----
         if (auto* cb_okey = dynamic_cast<bm_index::IndexedComBit*>(idx_okey_base)) {
             auto* cb_skey = dynamic_cast<bm_index::IndexedComBit*>(idx_skey_base);
             if (!cb_skey) { std::cerr << "[Q5] ERROR: orderkey is ComBit, suppkey isn't.\n"; return; }
-            // Q5 fan-out is moderate (~28k orderkeys + ~5k suppkeys at SF10)
-            // and suppkey is dense (~600 bits/key — 5k×600 = 3M segment
-            // pointers to bucket).  At this scale or_many's bucketing
-            // overhead exceeds what it saves over per-key apply_or_to.
-            // or_many wins when K >> 100k AND per-key bitmaps are sparse
-            // (orderkey 4 bits/key in Q3/Q4 — see Q3 PhaseB regression
-            // table in the SparseComBit::or_many commit).
-            ComBit btv_or   = ComBit::from_sparse_positions({}, num_rows_lineitem, cb_okey->segment_bits());
-            ComBit btv_supp = ComBit::from_sparse_positions({}, num_rows_lineitem, cb_skey->segment_bits());
-            for (int64_t k : okeys) cb_okey->apply_or_to(btv_or,   k);
-            for (int64_t k : skeys) cb_skey->apply_or_to(btv_supp, k);
+            ComBit btv_or   = cb_okey->or_many(okeys);
+            ComBit btv_supp = cb_skey->or_many(skeys);
             btv_or &= btv_supp;
             get_rowids(btv_or, ids);
         }
-        // ---- CRoaring / CRoaring+Run — both via or_many (CR pairwise
-        // is wasteful at 28k orderkeys; CRR fastunion is the same call).
+        // ---- CR (pairwise |=) / CRR (fastunion) ----
         else if (auto* cr_okey = dynamic_cast<bm_index::IndexedCRoaring*>(idx_okey_base)) {
             auto* cr_skey = dynamic_cast<bm_index::IndexedCRoaring*>(idx_skey_base);
             if (!cr_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
-            roaring::Roaring btv_or   = cr_okey->or_many(okeys);
-            roaring::Roaring btv_supp = cr_skey->or_many(skeys);
-            roaring::Roaring filt = btv_or & btv_supp;
-            get_rowids(filt, ids);
+            roaring::Roaring btv_or, btv_supp;
+            if (cr_okey->run_optimized()) {
+                btv_or   = cr_okey->or_many(okeys);  // CRR: fastunion
+                btv_supp = cr_skey->or_many(skeys);
+            } else {
+                btv_or   = *cr_okey->btv_for(okeys[0]);  // CR: pairwise |=
+                for (size_t i = 1; i < okeys.size(); i++) btv_or |= *cr_okey->btv_for(okeys[i]);
+                btv_supp = *cr_skey->btv_for(skeys[0]);
+                for (size_t i = 1; i < skeys.size(); i++) btv_supp |= *cr_skey->btv_for(skeys[i]);
+            }
+            btv_or &= btv_supp;
+            get_rowids(btv_or, ids);
         }
-        // ---- WAH (tree-merge or_many) ----
+        // ---- WAH (verbatim teacher pattern). ----
         else if (auto* wah_okey = dynamic_cast<bm_index::IndexedWAH*>(idx_okey_base)) {
             auto* wah_skey = dynamic_cast<bm_index::IndexedWAH*>(idx_skey_base);
             if (!wah_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
-            ibis::bitvector btv_or   = wah_okey->or_many(okeys);
-            ibis::bitvector btv_supp = wah_skey->or_many(skeys);
-            ibis::bitvector filt; filt.copy(btv_or); filt &= btv_supp;
-            get_rowids(filt, ids);
+            ibis::bitvector btv_res, btv_suppkey;
+            btv_res.copy(*wah_okey->btv_for(okeys[0]));
+            btv_res.decompress();
+            for (size_t i = 1; i < okeys.size(); i++) btv_res |= *wah_okey->btv_for(okeys[i]);
+            btv_suppkey.copy(*wah_skey->btv_for(skeys[0]));
+            btv_suppkey.decompress();
+            for (size_t i = 1; i < skeys.size(); i++) btv_suppkey |= *wah_skey->btv_for(skeys[i]);
+            btv_res &= btv_suppkey;
+            get_rowids(btv_res, ids);
         }
-        // ---- EWAH (tree-merge or_many) ----
+        // ---- EWAH — fast_logicalor (library k-way primitive) ----
         else if (auto* ew_okey = dynamic_cast<bm_index::IndexedEWAH*>(idx_okey_base)) {
             auto* ew_skey = dynamic_cast<bm_index::IndexedEWAH*>(idx_skey_base);
             if (!ew_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
             auto btv_or   = ew_okey->or_many(okeys);
             auto btv_supp = ew_skey->or_many(skeys);
-            ewah::EWAHBoolArray<uint64_t> filt; btv_or.logicaland(btv_supp, filt);
+            ewah::EWAHBoolArray<uint64_t> filt;
+            btv_or.logicaland(btv_supp, filt);
             get_rowids(filt, ids);
         }
-        // ---- Concise (tree-merge or_many) ----
+        // ---- Concise — fast_logicalor (library k-way primitive) ----
         else if (auto* con_okey = dynamic_cast<bm_index::IndexedConcise*>(idx_okey_base)) {
             auto* con_skey = dynamic_cast<bm_index::IndexedConcise*>(idx_skey_base);
             if (!con_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }

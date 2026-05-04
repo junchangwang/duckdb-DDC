@@ -166,11 +166,25 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
         }
 
         std::vector<row_t> ids;
-        if      (cb_pk)  { auto bv = cb_pk->or_many(matched_pks);  q17_get_rowids(bv, &ids); }
-        else if (cr_pk)  { auto bv = cr_pk->or_many(matched_pks);  q17_get_rowids(bv, &ids); }
-        else if (wah_pk) { auto bv = wah_pk->or_many(matched_pks); q17_get_rowids(bv, &ids); }
-        else if (ew_pk)  { auto bv = ew_pk->or_many(matched_pks);  q17_get_rowids(bv, &ids); }
-        else if (con_pk) { auto bv = con_pk->or_many(matched_pks); q17_get_rowids(bv, &ids); }
+        // Plan A — each backend uses its natural multi-key OR primitive.
+        if (cb_pk) {  // ComBit: sca
+            auto bv = cb_pk->or_many(matched_pks); q17_get_rowids(bv, &ids);
+        } else if (cr_pk) {
+            roaring::Roaring bv;
+            if (cr_pk->run_optimized()) {
+                bv = cr_pk->or_many(matched_pks);  // CRR: fastunion
+            } else {
+                bv = *cr_pk->btv_for(matched_pks[0]);  // CR: pairwise
+                for (size_t i = 1; i < matched_pks.size(); i++) bv |= *cr_pk->btv_for(matched_pks[i]);
+            }
+            q17_get_rowids(bv, &ids);
+        } else if (wah_pk) {  // WAH: copy+decompress+|=
+            auto bv = wah_pk->or_many(matched_pks); q17_get_rowids(bv, &ids);
+        } else if (ew_pk) {  // EW: fast_logicalor
+            auto bv = ew_pk->or_many(matched_pks); q17_get_rowids(bv, &ids);
+        } else if (con_pk) {  // CON: fast_logicalor
+            auto bv = con_pk->or_many(matched_pks); q17_get_rowids(bv, &ids);
+        }
         else { std::cerr << "[Q17] ERROR: unrecognised backend.\n"; return; }
         auto t_a = clk::now();
 

@@ -125,25 +125,35 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
 
         // ===== Phase A: shipdate range filter =====
         size_t num_rows = idx_ship->num_rows();
+        // Plan A — each backend uses its natural multi-key OR primitive
+        // for the ~30-day shipdate range.
         std::vector<row_t> ids;
         if (auto* cb_ship = dynamic_cast<bm_index::IndexedComBit*>(idx_ship)) {
-            ComBit ship_filter = ComBit::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
-            cb_ship->apply_or_range_to(ship_filter, Q14_DATE_LO, Q14_DATE_HI - 1);
+            // ComBit: gather in-range keys + sca or_many.
+            std::vector<int64_t> in_range;
+            cb_ship->for_each_key([&](int64_t k) {
+                if (k >= Q14_DATE_LO && k < Q14_DATE_HI) in_range.push_back(k);
+            });
+            ComBit ship_filter = cb_ship->or_many(in_range);
             q14_get_rowids(ship_filter, &ids);
         } else if (auto* cr_ship = dynamic_cast<bm_index::IndexedCRoaring*>(idx_ship)) {
             roaring::Roaring ship_filter;
-            if (cr_ship->run_optimized()) ship_filter = cr_ship->or_range(Q14_DATE_LO, Q14_DATE_HI - 1);
-            else cr_ship->apply_or_range_to(ship_filter, Q14_DATE_LO, Q14_DATE_HI - 1);
+            if (cr_ship->run_optimized()) {
+                ship_filter = cr_ship->or_range(Q14_DATE_LO, Q14_DATE_HI - 1);  // CRR: fastunion
+            } else {
+                cr_ship->apply_or_range_to(ship_filter, Q14_DATE_LO, Q14_DATE_HI - 1);  // CR: pairwise
+            }
             q14_get_rowids(ship_filter, &ids);
         } else if (auto* wah_ship = dynamic_cast<bm_index::IndexedWAH*>(idx_ship)) {
-            ibis::bitvector ship_filter;
-            wah_ship->apply_or_range_to(ship_filter, Q14_DATE_LO, Q14_DATE_HI - 1);
+            ibis::bitvector ship_filter = wah_ship->or_range(Q14_DATE_LO, Q14_DATE_HI - 1);
             q14_get_rowids(ship_filter, &ids);
         } else if (auto* ew_ship = dynamic_cast<bm_index::IndexedEWAH*>(idx_ship)) {
-            ewah::EWAHBoolArray<uint64_t> ship_filter = ew_ship->or_range(Q14_DATE_LO, Q14_DATE_HI - 1);
+            ewah::EWAHBoolArray<uint64_t> ship_filter =
+                ew_ship->or_range(Q14_DATE_LO, Q14_DATE_HI - 1);  // EW: fast_logicalor
             q14_get_rowids(ship_filter, &ids);
         } else if (auto* con_ship = dynamic_cast<bm_index::IndexedConcise*>(idx_ship)) {
-            ConciseSet<false> ship_filter = con_ship->or_range(Q14_DATE_LO, Q14_DATE_HI - 1);
+            ConciseSet<false> ship_filter =
+                con_ship->or_range(Q14_DATE_LO, Q14_DATE_HI - 1);  // CON: fast_logicalor
             q14_get_rowids(ship_filter, &ids);
         } else {
             std::cerr << "[Q14] ERROR: unrecognised IBitmapIndex backend.\n";

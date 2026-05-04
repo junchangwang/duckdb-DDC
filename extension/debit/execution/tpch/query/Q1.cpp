@@ -333,9 +333,12 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
 
             auto t_a0 = clk::now();
             // Phase A: shipdate complement (OR over keys > cutoff, ~90 keys).
-            ComBit shipdate_gt =
-                ComBit::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
-            cb_ship->apply_or_range_to(shipdate_gt, Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
+            // ComBit: gather in-range keys + sca or_many.
+            std::vector<int64_t> gt_keys;
+            cb_ship->for_each_key([&](int64_t k) {
+                if (k > Q1_SHIPDATE_CUTOFF) gt_keys.push_back(k);
+            });
+            ComBit shipdate_gt = cb_ship->or_many(gt_keys);
             q1_to_byte_stream(shipdate_gt, shipdate_filter_bs, num_rows);
             q1_byte_stream_not(shipdate_filter_bs, num_rows);
             auto t_a1 = clk::now();
@@ -371,11 +374,11 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
             auto* cr_ls_x = dynamic_cast<bm_index::IndexedCRoaring*>(idx_ls);
             auto* cr_rf_x = dynamic_cast<bm_index::IndexedCRoaring*>(idx_rf);
             if (!cr_ls_x || !cr_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
-            const bool use_fastunion = cr_ship->run_optimized();
 
+            // Plan A: CR pairwise per-day; CRR fastunion via or_range.
             auto t_a0 = clk::now();
             roaring::Roaring shipdate_gt;
-            if (use_fastunion) {
+            if (cr_ship->run_optimized()) {
                 shipdate_gt = cr_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
             } else {
                 cr_ship->apply_or_range_to(shipdate_gt, Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
@@ -416,8 +419,8 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
             if (!wah_ls_x || !wah_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
 
             auto t_a0 = clk::now();
-            ibis::bitvector shipdate_gt;
-            wah_ship->apply_or_range_to(shipdate_gt, Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
+            // WAH: copy(first) + decompress + |= rest pairwise (teacher).
+            ibis::bitvector shipdate_gt = wah_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
             q1_to_byte_stream(shipdate_gt, shipdate_filter_bs, num_rows);
             q1_byte_stream_not(shipdate_filter_bs, num_rows);
             auto t_a1 = clk::now();

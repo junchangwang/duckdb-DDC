@@ -195,15 +195,18 @@ void BMTableScan::BMTPCH_Q12(ExecutionContext &context, const PhysicalTableScan 
         std::vector<row_t> ids;
         std::vector<int64_t> sm_keys = {Q12_SHIPMODE_MAIL, Q12_SHIPMODE_SHIP};
 
+        // Plan A — each backend uses its natural multi-key OR primitive
+        // for shipmode (2 keys) AND for receiptdate (~365 days range).
         clk::time_point t_b, t_c, t_d;
         if (auto* cb_sm = dynamic_cast<bm_index::IndexedComBit*>(idx_sm)) {
             auto* cb_rdat = dynamic_cast<bm_index::IndexedComBit*>(idx_rdat);
             if (!cb_rdat) { std::cerr << "[Q12] type mismatch.\n"; return; }
-            ComBit sm_filter = ComBit::from_sparse_positions({}, num_rows, cb_sm->segment_bits());
-            for (auto k : sm_keys) cb_sm->apply_or_to(sm_filter, k);
+            // ComBit: sca or_many.
+            ComBit sm_filter = cb_sm->or_many(sm_keys);
             t_b = clk::now();
-            ComBit date_filter = ComBit::from_sparse_positions({}, num_rows, cb_rdat->segment_bits());
-            cb_rdat->apply_or_range_to(date_filter, Q12_DATE_LO, Q12_DATE_HI - 1);
+            std::vector<int64_t> rdat_keys;
+            cb_rdat->for_each_key([&](int64_t k) { if (k >= Q12_DATE_LO && k < Q12_DATE_HI) rdat_keys.push_back(k); });
+            ComBit date_filter = cb_rdat->or_many(rdat_keys);
             t_c = clk::now();
             sm_filter &= date_filter;
             q12_get_rowids(sm_filter, &ids);
@@ -211,13 +214,19 @@ void BMTableScan::BMTPCH_Q12(ExecutionContext &context, const PhysicalTableScan 
         } else if (auto* cr_sm = dynamic_cast<bm_index::IndexedCRoaring*>(idx_sm)) {
             auto* cr_rdat = dynamic_cast<bm_index::IndexedCRoaring*>(idx_rdat);
             if (!cr_rdat) { std::cerr << "[Q12] type mismatch.\n"; return; }
-            roaring::Roaring sm_filter;
-            if (cr_sm->run_optimized()) sm_filter = cr_sm->or_many(sm_keys);
-            else for (auto k : sm_keys) cr_sm->apply_or_to(sm_filter, k);
+            roaring::Roaring sm_filter, date_filter;
+            if (cr_sm->run_optimized()) {
+                sm_filter = cr_sm->or_many(sm_keys);  // CRR: fastunion
+            } else {
+                sm_filter = *cr_sm->btv_for(sm_keys[0]);  // CR: pairwise
+                for (size_t i = 1; i < sm_keys.size(); i++) sm_filter |= *cr_sm->btv_for(sm_keys[i]);
+            }
             t_b = clk::now();
-            roaring::Roaring date_filter;
-            if (cr_rdat->run_optimized()) date_filter = cr_rdat->or_range(Q12_DATE_LO, Q12_DATE_HI - 1);
-            else cr_rdat->apply_or_range_to(date_filter, Q12_DATE_LO, Q12_DATE_HI - 1);
+            if (cr_rdat->run_optimized()) {
+                date_filter = cr_rdat->or_range(Q12_DATE_LO, Q12_DATE_HI - 1);
+            } else {
+                cr_rdat->apply_or_range_to(date_filter, Q12_DATE_LO, Q12_DATE_HI - 1);
+            }
             t_c = clk::now();
             sm_filter &= date_filter;
             q12_get_rowids(sm_filter, &ids);
@@ -225,7 +234,7 @@ void BMTableScan::BMTPCH_Q12(ExecutionContext &context, const PhysicalTableScan 
         } else if (auto* wah_sm = dynamic_cast<bm_index::IndexedWAH*>(idx_sm)) {
             auto* wah_rdat = dynamic_cast<bm_index::IndexedWAH*>(idx_rdat);
             if (!wah_rdat) { std::cerr << "[Q12] type mismatch.\n"; return; }
-            ibis::bitvector sm_filter = wah_sm->or_many(sm_keys);
+            ibis::bitvector sm_filter = wah_sm->or_many(sm_keys);  // WAH: copy+decompress+|=
             t_b = clk::now();
             ibis::bitvector date_filter = wah_rdat->or_range(Q12_DATE_LO, Q12_DATE_HI - 1);
             t_c = clk::now();
@@ -235,7 +244,7 @@ void BMTableScan::BMTPCH_Q12(ExecutionContext &context, const PhysicalTableScan 
         } else if (auto* ew_sm = dynamic_cast<bm_index::IndexedEWAH*>(idx_sm)) {
             auto* ew_rdat = dynamic_cast<bm_index::IndexedEWAH*>(idx_rdat);
             if (!ew_rdat) { std::cerr << "[Q12] type mismatch.\n"; return; }
-            ewah::EWAHBoolArray<uint64_t> sm_filter = ew_sm->or_many(sm_keys);
+            ewah::EWAHBoolArray<uint64_t> sm_filter = ew_sm->or_many(sm_keys);  // EW: fast_logicalor
             t_b = clk::now();
             ewah::EWAHBoolArray<uint64_t> date_filter = ew_rdat->or_range(Q12_DATE_LO, Q12_DATE_HI - 1);
             t_c = clk::now();
@@ -246,7 +255,7 @@ void BMTableScan::BMTPCH_Q12(ExecutionContext &context, const PhysicalTableScan 
         } else if (auto* con_sm = dynamic_cast<bm_index::IndexedConcise*>(idx_sm)) {
             auto* con_rdat = dynamic_cast<bm_index::IndexedConcise*>(idx_rdat);
             if (!con_rdat) { std::cerr << "[Q12] type mismatch.\n"; return; }
-            ConciseSet<false> sm_filter = con_sm->or_many(sm_keys);
+            ConciseSet<false> sm_filter = con_sm->or_many(sm_keys);  // CON: fast_logicalor
             t_b = clk::now();
             ConciseSet<false> date_filter = con_rdat->or_range(Q12_DATE_LO, Q12_DATE_HI - 1);
             t_c = clk::now();

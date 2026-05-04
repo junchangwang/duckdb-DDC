@@ -355,11 +355,12 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         size_t num_rows = idx_okey->num_rows();
         std::vector<row_t> ids;
 
+        // Plan A — each backend uses its natural multi-key OR primitive.
         clk::time_point t_cd;
         if (auto* cb_okey = dynamic_cast<bm_index::IndexedComBit*>(idx_okey)) {
             auto* cb_pk = dynamic_cast<bm_index::IndexedComBit*>(idx_pk);
             if (!cb_pk) { std::cerr << "[Q8] type mismatch.\n"; return; }
-            ComBit okey_filter = cb_okey->or_many(matched_okeys);
+            ComBit okey_filter = cb_okey->or_many(matched_okeys);  // ComBit: sca
             ComBit part_filter = cb_pk->or_many(part_set);
             okey_filter &= part_filter;
             q8_get_rowids(okey_filter, &ids);
@@ -367,15 +368,23 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         } else if (auto* cr_okey = dynamic_cast<bm_index::IndexedCRoaring*>(idx_okey)) {
             auto* cr_pk = dynamic_cast<bm_index::IndexedCRoaring*>(idx_pk);
             if (!cr_pk) { std::cerr << "[Q8] type mismatch.\n"; return; }
-            roaring::Roaring okey_filter = cr_okey->or_many(matched_okeys);
-            roaring::Roaring part_filter = cr_pk->or_many(part_set);
+            roaring::Roaring okey_filter, part_filter;
+            if (cr_okey->run_optimized()) {
+                okey_filter = cr_okey->or_many(matched_okeys);  // CRR: fastunion
+                part_filter = cr_pk->or_many(part_set);
+            } else {
+                okey_filter = *cr_okey->btv_for(matched_okeys[0]);  // CR: pairwise
+                for (size_t i = 1; i < matched_okeys.size(); i++) okey_filter |= *cr_okey->btv_for(matched_okeys[i]);
+                part_filter = *cr_pk->btv_for(part_set[0]);
+                for (size_t i = 1; i < part_set.size(); i++) part_filter |= *cr_pk->btv_for(part_set[i]);
+            }
             okey_filter &= part_filter;
             q8_get_rowids(okey_filter, &ids);
             t_cd = clk::now();
         } else if (auto* wah_okey = dynamic_cast<bm_index::IndexedWAH*>(idx_okey)) {
             auto* wah_pk = dynamic_cast<bm_index::IndexedWAH*>(idx_pk);
             if (!wah_pk) { std::cerr << "[Q8] type mismatch.\n"; return; }
-            ibis::bitvector okey_filter = wah_okey->or_many(matched_okeys);
+            ibis::bitvector okey_filter = wah_okey->or_many(matched_okeys);  // WAH: copy+decompress+|=
             ibis::bitvector part_filter = wah_pk->or_many(part_set);
             okey_filter &= part_filter;
             q8_get_rowids(okey_filter, &ids);
@@ -383,7 +392,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         } else if (auto* ew_okey = dynamic_cast<bm_index::IndexedEWAH*>(idx_okey)) {
             auto* ew_pk = dynamic_cast<bm_index::IndexedEWAH*>(idx_pk);
             if (!ew_pk) { std::cerr << "[Q8] type mismatch.\n"; return; }
-            ewah::EWAHBoolArray<uint64_t> okey_filter = ew_okey->or_many(matched_okeys);
+            ewah::EWAHBoolArray<uint64_t> okey_filter = ew_okey->or_many(matched_okeys);  // EW: fast_logicalor
             ewah::EWAHBoolArray<uint64_t> part_filter = ew_pk->or_many(part_set);
             ewah::EWAHBoolArray<uint64_t> tmp;
             okey_filter.logicaland(part_filter, tmp);
@@ -392,7 +401,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         } else if (auto* con_okey = dynamic_cast<bm_index::IndexedConcise*>(idx_okey)) {
             auto* con_pk = dynamic_cast<bm_index::IndexedConcise*>(idx_pk);
             if (!con_pk) { std::cerr << "[Q8] type mismatch.\n"; return; }
-            ConciseSet<false> okey_filter = con_okey->or_many(matched_okeys);
+            ConciseSet<false> okey_filter = con_okey->or_many(matched_okeys);  // CON: fast_logicalor
             ConciseSet<false> part_filter = con_pk->or_many(part_set);
             ConciseSet<false> result = okey_filter.logicaland(part_filter);
             q8_get_rowids(result, &ids);

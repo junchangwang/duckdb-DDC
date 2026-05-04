@@ -1073,8 +1073,22 @@ SparseComBit::apply_or_to(ComBit& dst) const {
         const ComBitBtv& src = seg_data_[i];
         if (src.is_all_zero()) continue;             // 0 | dst = dst
         ComBitBtv& d = dst_segs[idx];
-        if (d.is_all_zero()) {                       // dst empty: copy
-            d = src;
+        if (d.is_all_zero()) {
+            // Teacher's pattern equivalent: when caller seeded dst as
+            // Decompressed-zero (`from_sparse_positions({})` then call
+            // `apply_or_to` for each key), we want d to STAY
+            // Decompressed across the whole pairwise chain.  The old
+            // shortcut `d = src` adopted src's Compressed state, which
+            // forced every subsequent OR through the Compressed |
+            // Compressed path (allocates a fresh ComBitBtv each call).
+            // Doing `d |= src` in-place when d is Decompressed-zero
+            // keeps d Decompressed and lets the rest of the chain run
+            // through the in-place |= path with no allocation per call.
+            if (d.state() == ComBitBtv::State::Decompressed) {
+                d |= src;
+            } else {
+                d = src;
+            }
             continue;
         }
         if (d.is_all_ones()) continue;               // 1 | anything = 1

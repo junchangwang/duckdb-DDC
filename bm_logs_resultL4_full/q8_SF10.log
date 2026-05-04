@@ -6,10 +6,10 @@
 PRAGMA load_bitmap('orderkey');
 PRAGMA load_bitmap('partkey');
 PRAGMA bm_tpch(8);
-[load_bitmap] orderkey: scanned 59986052 rows in 644 ms
-[load_bitmap] orderkey: built ComBit index (15000000 keys, 4448.84 MB) in 12905 ms
-[load_bitmap] partkey: scanned 59986052 rows in 293 ms
-[load_bitmap] partkey: built ComBit index (2000000 keys, 13567.3 MB) in 36652 ms
+[load_bitmap] orderkey: scanned 59986052 rows in 650 ms
+[load_bitmap] orderkey: built ComBit index (15000000 keys, 4448.84 MB) in 13090 ms
+[load_bitmap] partkey: scanned 59986052 rows in 300 ms
+[load_bitmap] partkey: built ComBit index (2000000 keys, 13567.3 MB) in 36574 ms
 
 ================================================================
   TPC-H Q8 (BitEngine pattern, runtime semi-joins)
@@ -17,31 +17,31 @@ PRAGMA bm_tpch(8);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  ComBit:  PhaseA(side_tables)=107.675  PhaseB(orders)=477.743  PhaseCDE(okey/part_OR+AND)=258.075  PhaseF(BMFetch+agg)=303.467  PhaseG(share)=0  Total=1146.96  rows=24254  share_1995=0.038820  share_1996=0.039490
+  ComBit:  PhaseA(side_tables)=102.824  PhaseB(orders)=501.547  PhaseCDE(okey/part_OR+AND)=263.695  PhaseF(BMFetch+agg)=314.894  PhaseG(share)=0  Total=1182.96  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 2/5 ---
-  ComBit:  PhaseA(side_tables)=88.950000  PhaseB(orders)=354.001000  PhaseCDE(okey/part_OR+AND)=253.858000  PhaseF(BMFetch+agg)=29.678000  PhaseG(share)=0.000000  Total=726.488000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  ComBit:  PhaseA(side_tables)=126.074000  PhaseB(orders)=412.891000  PhaseCDE(okey/part_OR+AND)=263.041000  PhaseF(BMFetch+agg)=34.074000  PhaseG(share)=0.000000  Total=836.082000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 3/5 ---
-  ComBit:  PhaseA(side_tables)=88.822000  PhaseB(orders)=351.532000  PhaseCDE(okey/part_OR+AND)=246.483000  PhaseF(BMFetch+agg)=29.582000  PhaseG(share)=0.000000  Total=716.419000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  ComBit:  PhaseA(side_tables)=132.777000  PhaseB(orders)=419.220000  PhaseCDE(okey/part_OR+AND)=263.165000  PhaseF(BMFetch+agg)=33.973000  PhaseG(share)=0.000000  Total=849.137000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 4/5 ---
-  ComBit:  PhaseA(side_tables)=89.500000  PhaseB(orders)=348.845000  PhaseCDE(okey/part_OR+AND)=249.661000  PhaseF(BMFetch+agg)=29.888000  PhaseG(share)=0.000000  Total=717.896000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  ComBit:  PhaseA(side_tables)=139.444000  PhaseB(orders)=417.222000  PhaseCDE(okey/part_OR+AND)=262.865000  PhaseF(BMFetch+agg)=33.951000  PhaseG(share)=0.000000  Total=853.484000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 5/5 ---
-  ComBit:  PhaseA(side_tables)=89.097000  PhaseB(orders)=353.189000  PhaseCDE(okey/part_OR+AND)=246.954000  PhaseF(BMFetch+agg)=29.648000  PhaseG(share)=0.000000  Total=718.890000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  ComBit:  PhaseA(side_tables)=151.770000  PhaseB(orders)=427.377000  PhaseCDE(okey/part_OR+AND)=263.730000  PhaseF(BMFetch+agg)=34.201000  PhaseG(share)=0.000000  Total=877.080000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 [OK] ComBit matches DuckDB SQL ground truth (1995=0.038820, 1996=0.039490).
 
 ================================================================
   Q8 RESULTS — ComBit (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (side tables)         : 89.023500 +/- 0.254732 ms
-  PhaseB (orders scan)         : 352.360500 +/- 1.971288 ms
-  PhaseCDE (okey + part OR+AND): 248.307500 +/- 2.929591 ms
-  PhaseF (BMFetch + agg)       : 29.663000 +/- 0.114512 ms
+  PhaseA (side tables)         : 136.110500 +/- 9.490405 ms
+  PhaseB (orders scan)         : 418.221000 +/- 5.257796 ms
+  PhaseCDE (okey + part OR+AND): 263.103000 +/- 0.323895 ms
+  PhaseF (BMFetch + agg)       : 34.023500 +/- 0.098877 ms
   PhaseG (share calc)          : 0.000000 +/- 0.000000 ms
-  TOTAL                        : 718.393000 +/- 3.890792 ms
+  TOTAL                        : 851.310500 +/- 14.812532 ms
 ================================================================
 
   [CSV] q8_results_SF10.csv
@@ -58,10 +58,10 @@ PRAGMA bm_tpch(8);
 PRAGMA load_bitmap('orderkey');
 PRAGMA load_bitmap('partkey');
 PRAGMA bm_tpch(8);
-[load_bitmap] orderkey: scanned 59986052 rows in 634 ms
-[load_bitmap] orderkey: built CRoaring index (15000000 keys, 359.978 MB) in 6439 ms
-[load_bitmap] partkey: scanned 59986052 rows in 292 ms
-[load_bitmap] partkey: built CRoaring index (2000000 keys, 608.089 MB) in 11979 ms
+[load_bitmap] orderkey: scanned 59986052 rows in 652 ms
+[load_bitmap] orderkey: built CRoaring index (15000000 keys, 359.978 MB) in 6432 ms
+[load_bitmap] partkey: scanned 59986052 rows in 296 ms
+[load_bitmap] partkey: built CRoaring index (2000000 keys, 608.089 MB) in 11960 ms
 
 ================================================================
   TPC-H Q8 (BitEngine pattern, runtime semi-joins)
@@ -69,31 +69,31 @@ PRAGMA bm_tpch(8);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  CRoaring:  PhaseA(side_tables)=102.796  PhaseB(orders)=495.704  PhaseCDE(okey/part_OR+AND)=538.956  PhaseF(BMFetch+agg)=293.94  PhaseG(share)=0  Total=1431.4  rows=24254  share_1995=0.038820  share_1996=0.039490
+  CRoaring:  PhaseA(side_tables)=106  PhaseB(orders)=454.236  PhaseCDE(okey/part_OR+AND)=1428.26  PhaseF(BMFetch+agg)=293.689  PhaseG(share)=0  Total=2282.19  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 2/5 ---
-  CRoaring:  PhaseA(side_tables)=137.527000  PhaseB(orders)=428.042000  PhaseCDE(okey/part_OR+AND)=541.282000  PhaseF(BMFetch+agg)=30.782000  PhaseG(share)=0.000000  Total=1137.634000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  CRoaring:  PhaseA(side_tables)=88.145000  PhaseB(orders)=348.641000  PhaseCDE(okey/part_OR+AND)=1418.203000  PhaseF(BMFetch+agg)=29.326000  PhaseG(share)=0.000000  Total=1884.317000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 3/5 ---
-  CRoaring:  PhaseA(side_tables)=136.113000  PhaseB(orders)=427.720000  PhaseCDE(okey/part_OR+AND)=539.791000  PhaseF(BMFetch+agg)=30.548000  PhaseG(share)=0.000000  Total=1134.174000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  CRoaring:  PhaseA(side_tables)=88.209000  PhaseB(orders)=344.144000  PhaseCDE(okey/part_OR+AND)=1415.794000  PhaseF(BMFetch+agg)=28.800000  PhaseG(share)=0.000000  Total=1876.949000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 4/5 ---
-  CRoaring:  PhaseA(side_tables)=142.549000  PhaseB(orders)=489.213000  PhaseCDE(okey/part_OR+AND)=573.572000  PhaseF(BMFetch+agg)=30.682000  PhaseG(share)=0.000000  Total=1236.017000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  CRoaring:  PhaseA(side_tables)=88.548000  PhaseB(orders)=343.895000  PhaseCDE(okey/part_OR+AND)=1416.839000  PhaseF(BMFetch+agg)=28.861000  PhaseG(share)=0.000000  Total=1878.144000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 5/5 ---
-  CRoaring:  PhaseA(side_tables)=155.163000  PhaseB(orders)=446.774000  PhaseCDE(okey/part_OR+AND)=539.350000  PhaseF(BMFetch+agg)=30.833000  PhaseG(share)=0.000000  Total=1172.121000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  CRoaring:  PhaseA(side_tables)=88.281000  PhaseB(orders)=343.391000  PhaseCDE(okey/part_OR+AND)=1415.768000  PhaseF(BMFetch+agg)=29.049000  PhaseG(share)=0.000000  Total=1876.491000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 [OK] CRoaring matches DuckDB SQL ground truth (1995=0.038820, 1996=0.039490).
 
 ================================================================
   Q8 RESULTS — CRoaring (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (side tables)         : 140.038000 +/- 7.507022 ms
-  PhaseB (orders scan)         : 437.408000 +/- 25.047948 ms
-  PhaseCDE (okey + part OR+AND): 540.536500 +/- 14.493739 ms
-  PhaseF (BMFetch + agg)       : 30.732000 +/- 0.108783 ms
+  PhaseA (side tables)         : 88.245000 +/- 0.153378 ms
+  PhaseB (orders scan)         : 344.019500 +/- 2.109399 ms
+  PhaseCDE (okey + part OR+AND): 1416.316500 +/- 0.994760 ms
+  PhaseF (BMFetch + agg)       : 28.955000 +/- 0.204740 ms
   PhaseG (share calc)          : 0.000000 +/- 0.000000 ms
-  TOTAL                        : 1154.877500 +/- 40.907831 ms
+  TOTAL                        : 1877.546500 +/- 3.142549 ms
 ================================================================
 
   [CSV] q8_results_SF10.csv
@@ -110,10 +110,10 @@ PRAGMA bm_tpch(8);
 PRAGMA load_bitmap('orderkey');
 PRAGMA load_bitmap('partkey');
 PRAGMA bm_tpch(8);
-[load_bitmap] orderkey: scanned 59986052 rows in 641 ms
-[load_bitmap] orderkey: built CRoaringRun index (15000000 keys, 257.154 MB) in 6776 ms
-[load_bitmap] partkey: scanned 59986052 rows in 294 ms
-[load_bitmap] partkey: built CRoaringRun index (2000000 keys, 608.089 MB) in 12160 ms
+[load_bitmap] orderkey: scanned 59986052 rows in 651 ms
+[load_bitmap] orderkey: built CRoaringRun index (15000000 keys, 257.154 MB) in 6798 ms
+[load_bitmap] partkey: scanned 59986052 rows in 299 ms
+[load_bitmap] partkey: built CRoaringRun index (2000000 keys, 608.089 MB) in 12290 ms
 
 ================================================================
   TPC-H Q8 (BitEngine pattern, runtime semi-joins)
@@ -121,31 +121,31 @@ PRAGMA bm_tpch(8);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  CRoaringRun:  PhaseA(side_tables)=102.994  PhaseB(orders)=497.053  PhaseCDE(okey/part_OR+AND)=510.223  PhaseF(BMFetch+agg)=293.864  PhaseG(share)=0  Total=1404.14  rows=24254  share_1995=0.038820  share_1996=0.039490
+  CRoaringRun:  PhaseA(side_tables)=106.216  PhaseB(orders)=457.753  PhaseCDE(okey/part_OR+AND)=469.904  PhaseF(BMFetch+agg)=293.904  PhaseG(share)=0  Total=1327.78  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 2/5 ---
-  CRoaringRun:  PhaseA(side_tables)=127.166000  PhaseB(orders)=427.667000  PhaseCDE(okey/part_OR+AND)=509.743000  PhaseF(BMFetch+agg)=30.760000  PhaseG(share)=0.000000  Total=1095.338000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  CRoaringRun:  PhaseA(side_tables)=88.138000  PhaseB(orders)=348.804000  PhaseCDE(okey/part_OR+AND)=464.780000  PhaseF(BMFetch+agg)=29.217000  PhaseG(share)=0.000000  Total=930.941000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 3/5 ---
-  CRoaringRun:  PhaseA(side_tables)=133.990000  PhaseB(orders)=429.048000  PhaseCDE(okey/part_OR+AND)=512.207000  PhaseF(BMFetch+agg)=30.705000  PhaseG(share)=0.000000  Total=1105.950000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  CRoaringRun:  PhaseA(side_tables)=88.085000  PhaseB(orders)=348.784000  PhaseCDE(okey/part_OR+AND)=462.368000  PhaseF(BMFetch+agg)=29.265000  PhaseG(share)=0.000000  Total=928.504000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 4/5 ---
-  CRoaringRun:  PhaseA(side_tables)=143.926000  PhaseB(orders)=428.604000  PhaseCDE(okey/part_OR+AND)=510.439000  PhaseF(BMFetch+agg)=30.810000  PhaseG(share)=0.000000  Total=1113.781000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  CRoaringRun:  PhaseA(side_tables)=87.963000  PhaseB(orders)=356.212000  PhaseCDE(okey/part_OR+AND)=465.228000  PhaseF(BMFetch+agg)=29.067000  PhaseG(share)=0.000000  Total=938.472000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 5/5 ---
-  CRoaringRun:  PhaseA(side_tables)=160.314000  PhaseB(orders)=438.507000  PhaseCDE(okey/part_OR+AND)=520.437000  PhaseF(BMFetch+agg)=30.624000  PhaseG(share)=0.000000  Total=1149.883000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  CRoaringRun:  PhaseA(side_tables)=88.069000  PhaseB(orders)=346.125000  PhaseCDE(okey/part_OR+AND)=466.443000  PhaseF(BMFetch+agg)=29.535000  PhaseG(share)=0.000000  Total=930.174000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 [OK] CRoaringRun matches DuckDB SQL ground truth (1995=0.038820, 1996=0.039490).
 
 ================================================================
   Q8 RESULTS — CRoaringRun (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (side tables)         : 138.958000 +/- 12.466200 ms
-  PhaseB (orders scan)         : 428.826000 +/- 4.387696 ms
-  PhaseCDE (okey + part OR+AND): 511.323000 +/- 4.270071 ms
-  PhaseF (BMFetch + agg)       : 30.732500 +/- 0.069012 ms
+  PhaseA (side tables)         : 88.077000 +/- 0.063527 ms
+  PhaseB (orders scan)         : 348.794000 +/- 3.758731 ms
+  PhaseCDE (okey + part OR+AND): 465.004000 +/- 1.479980 ms
+  PhaseF (BMFetch + agg)       : 29.241000 +/- 0.169015 ms
   PhaseG (share calc)          : 0.000000 +/- 0.000000 ms
-  TOTAL                        : 1109.865500 +/- 20.498023 ms
+  TOTAL                        : 930.557500 +/- 3.826307 ms
 ================================================================
 
   [CSV] q8_results_SF10.csv
@@ -162,10 +162,10 @@ PRAGMA bm_tpch(8);
 PRAGMA load_bitmap('orderkey');
 PRAGMA load_bitmap('partkey');
 PRAGMA bm_tpch(8);
-[load_bitmap] orderkey: scanned 59986052 rows in 635 ms
-[load_bitmap] orderkey: built WAH index (15000000 keys, 1265.8 MB) in 10498 ms
-[load_bitmap] partkey: scanned 59986052 rows in 292 ms
-[load_bitmap] partkey: built WAH index (2000000 keys, 631.881 MB) in 10146 ms
+[load_bitmap] orderkey: scanned 59986052 rows in 657 ms
+[load_bitmap] orderkey: built WAH index (15000000 keys, 1265.8 MB) in 10523 ms
+[load_bitmap] partkey: scanned 59986052 rows in 301 ms
+[load_bitmap] partkey: built WAH index (2000000 keys, 631.881 MB) in 10275 ms
 
 ================================================================
   TPC-H Q8 (BitEngine pattern, runtime semi-joins)
@@ -173,31 +173,31 @@ PRAGMA bm_tpch(8);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  WAH:  PhaseA(side_tables)=107.013  PhaseB(orders)=471.642  PhaseCDE(okey/part_OR+AND)=1302.38  PhaseF(BMFetch+agg)=290.628  PhaseG(share)=0  Total=2171.66  rows=24254  share_1995=0.038820  share_1996=0.039490
+  WAH:  PhaseA(side_tables)=106.551  PhaseB(orders)=463.186  PhaseCDE(okey/part_OR+AND)=177.825  PhaseF(BMFetch+agg)=292.825  PhaseG(share)=0  Total=1040.39  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 2/5 ---
-  WAH:  PhaseA(side_tables)=89.078000  PhaseB(orders)=356.945000  PhaseCDE(okey/part_OR+AND)=1236.649000  PhaseF(BMFetch+agg)=28.838000  PhaseG(share)=0.000000  Total=1711.512000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  WAH:  PhaseA(side_tables)=88.185000  PhaseB(orders)=347.224000  PhaseCDE(okey/part_OR+AND)=177.246000  PhaseF(BMFetch+agg)=28.590000  PhaseG(share)=0.000000  Total=641.247000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 3/5 ---
-  WAH:  PhaseA(side_tables)=89.211000  PhaseB(orders)=351.561000  PhaseCDE(okey/part_OR+AND)=1247.777000  PhaseF(BMFetch+agg)=28.838000  PhaseG(share)=0.000000  Total=1717.388000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  WAH:  PhaseA(side_tables)=87.959000  PhaseB(orders)=346.616000  PhaseCDE(okey/part_OR+AND)=176.078000  PhaseF(BMFetch+agg)=28.859000  PhaseG(share)=0.000000  Total=639.513000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 4/5 ---
-  WAH:  PhaseA(side_tables)=89.176000  PhaseB(orders)=356.857000  PhaseCDE(okey/part_OR+AND)=1225.480000  PhaseF(BMFetch+agg)=28.598000  PhaseG(share)=0.000000  Total=1700.112000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  WAH:  PhaseA(side_tables)=88.439000  PhaseB(orders)=341.957000  PhaseCDE(okey/part_OR+AND)=173.739000  PhaseF(BMFetch+agg)=28.710000  PhaseG(share)=0.000000  Total=632.847000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 5/5 ---
-  WAH:  PhaseA(side_tables)=89.466000  PhaseB(orders)=353.622000  PhaseCDE(okey/part_OR+AND)=1230.677000  PhaseF(BMFetch+agg)=29.018000  PhaseG(share)=0.000000  Total=1702.784000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  WAH:  PhaseA(side_tables)=87.907000  PhaseB(orders)=346.161000  PhaseCDE(okey/part_OR+AND)=171.938000  PhaseF(BMFetch+agg)=28.829000  PhaseG(share)=0.000000  Total=634.837000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 [OK] WAH matches DuckDB SQL ground truth (1995=0.038820, 1996=0.039490).
 
 ================================================================
   Q8 RESULTS — WAH (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (side tables)         : 89.193500 +/- 0.143219 ms
-  PhaseB (orders scan)         : 355.239500 +/- 2.274836 ms
-  PhaseCDE (okey + part OR+AND): 1233.663000 +/- 8.294647 ms
-  PhaseF (BMFetch + agg)       : 28.838000 +/- 0.149248 ms
+  PhaseA (side tables)         : 88.072000 +/- 0.210506 ms
+  PhaseB (orders scan)         : 346.388500 +/- 2.074064 ms
+  PhaseCDE (okey + part OR+AND): 174.908500 +/- 2.056883 ms
+  PhaseF (BMFetch + agg)       : 28.769500 +/- 0.106403 ms
   PhaseG (share calc)          : 0.000000 +/- 0.000000 ms
-  TOTAL                        : 1707.148000 +/- 6.889947 ms
+  TOTAL                        : 637.175000 +/- 3.399591 ms
 ================================================================
 
   [CSV] q8_results_SF10.csv
@@ -214,10 +214,10 @@ PRAGMA bm_tpch(8);
 PRAGMA load_bitmap('orderkey');
 PRAGMA load_bitmap('partkey');
 PRAGMA bm_tpch(8);
-[load_bitmap] orderkey: scanned 59986052 rows in 645 ms
-[load_bitmap] orderkey: built EWAH index (15000000 keys, 365.622 MB) in 5168 ms
-[load_bitmap] partkey: scanned 59986052 rows in 295 ms
-[load_bitmap] partkey: built EWAH index (2000000 keys, 975.746 MB) in 7653 ms
+[load_bitmap] orderkey: scanned 59986052 rows in 649 ms
+[load_bitmap] orderkey: built EWAH index (15000000 keys, 365.622 MB) in 5194 ms
+[load_bitmap] partkey: scanned 59986052 rows in 296 ms
+[load_bitmap] partkey: built EWAH index (2000000 keys, 975.746 MB) in 7476 ms
 
 ================================================================
   TPC-H Q8 (BitEngine pattern, runtime semi-joins)
@@ -225,31 +225,31 @@ PRAGMA bm_tpch(8);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  EWAH:  PhaseA(side_tables)=107.669  PhaseB(orders)=473.977  PhaseCDE(okey/part_OR+AND)=697.804  PhaseF(BMFetch+agg)=291.114  PhaseG(share)=0  Total=1570.57  rows=24254  share_1995=0.038820  share_1996=0.039490
+  EWAH:  PhaseA(side_tables)=106.799  PhaseB(orders)=466.116  PhaseCDE(okey/part_OR+AND)=1024.64  PhaseF(BMFetch+agg)=294.967  PhaseG(share)=0  Total=1892.52  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 2/5 ---
-  EWAH:  PhaseA(side_tables)=89.070000  PhaseB(orders)=350.252000  PhaseCDE(okey/part_OR+AND)=682.589000  PhaseF(BMFetch+agg)=28.789000  PhaseG(share)=0.000000  Total=1150.701000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  EWAH:  PhaseA(side_tables)=88.331000  PhaseB(orders)=350.631000  PhaseCDE(okey/part_OR+AND)=975.492000  PhaseF(BMFetch+agg)=29.215000  PhaseG(share)=0.000000  Total=1443.670000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 3/5 ---
-  EWAH:  PhaseA(side_tables)=89.180000  PhaseB(orders)=351.200000  PhaseCDE(okey/part_OR+AND)=658.729000  PhaseF(BMFetch+agg)=28.826000  PhaseG(share)=0.000000  Total=1127.937000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  EWAH:  PhaseA(side_tables)=88.404000  PhaseB(orders)=355.376000  PhaseCDE(okey/part_OR+AND)=972.696000  PhaseF(BMFetch+agg)=28.808000  PhaseG(share)=0.000000  Total=1445.285000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 4/5 ---
-  EWAH:  PhaseA(side_tables)=89.134000  PhaseB(orders)=357.984000  PhaseCDE(okey/part_OR+AND)=657.901000  PhaseF(BMFetch+agg)=28.634000  PhaseG(share)=0.000000  Total=1133.655000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  EWAH:  PhaseA(side_tables)=88.612000  PhaseB(orders)=352.303000  PhaseCDE(okey/part_OR+AND)=985.017000  PhaseF(BMFetch+agg)=29.234000  PhaseG(share)=0.000000  Total=1455.168000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 5/5 ---
-  EWAH:  PhaseA(side_tables)=89.151000  PhaseB(orders)=352.711000  PhaseCDE(okey/part_OR+AND)=661.161000  PhaseF(BMFetch+agg)=28.884000  PhaseG(share)=0.000000  Total=1131.908000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  EWAH:  PhaseA(side_tables)=88.493000  PhaseB(orders)=351.463000  PhaseCDE(okey/part_OR+AND)=969.874000  PhaseF(BMFetch+agg)=29.066000  PhaseG(share)=0.000000  Total=1438.898000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 [OK] EWAH matches DuckDB SQL ground truth (1995=0.038820, 1996=0.039490).
 
 ================================================================
   Q8 RESULTS — EWAH (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (side tables)         : 89.142500 +/- 0.040314 ms
-  PhaseB (orders scan)         : 351.955500 +/- 2.987887 ms
-  PhaseCDE (okey + part OR+AND): 659.945000 +/- 10.170988 ms
-  PhaseF (BMFetch + agg)       : 28.807500 +/- 0.092583 ms
+  PhaseA (side tables)         : 88.448500 +/- 0.104845 ms
+  PhaseB (orders scan)         : 351.883000 +/- 1.793449 ms
+  PhaseCDE (okey + part OR+AND): 974.094000 +/- 5.696415 ms
+  PhaseF (BMFetch + agg)       : 29.140500 +/- 0.170381 ms
   PhaseG (share calc)          : 0.000000 +/- 0.000000 ms
-  TOTAL                        : 1132.781500 +/- 8.708685 ms
+  TOTAL                        : 1444.477500 +/- 5.920117 ms
 ================================================================
 
   [CSV] q8_results_SF10.csv
@@ -266,10 +266,10 @@ PRAGMA bm_tpch(8);
 PRAGMA load_bitmap('orderkey');
 PRAGMA load_bitmap('partkey');
 PRAGMA bm_tpch(8);
-[load_bitmap] orderkey: scanned 59986052 rows in 644 ms
-[load_bitmap] orderkey: built Concise index (15000000 keys, 239.944 MB) in 4889 ms
-[load_bitmap] partkey: scanned 59986052 rows in 295 ms
-[load_bitmap] partkey: built Concise index (2000000 keys, 239.944 MB) in 7146 ms
+[load_bitmap] orderkey: scanned 59986052 rows in 648 ms
+[load_bitmap] orderkey: built Concise index (15000000 keys, 239.944 MB) in 5001 ms
+[load_bitmap] partkey: scanned 59986052 rows in 297 ms
+[load_bitmap] partkey: built Concise index (2000000 keys, 239.944 MB) in 7497 ms
 
 ================================================================
   TPC-H Q8 (BitEngine pattern, runtime semi-joins)
@@ -277,31 +277,31 @@ PRAGMA bm_tpch(8);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  Concise:  PhaseA(side_tables)=108.116  PhaseB(orders)=472.262  PhaseCDE(okey/part_OR+AND)=805.17  PhaseF(BMFetch+agg)=303.624  PhaseG(share)=0  Total=1689.17  rows=24254  share_1995=0.038820  share_1996=0.039490
+  Concise:  PhaseA(side_tables)=107.164  PhaseB(orders)=465.75  PhaseCDE(okey/part_OR+AND)=997.721  PhaseF(BMFetch+agg)=296.451  PhaseG(share)=0  Total=1867.09  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 2/5 ---
-  Concise:  PhaseA(side_tables)=89.694000  PhaseB(orders)=356.624000  PhaseCDE(okey/part_OR+AND)=779.222000  PhaseF(BMFetch+agg)=28.867000  PhaseG(share)=0.000000  Total=1254.409000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  Concise:  PhaseA(side_tables)=88.419000  PhaseB(orders)=348.140000  PhaseCDE(okey/part_OR+AND)=953.392000  PhaseF(BMFetch+agg)=29.636000  PhaseG(share)=0.000000  Total=1419.589000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 3/5 ---
-  Concise:  PhaseA(side_tables)=89.317000  PhaseB(orders)=357.206000  PhaseCDE(okey/part_OR+AND)=768.911000  PhaseF(BMFetch+agg)=29.073000  PhaseG(share)=0.000000  Total=1244.508000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  Concise:  PhaseA(side_tables)=88.389000  PhaseB(orders)=349.153000  PhaseCDE(okey/part_OR+AND)=956.001000  PhaseF(BMFetch+agg)=29.838000  PhaseG(share)=0.000000  Total=1423.383000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 4/5 ---
-  Concise:  PhaseA(side_tables)=89.139000  PhaseB(orders)=351.124000  PhaseCDE(okey/part_OR+AND)=767.528000  PhaseF(BMFetch+agg)=29.056000  PhaseG(share)=0.000000  Total=1236.850000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  Concise:  PhaseA(side_tables)=88.324000  PhaseB(orders)=349.987000  PhaseCDE(okey/part_OR+AND)=950.231000  PhaseF(BMFetch+agg)=28.978000  PhaseG(share)=0.000000  Total=1417.522000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 5/5 ---
-  Concise:  PhaseA(side_tables)=89.303000  PhaseB(orders)=354.977000  PhaseCDE(okey/part_OR+AND)=770.354000  PhaseF(BMFetch+agg)=29.081000  PhaseG(share)=0.000000  Total=1243.717000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  Concise:  PhaseA(side_tables)=88.583000  PhaseB(orders)=352.179000  PhaseCDE(okey/part_OR+AND)=960.934000  PhaseF(BMFetch+agg)=29.350000  PhaseG(share)=0.000000  Total=1431.049000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 [OK] Concise matches DuckDB SQL ground truth (1995=0.038820, 1996=0.039490).
 
 ================================================================
   Q8 RESULTS — Concise (4 measured iter, median +/- stddev)
 ================================================================
-  PhaseA (side tables)         : 89.310000 +/- 0.203379 ms
-  PhaseB (orders scan)         : 355.800500 +/- 2.373106 ms
-  PhaseCDE (okey + part OR+AND): 769.632500 +/- 4.566789 ms
-  PhaseF (BMFetch + agg)       : 29.064500 +/- 0.088364 ms
+  PhaseA (side tables)         : 88.404000 +/- 0.095447 ms
+  PhaseB (orders scan)         : 349.570000 +/- 1.487620 ms
+  PhaseCDE (okey + part OR+AND): 954.696500 +/- 3.919998 ms
+  PhaseF (BMFetch + agg)       : 29.493000 +/- 0.323235 ms
   PhaseG (share calc)          : 0.000000 +/- 0.000000 ms
-  TOTAL                        : 1244.112500 +/- 6.260459 ms
+  TOTAL                        : 1421.486000 +/- 5.160530 ms
 ================================================================
 
   [CSV] q8_results_SF10.csv

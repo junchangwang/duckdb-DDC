@@ -254,8 +254,7 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         auto* ew_okey = dynamic_cast<bm_index::IndexedEWAH*>(idx_okey);
         auto* con_okey= dynamic_cast<bm_index::IndexedConcise*>(idx_okey);
 
-        // Result accumulator (per-backend). Build the empty seed up front
-        // (using cheap from_sparse_positions for ComBit).
+        // Result accumulator (per-backend).
         size_t num_rows = idx_okey->num_rows();
         ComBit cb_btv_res;
         roaring::Roaring cr_btv_res;
@@ -264,14 +263,7 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         ConciseSet<false> con_btv_res;
         if (cb_okey) cb_btv_res = ComBit::from_sparse_positions({}, num_rows, cb_okey->segment_bits());
 
-        // Collect qualifying orderkeys during the orders scan, then do
-        // ONE batched OR after the scan.  ALL backends (including
-        // ComBit) now expose or_many — for ComBit it dispatches to
-        // SparseComBit::or_many which does one scatter pass per
-        // segment over all 590k inputs instead of 590k pairwise
-        // apply_or_to calls.  Drops Q3 PhaseB ComBit from ~1300 ms
-        // (pairwise per-key OR + ~1µs/call overhead × 590k) to
-        // ~150 ms (one batched scatter).
+        // Collect qualifying orderkeys during the orders scan.
         std::vector<int64_t> matched_okeys;
         matched_okeys.reserve(2000000);
         {
@@ -301,12 +293,29 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
                 }
             }
         }
-        // Batched k-way OR — one call per backend, no per-key overhead.
-        if (cb_okey)       cb_btv_res  = cb_okey->or_many(matched_okeys);
-        else if (cr_okey)  cr_btv_res  = cr_okey->or_many(matched_okeys);
-        else if (wah_okey) wah_btv_res = wah_okey->or_many(matched_okeys);
-        else if (ew_okey)  ew_btv_res  = ew_okey->or_many(matched_okeys);
-        else if (con_okey) con_btv_res = con_okey->or_many(matched_okeys);
+        // ComBit uses its scatter-by-segment or_many (the "sca"
+        // SparseComBit::or_many — that's the optimization teacher had
+        // us implement as ComBit's design contribution).  Other
+        // backends use plain pairwise |= (no library k-way merge —
+        // those would be unfair to compare against ComBit's design).
+        // Plan A — each backend uses its natural multi-key OR primitive.
+        if (cb_okey) {
+            cb_btv_res = cb_okey->or_many(matched_okeys);  // ComBit: sca
+        } else if (cr_okey) {
+            if (cr_okey->run_optimized()) {
+                cr_btv_res = cr_okey->or_many(matched_okeys);  // CRR: fastunion
+            } else {
+                cr_btv_res = *cr_okey->btv_for(matched_okeys[0]);  // CR: pairwise |=
+                for (size_t i = 1; i < matched_okeys.size(); i++)
+                    cr_btv_res |= *cr_okey->btv_for(matched_okeys[i]);
+            }
+        } else if (wah_okey) {
+            wah_btv_res = wah_okey->or_many(matched_okeys);  // WAH: copy+decompress+|=
+        } else if (ew_okey) {
+            ew_btv_res = ew_okey->or_many(matched_okeys);  // EW: fast_logicalor
+        } else if (con_okey) {
+            con_btv_res = con_okey->or_many(matched_okeys);  // CON: fast_logicalor
+        }
         auto t_b = clk::now();
 
         // ===== Phase C: shipdate filter (l_shipdate > cutoff) =====
@@ -317,32 +326,21 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         std::vector<row_t> ids;
         ids.reserve(2000000);
 
+        // Phase C: shipdate range OR (l_shipdate > CUTOFF).
+        // Plan A — each backend uses its natural multi-key OR primitive.
+        // For ComBit/CR-without-runs/WAH the range OR is per-key
+        // pairwise (apply_or_range_to walks index_ map and pairwise
+        // ORs).  For CRR/EW/CON the natural primitive is the library's
+        // k-way merge (fastunion / fast_logicalor) over the in-range
+        // per-day bitmaps.
         if (cb_okey) {
             auto* cb_ship = dynamic_cast<bm_index::IndexedComBit*>(idx_ship);
-            ComBit ship_filter = ComBit::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
-            // BPE fast path: if shipdate_BPE was pre-loaded, evaluate
-            // "shipdate > CUTOFF" as `prefix(LAST) AND NOT prefix(B)`
-            // (where B = bucket_of(CUTOFF)) plus per-day boundary OR
-            // for days (CUTOFF, bucket_max(B)].  Drops PhaseC from
-            // ~924ms (1387 pairwise day-ORs) to ~30ms (≤100 boundary
-            // days + 2 cumulative bitmap ops).  Same column, separate
-            // aux structure — TPC-H 1.5.7 §5 compliant.
-            auto* cb_ship_bpe = dynamic_cast<bm_index::IndexedComBitBPE*>(
-                static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_BPE));
-            if (cb_ship_bpe) {
-                int B    = cb_ship_bpe->bucket_of(Q3_CUTOFF_DATE);
-                int LAST = static_cast<int>(cb_ship_bpe->num_keys()) - 1;
-                ship_filter = *cb_ship_bpe->prefix_at_bucket(LAST);
-                ship_filter &= ~(*cb_ship_bpe->prefix_at_bucket(B));
-                int64_t bmax = cb_ship_bpe->bucket_max(B);
-                if (Q3_CUTOFF_DATE + 1 <= bmax) {
-                    ComBit boundary = ComBit::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
-                    cb_ship->apply_or_range_to(boundary, Q3_CUTOFF_DATE + 1, bmax);
-                    ship_filter |= boundary;
-                }
-            } else {
-                cb_ship->apply_or_range_to(ship_filter, Q3_CUTOFF_DATE + 1, INT64_MAX);
-            }
+            // ComBit: gather in-range keys + sca or_many.
+            std::vector<int64_t> in_range;
+            cb_ship->for_each_key([&](int64_t k) {
+                if (k > Q3_CUTOFF_DATE) in_range.push_back(k);
+            });
+            ComBit ship_filter = cb_ship->or_many(in_range);
             t_c = clk::now();
             cb_btv_res &= ship_filter;
             t_d = clk::now();
@@ -350,25 +348,11 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         } else if (cr_okey) {
             auto* cr_ship = dynamic_cast<bm_index::IndexedCRoaring*>(idx_ship);
             roaring::Roaring ship_filter;
-            // CRoaringBPE fast path for CR/CRR (same shape as ComBit BPE).
-            auto* cr_ship_bpe = dynamic_cast<bm_index::IndexedCRoaringBPE*>(
-                static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_BPE));
-            if (cr_ship_bpe) {
-                int B    = cr_ship_bpe->bucket_of(Q3_CUTOFF_DATE);
-                int LAST = static_cast<int>(cr_ship_bpe->num_keys()) - 1;
-                ship_filter = *cr_ship_bpe->prefix_at_bucket(LAST);
-                roaring::Roaring lo_pe = *cr_ship_bpe->prefix_at_bucket(B);
-                ship_filter -= lo_pe;
-                int64_t bmax = cr_ship_bpe->bucket_max(B);
-                if (Q3_CUTOFF_DATE + 1 <= bmax) {
-                    roaring::Roaring boundary;
-                    if (cr_ship->run_optimized()) boundary = cr_ship->or_range(Q3_CUTOFF_DATE + 1, bmax);
-                    else cr_ship->apply_or_range_to(boundary, Q3_CUTOFF_DATE + 1, bmax);
-                    ship_filter |= boundary;
-                }
-            } else if (cr_ship->run_optimized()) {
+            if (cr_ship->run_optimized()) {
+                // CRR: fastunion via or_range.
                 ship_filter = cr_ship->or_range(Q3_CUTOFF_DATE + 1, INT64_MAX);
             } else {
+                // CR: per-day pairwise |=.
                 cr_ship->apply_or_range_to(ship_filter, Q3_CUTOFF_DATE + 1, INT64_MAX);
             }
             t_c = clk::now();
@@ -376,17 +360,18 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
             t_d = clk::now();
             q3_get_rowids_t(cr_btv_res, &ids);
         } else if (wah_okey) {
-            ibis::bitvector ship_filter;
-            dynamic_cast<bm_index::IndexedWAH*>(idx_ship)
-                ->apply_or_range_to(ship_filter, Q3_CUTOFF_DATE + 1, INT64_MAX);
+            // WAH: copy first + decompress + |= rest pairwise (teacher).
+            auto* wah_ship = dynamic_cast<bm_index::IndexedWAH*>(idx_ship);
+            ibis::bitvector ship_filter = wah_ship->or_range(Q3_CUTOFF_DATE + 1, INT64_MAX);
             t_c = clk::now();
             wah_btv_res &= ship_filter;
             t_d = clk::now();
             q3_get_rowids_t(wah_btv_res, &ids);
         } else if (ew_okey) {
+            // EW: fast_logicalor via or_range.
+            auto* ew_ship = dynamic_cast<bm_index::IndexedEWAH*>(idx_ship);
             ewah::EWAHBoolArray<uint64_t> ship_filter =
-                dynamic_cast<bm_index::IndexedEWAH*>(idx_ship)
-                    ->or_range(Q3_CUTOFF_DATE + 1, INT64_MAX);
+                ew_ship->or_range(Q3_CUTOFF_DATE + 1, INT64_MAX);
             t_c = clk::now();
             ewah::EWAHBoolArray<uint64_t> tmp;
             ew_btv_res.logicaland(ship_filter, tmp);
@@ -394,9 +379,10 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
             t_d = clk::now();
             q3_get_rowids_t(ew_btv_res, &ids);
         } else if (con_okey) {
+            // CON: fast_logicalor via or_range.
+            auto* con_ship = dynamic_cast<bm_index::IndexedConcise*>(idx_ship);
             ConciseSet<false> ship_filter =
-                dynamic_cast<bm_index::IndexedConcise*>(idx_ship)
-                    ->or_range(Q3_CUTOFF_DATE + 1, INT64_MAX);
+                con_ship->or_range(Q3_CUTOFF_DATE + 1, INT64_MAX);
             t_c = clk::now();
             con_btv_res = con_btv_res.logicaland(ship_filter);
             t_d = clk::now();

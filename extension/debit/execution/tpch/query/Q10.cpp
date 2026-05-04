@@ -188,11 +188,13 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         size_t num_rows = idx_okey->num_rows();
         std::vector<row_t> ids;
 
+        // Plan A — each backend uses its natural multi-key OR primitive
+        // for orderkey; returnflag is single-key (apply_or_to); &= shared.
         clk::time_point t_b, t_c, t_d;
         if (auto* cb_okey = dynamic_cast<bm_index::IndexedComBit*>(idx_okey)) {
             auto* cb_rf = dynamic_cast<bm_index::IndexedComBit*>(idx_rf);
             if (!cb_rf) { std::cerr << "[Q10] type mismatch.\n"; return; }
-            ComBit okey_filter = cb_okey->or_many(matched_okeys);
+            ComBit okey_filter = cb_okey->or_many(matched_okeys);  // ComBit: sca
             t_b = clk::now();
             ComBit rf_filter = ComBit::from_sparse_positions({}, num_rows, cb_rf->segment_bits());
             cb_rf->apply_or_to(rf_filter, Q10_RETURNFLAG_R);
@@ -203,7 +205,13 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         } else if (auto* cr_okey = dynamic_cast<bm_index::IndexedCRoaring*>(idx_okey)) {
             auto* cr_rf = dynamic_cast<bm_index::IndexedCRoaring*>(idx_rf);
             if (!cr_rf) { std::cerr << "[Q10] type mismatch.\n"; return; }
-            roaring::Roaring okey_filter = cr_okey->or_many(matched_okeys);
+            roaring::Roaring okey_filter;
+            if (cr_okey->run_optimized()) {
+                okey_filter = cr_okey->or_many(matched_okeys);  // CRR: fastunion
+            } else {
+                okey_filter = *cr_okey->btv_for(matched_okeys[0]);  // CR: pairwise
+                for (size_t i = 1; i < matched_okeys.size(); i++) okey_filter |= *cr_okey->btv_for(matched_okeys[i]);
+            }
             t_b = clk::now();
             roaring::Roaring rf_filter;
             cr_rf->apply_or_to(rf_filter, Q10_RETURNFLAG_R);
@@ -214,7 +222,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         } else if (auto* wah_okey = dynamic_cast<bm_index::IndexedWAH*>(idx_okey)) {
             auto* wah_rf = dynamic_cast<bm_index::IndexedWAH*>(idx_rf);
             if (!wah_rf) { std::cerr << "[Q10] type mismatch.\n"; return; }
-            ibis::bitvector okey_filter = wah_okey->or_many(matched_okeys);
+            ibis::bitvector okey_filter = wah_okey->or_many(matched_okeys);  // WAH: copy+decompress+|=
             t_b = clk::now();
             ibis::bitvector rf_filter;
             wah_rf->apply_or_to(rf_filter, Q10_RETURNFLAG_R);
@@ -225,7 +233,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         } else if (auto* ew_okey = dynamic_cast<bm_index::IndexedEWAH*>(idx_okey)) {
             auto* ew_rf = dynamic_cast<bm_index::IndexedEWAH*>(idx_rf);
             if (!ew_rf) { std::cerr << "[Q10] type mismatch.\n"; return; }
-            ewah::EWAHBoolArray<uint64_t> okey_filter = ew_okey->or_many(matched_okeys);
+            ewah::EWAHBoolArray<uint64_t> okey_filter = ew_okey->or_many(matched_okeys);  // EW: fast_logicalor
             t_b = clk::now();
             ewah::EWAHBoolArray<uint64_t> rf_filter;
             ew_rf->apply_or_to(rf_filter, Q10_RETURNFLAG_R);
@@ -237,7 +245,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         } else if (auto* con_okey = dynamic_cast<bm_index::IndexedConcise*>(idx_okey)) {
             auto* con_rf = dynamic_cast<bm_index::IndexedConcise*>(idx_rf);
             if (!con_rf) { std::cerr << "[Q10] type mismatch.\n"; return; }
-            ConciseSet<false> okey_filter = con_okey->or_many(matched_okeys);
+            ConciseSet<false> okey_filter = con_okey->or_many(matched_okeys);  // CON: fast_logicalor
             t_b = clk::now();
             ConciseSet<false> rf_filter;
             con_rf->apply_or_to(rf_filter, Q10_RETURNFLAG_R);

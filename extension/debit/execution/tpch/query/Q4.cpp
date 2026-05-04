@@ -166,26 +166,32 @@ void BMTableScan::BMTPCH_Q4(ExecutionContext &context, const PhysicalTableScan &
         auto t_a = clk::now();
 
         // ===== Phase B: OR matching orderkey bitmaps + get_rowids =====
+        // Plan A — each backend uses its natural multi-key OR primitive.
         std::vector<row_t> ids;
         size_t num_rows = idx_okey->num_rows();
-        // Collect once, OR once.  Avoids 590k pairwise apply_or_to.
         std::vector<int64_t> keys;
         keys.reserve(orderkey_priority.size());
         for (auto& [k, _] : orderkey_priority) keys.push_back(k);
         if (auto* cb = dynamic_cast<bm_index::IndexedComBit*>(idx_okey)) {
-            ComBit btv = cb->or_many(keys);
+            ComBit btv = cb->or_many(keys);  // ComBit: sca
             q4_get_rowids(btv, &ids);
         } else if (auto* cr = dynamic_cast<bm_index::IndexedCRoaring*>(idx_okey)) {
-            roaring::Roaring btv = cr->or_many(keys);
+            roaring::Roaring btv;
+            if (cr->run_optimized()) {
+                btv = cr->or_many(keys);  // CRR: fastunion
+            } else {
+                btv = *cr->btv_for(keys[0]);  // CR: pairwise |=
+                for (size_t i = 1; i < keys.size(); i++) btv |= *cr->btv_for(keys[i]);
+            }
             q4_get_rowids(btv, &ids);
         } else if (auto* wah = dynamic_cast<bm_index::IndexedWAH*>(idx_okey)) {
-            ibis::bitvector btv = wah->or_many(keys);
+            ibis::bitvector btv = wah->or_many(keys);  // WAH: copy+decompress+|=
             q4_get_rowids(btv, &ids);
         } else if (auto* ew = dynamic_cast<bm_index::IndexedEWAH*>(idx_okey)) {
-            ewah::EWAHBoolArray<uint64_t> btv = ew->or_many(keys);
+            ewah::EWAHBoolArray<uint64_t> btv = ew->or_many(keys);  // EW: fast_logicalor
             q4_get_rowids(btv, &ids);
         } else if (auto* con = dynamic_cast<bm_index::IndexedConcise*>(idx_okey)) {
-            ConciseSet<false> btv = con->or_many(keys);
+            ConciseSet<false> btv = con->or_many(keys);  // CON: fast_logicalor
             q4_get_rowids(btv, &ids);
         } else {
             std::cerr << "[Q4] ERROR: unrecognised IBitmapIndex backend.\n";

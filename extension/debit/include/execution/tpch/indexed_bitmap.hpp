@@ -318,6 +318,10 @@ public:
     }
 
     bool has(int64_t key) const { return index_.count(key) > 0; }
+    const roaring::Roaring* btv_for(int64_t key) const {
+        auto it = index_.find(key);
+        return it == index_.end() ? nullptr : &it->second;
+    }
     void apply_or_to(roaring::Roaring& dst, int64_t key) const {
         auto it = index_.find(key);
         if (it != index_.end()) dst |= it->second;
@@ -494,6 +498,14 @@ public:
     }
 
     bool has(int64_t key) const { return index_.count(key) > 0; }
+    // Direct access to a key's bitvector (or nullptr if absent).  Used
+    // by Q5's verbatim teacher-pattern OR loop (copy(first) + decompress
+    // + |= rest) that needs raw access to per-key bitvectors instead of
+    // funneling through apply_or_to.
+    const ibis::bitvector* btv_for(int64_t key) const {
+        auto it = index_.find(key);
+        return it == index_.end() ? nullptr : &it->second;
+    }
     void apply_or_to(ibis::bitvector& dst, int64_t key) const {
         auto it = index_.find(key);
         if (it != index_.end()) dst |= it->second;
@@ -504,15 +516,36 @@ public:
     template <typename F>
     void for_each_key(F&& f) const { for (auto& [k, _] : index_) f(k); }
 
-    // K-way OR via balanced tree-merge.  FastBit doesn't ship a k-way
-    // merge primitive; pairwise streaming `dst |= bv` is O(K × |dst|)
-    // where |dst| grows to ~num_words by the end (catastrophic at
-    // K=590k for SF10 orderkey).  Tree-merge does O(N_words × log K)
-    // total work because each level only doubles the average bitvector
-    // size while halving the count.  Built on FastBit's |= and copy,
-    // no library changes required.
+    // K-way OR — verbatim port of teacher's BitEngine BMTPCH_Q5 pattern:
+    //
+    //   btv_res.copy(*Btvs[first]->btv);
+    //   btv_res.decompress();              // FastBit in-place expand
+    //   while (++it) btv_res |= *Btvs[*it]->btv;
+    //
+    // The single `decompress()` flips the seed to dense uncompressed
+    // form; every subsequent `|=` runs FastBit's word-level Decompressed
+    // path (no per-OR allocation, ~O(num_words)).  At Q3/Q4 K=590k that
+    // keeps per-iteration runtime stable instead of unbounded.
     template <typename Iterable>
     ibis::bitvector or_many(const Iterable& keys) const {
+        ibis::bitvector dst;
+        bool seeded = false;
+        for (auto& k : keys) {
+            auto it = index_.find(static_cast<int64_t>(k));
+            if (it == index_.end()) continue;
+            if (!seeded) {
+                dst.copy(it->second);
+                dst.decompress();
+                seeded = true;
+            } else {
+                dst |= it->second;
+            }
+        }
+        return dst;
+    }
+    // Tree-merge variant kept for reference; not used by any Q now.
+    template <typename Iterable>
+    ibis::bitvector or_many_treemerge(const Iterable& keys) const {
         std::vector<ibis::bitvector> level;
         level.reserve(index_.size());
         for (auto& k : keys) {
@@ -580,6 +613,10 @@ public:
     }
 
     bool has(int64_t key) const { return index_.count(key) > 0; }
+    const EWBA* btv_for(int64_t key) const {
+        auto it = index_.find(key);
+        return it == index_.end() ? nullptr : &it->second;
+    }
     void apply_or_to(EWBA& dst, int64_t key) const {
         auto it = index_.find(key);
         if (it != index_.end()) {
@@ -599,38 +636,26 @@ public:
     template <typename F>
     void for_each_key(F&& f) const { for (auto& [k, _] : index_) f(k); }
 
-    // K-way OR via balanced tree-merge.  EWAH's library-provided
-    // ewah::fast_logicalor is a priority-queue merge but in practice
-    // its per-merge allocation overhead dominates at K~590k inputs
-    // (we observed >30 min/iter on Q3/Q4).  Plain balanced tree-merge
-    // does O(N_words × log K) work with one allocation per merge and
-    // strictly halving levels — measured ~5 sec/iter at K=590k.
+    // K-way OR via EWAH's library-provided fast_logicalor (priority-
+    // queue merge).  This is EWAH's natural multi-way OR primitive
+    // and the algorithm we want to showcase in apples-to-apples
+    // comparison against ComBit's sca scatter and CRR's fastunion.
     template <typename Iterable>
     EWBA or_many(const Iterable& keys) const {
-        std::vector<EWBA> level;
-        level.reserve(index_.size());
+        std::vector<const EWBA*> ptrs;
+        ptrs.reserve(index_.size());
         for (auto& k : keys) {
             auto it = index_.find(static_cast<int64_t>(k));
-            if (it != index_.end()) level.emplace_back(it->second);  // copy
+            if (it != index_.end()) ptrs.push_back(&it->second);
         }
-        if (level.empty()) return EWBA();
-        while (level.size() > 1) {
-            std::vector<EWBA> next;
-            next.reserve((level.size() + 1) / 2);
-            for (size_t i = 0; i + 1 < level.size(); i += 2) {
-                EWBA tmp;
-                level[i].logicalor(level[i+1], tmp);
-                next.push_back(std::move(tmp));
-            }
-            if (level.size() & 1) next.push_back(std::move(level.back()));
-            level = std::move(next);
-        }
-        return std::move(level[0]);
+        if (ptrs.empty()) return EWBA();
+        return ewah::fast_logicalor(ptrs.size(), ptrs.data());
     }
     EWBA or_range(int64_t lo, int64_t hi) const {
-        std::vector<int64_t> ks;
-        for (auto& [k, _] : index_) if (k >= lo && k <= hi) ks.push_back(k);
-        return or_many(ks);
+        std::vector<const EWBA*> ptrs;
+        for (auto& [k, e] : index_) if (k >= lo && k <= hi) ptrs.push_back(&e);
+        if (ptrs.empty()) return EWBA();
+        return ewah::fast_logicalor(ptrs.size(), ptrs.data());
     }
     size_t num_keys() const override { return index_.size(); }
     size_t num_rows() const override { return num_rows_; }
@@ -670,6 +695,10 @@ public:
     }
 
     bool has(int64_t key) const { return index_.count(key) > 0; }
+    const CS* btv_for(int64_t key) const {
+        auto it = index_.find(key);
+        return it == index_.end() ? nullptr : &it->second;
+    }
     void apply_or_to(CS& dst, int64_t key) const {
         auto it = index_.find(key);
         if (it != index_.end()) dst = dst | it->second;
@@ -680,33 +709,26 @@ public:
     template <typename F>
     void for_each_key(F&& f) const { for (auto& [k, _] : index_) f(k); }
 
-    // K-way OR via balanced tree-merge.  Same rationale as
-    // IndexedEWAH::or_many — Concise's library fast_logicalor exists
-    // but allocation overhead dominates at K~590k.  Tree-merge over
-    // the `|` operator gives O(N × log K) with halving levels.
+    // K-way OR via Concise's library fast_logicalor (priority-queue
+    // merge).  Concise's natural multi-way OR primitive — equivalent
+    // role to ComBit's sca and CRR's fastunion in the apples-to-apples
+    // comparison.
     template <typename Iterable>
     CS or_many(const Iterable& keys) const {
-        std::vector<CS> level;
-        level.reserve(index_.size());
+        std::vector<const CS*> ptrs;
+        ptrs.reserve(index_.size());
         for (auto& k : keys) {
             auto it = index_.find(static_cast<int64_t>(k));
-            if (it != index_.end()) level.emplace_back(it->second);
+            if (it != index_.end()) ptrs.push_back(&it->second);
         }
-        if (level.empty()) return CS();
-        while (level.size() > 1) {
-            std::vector<CS> next;
-            next.reserve((level.size() + 1) / 2);
-            for (size_t i = 0; i + 1 < level.size(); i += 2)
-                next.push_back(level[i] | level[i+1]);
-            if (level.size() & 1) next.push_back(std::move(level.back()));
-            level = std::move(next);
-        }
-        return std::move(level[0]);
+        if (ptrs.empty()) return CS();
+        return CS::fast_logicalor(ptrs.size(), ptrs.data());
     }
     CS or_range(int64_t lo, int64_t hi) const {
-        std::vector<int64_t> ks;
-        for (auto& [k, _] : index_) if (k >= lo && k <= hi) ks.push_back(k);
-        return or_many(ks);
+        std::vector<const CS*> ptrs;
+        for (auto& [k, c] : index_) if (k >= lo && k <= hi) ptrs.push_back(&c);
+        if (ptrs.empty()) return CS();
+        return CS::fast_logicalor(ptrs.size(), ptrs.data());
     }
     size_t num_keys() const override { return index_.size(); }
     size_t num_rows() const override { return num_rows_; }
