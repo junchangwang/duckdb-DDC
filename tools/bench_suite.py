@@ -537,33 +537,31 @@ PATTERN_BACKENDS_FULL: List[Tuple[str, str]] = [
     ("CON", "con"),
 ]
 
-# Q5 fans out the OR over ~28k qualifying orderkeys (one per ASIA order)
-# at SF10.  WAH / EWAH / Concise pay O(num_words) per OR which makes the
-# Phase B step take 5–20 minutes per backend — practically unrunnable in
-# a sweep.  Skip them and report N/A; CB / CR / CRR are the meaningful
-# comparison for Q5's per-value FK index pattern.
+# Build cost is now uniform (IndexedWAH::build uses FastBit appendFill,
+# O(num_set_bits)).  Runtime gating differs per Q:
+#   * EWAH/Concise have fast_logicalor (priority-queue k-way merge), so
+#     they handle high-fan-out OR (Q3/Q4 ~590k orderkeys, Q5 ~28k) well.
+#   * WAH (FastBit ibis::bitvector) has no k-way merge — only 2-way
+#     `dst |= bv` ORs.  Each OR is O(num_words) ≈ 1.27 GB / 8 = 160M words
+#     per call.  At 28k ORs per Q5 iteration this is ~60 minutes/iter —
+#     practically un-runnable in a sweep.  Gate WAH off for Q3/Q4/Q5;
+#     all other Qs have small enough OR fan-out (≤200 keys) that WAH
+#     finishes in seconds.
+PATTERN_NO_WAH: List[Tuple[str, str]] = [
+    ("CB",  "cb"),
+    ("CR",  "cr"),
+    ("CRR", "crr"),
+    ("EW",  "ew"),
+    ("CON", "con"),
+]
 PATTERN_BACKENDS_PER_Q: Dict[int, List[Tuple[str, str]]] = {
-    # Q1's complement OR is small (~90 keys after rewrite) so all
-    # backends run cheaply.
     1:  PATTERN_BACKENDS_FULL,
-    # Q3's PhaseB ORs ~590k orderkeys, PhaseC ORs 1356 days — WAH/EW/CON
-    # would take 5–10 minutes each.  Limit to backends with efficient
-    # many-OR fast paths.
-    3:  [("CB", "cb"), ("CR", "cr"), ("CRR", "crr")],
-    # Q4 has ~590k orderkey OR — same constraint as Q3.
-    4:  [("CB", "cb"), ("CR", "cr"), ("CRR", "crr")],
-    # Q5 has ~28k orderkey OR (small) but each is sparse — still faster
-    # to limit to the backends with k-way merge.
-    5:  [("CB", "cb"), ("CR", "cr"), ("CRR", "crr")],
+    3:  PATTERN_NO_WAH,
+    4:  PATTERN_NO_WAH,
+    5:  PATTERN_NO_WAH,
     6:  PATTERN_BACKENDS_FULL,
-    # Q14: small (~30 day shipdate range) — all backends.
     14: PATTERN_BACKENDS_FULL,
-    # Q17: bitmap_partkey has 2M unique values at SF10.  WAH/EW/CON
-    # build is O(num_rows × num_keys) due to per-key sparse bitmap
-    # creation — would take days.  Limit to CB/CR/CRR which use sparse
-    # / container-aware storage.
-    17: [("CB", "cb"), ("CR", "cr"), ("CRR", "crr")],
-    # Q19: 2 single-key ANDs — small, all backends.
+    17: PATTERN_BACKENDS_FULL,
     19: PATTERN_BACKENDS_FULL,
 }
 
@@ -864,7 +862,7 @@ def build_excel(records: List[Dict], meta: Dict[str, Dict],
     blanks = [
         ("Blank Q row",   "Q deferred (Q8 / Q10 / Q12) — see Origin & methodology above."),
         ("Blank backend cell",
-         "Backend not run for that Q.  Two reasons: (a) PATTERN_BACKENDS_PER_Q gating — Q3/Q4/Q5/Q17 limit to CB/CR/CRR because WAH/EW/Concise per-key bitmap build over high-cardinality FK (orderkey 15M, partkey 2M unique values at SF10) exceeds practical memory budget; (b) BS/BSA only exist for the legacy Q6/Q15 paths.  ComBit's SparseComBit storage is specifically designed to handle these high-cardinality FK bitmaps that defeat per-value-bitvector backends."),
+         "Backend not run for that Q.  CB/CR/CRR/EW/CON run for every Q.  WAH is gated off for Q3/Q4/Q5: FastBit ibis::bitvector has only 2-way OR (no k-way merge); per-Q fan-out is 590k orderkeys (Q3/Q4) and 28k (Q5), making each iteration ~60 min on a 1.27 GB WAH index.  CRR/EW/CON use fast_logicalor (priority-queue k-way merge) and remain tractable.  BS/BSA cells are blank: the legacy dense-bit-array baseline relied on file-format predicate pre-derivation incompatible with the new per-value PRAGMA load_bitmap pattern."),
     ]
     for tag, doc in blanks:
         readme.cell(row=rr, column=1, value=tag).font = Q_FONT
