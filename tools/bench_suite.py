@@ -191,14 +191,16 @@ LOAD_BITMAP_NAME_TO_BACKEND: Dict[str, str] = {
 # in canonical column order.  Categories that don't apply for a backend
 # stay None so the spreadsheet can render them as blank cells.
 BREAKDOWN_TAG: Dict[str, Tuple[str, List[str]]] = {
-    "WAH":      ("WAH",  ["literal", "fill", "header"]),
-    "ComBit":   ("CB",   ["L1", "L2", "L3", "L4"]),
-    "CRoaring": ("CR",   ["array", "bitset", "run"]),
-    "CR+Run":   ("CRR",  ["array", "bitset", "run"]),
-    "EWAH":     ("EW",   ["literal", "fill"]),
-    "Bitset":   ("BS",   ["raw"]),
-    "BSA":      ("BSA",  ["raw"]),
-    "Concise":  ("CON",  ["literal", "fill"]),
+    "WAH":      ("WAH",     ["literal", "fill", "header"]),
+    "ComBit":   ("CB",      ["ultra", "L1", "L2", "L3", "L4", "header"]),
+    "CB+BPE":   ("CB+BPE",  ["ultra", "L1", "L2", "L3", "L4", "header"]),
+    "CRoaring": ("CR",      ["array", "bitset", "run", "header"]),
+    "CR+BPE":   ("CR+BPE",  ["array", "bitset", "run", "header"]),
+    "CR+Run":   ("CRR",     ["array", "bitset", "run", "header"]),
+    "EWAH":     ("EW",      ["literal", "fill"]),
+    "Bitset":   ("BS",      ["raw"]),
+    "BSA":      ("BSA",     ["raw"]),
+    "Concise":  ("CON",     ["literal", "fill"]),
 }
 
 # Reverse-keyed-by-backend lookup: canonical category order per backend
