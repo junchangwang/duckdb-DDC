@@ -191,16 +191,20 @@ LOAD_BITMAP_NAME_TO_BACKEND: Dict[str, str] = {
 # in canonical column order.  Categories that don't apply for a backend
 # stay None so the spreadsheet can render them as blank cells.
 BREAKDOWN_TAG: Dict[str, Tuple[str, List[str]]] = {
-    "WAH":      ("WAH",     ["literal", "fill", "header"]),
+    # Per-value IndexedX now reports a backend-NATIVE projection
+    # (shadow build per key, sized, discarded).  Native-projection
+    # category names come first; legacy `[Breakdown]` categories
+    # (still emitted by Q15's BMTPCH single-bitmap path) come after.
+    "WAH":      ("WAH",     ["wah", "literal", "fill", "header"]),
     "ComBit":   ("CB",      ["ultra", "L1", "L2", "L3", "L4", "header"]),
     "CB+BPE":   ("CB+BPE",  ["ultra", "L1", "L2", "L3", "L4", "header"]),
     "CRoaring": ("CR",      ["array", "bitset", "run", "header"]),
     "CR+BPE":   ("CR+BPE",  ["array", "bitset", "run", "header"]),
     "CR+Run":   ("CRR",     ["array", "bitset", "run", "header"]),
-    "EWAH":     ("EW",      ["literal", "fill"]),
+    "EWAH":     ("EW",      ["ewah", "literal", "fill"]),
     "Bitset":   ("BS",      ["raw"]),
     "BSA":      ("BSA",     ["raw"]),
-    "Concise":  ("CON",     ["literal", "fill"]),
+    "Concise":  ("CON",     ["concise", "literal", "fill"]),
 }
 
 # Reverse-keyed-by-backend lookup: canonical category order per backend
@@ -383,7 +387,20 @@ def parse_stdout_log(log_text: str, *, q: Optional[int] = None,
         "ok_message":        None,
         # In-memory breakdown per backend: {backend: {category: MB}}
         "memory_breakdown":  {b: {} for b in BACKENDS},
+        # Per-backend timeout marker (set by run_single_query when
+        # subprocess.TimeoutExpired fires): true => Excel cells render
+        # "Timeout" instead of empty N/A so the reader can tell the
+        # backend was tried but exceeded the wall-time cap.
+        "timed_out":         {b: False for b in BACKENDS},
     }
+
+    # Timeout markers ------------------------------------------------------
+    RE_TIMEOUT = re.compile(r"^# Backend (\S+) TIMEOUT after \d+s\s*$",
+                            re.MULTILINE)
+    for m in RE_TIMEOUT.finditer(log_text):
+        backend = m.group(1)
+        if backend in result["timed_out"]:
+            result["timed_out"][backend] = True
 
     # Footprints -----------------------------------------------------------
     for m in RE_FOOTPRINT.finditer(log_text):
@@ -783,7 +800,8 @@ def _merge_pattern_csvs(repo_root: Path, q: int, sf_label: str,
 
 
 def run_single_query(duckdb_bin: Path, db: Path, q: int,
-                     env_extra: Dict[str, str], log_path: Path) -> int:
+                     env_extra: Dict[str, str], log_path: Path,
+                     timeout_s: int = 600) -> int:
     env = os.environ.copy()
     env.update(env_extra)
     sf_label = env_extra.get("TPCH_SF_LABEL") or env.get("TPCH_SF_LABEL", "SF10")
@@ -812,13 +830,24 @@ def run_single_query(duckdb_bin: Path, db: Path, q: int,
                 f.write(f"\n# === Backend {backend} (DEBIT_BM={env_val}) ===\n")
                 f.write(f"# sql=\n{sql_input}")
                 f.flush()
-                p = subprocess.run([str(duckdb_bin), str(db)],
-                                   cwd=str(REPO_ROOT), env=env,
-                                   input=sql_input,
-                                   text=True,
-                                   stdout=f, stderr=subprocess.STDOUT)
-                if p.returncode != 0:
-                    f.write(f"\n# Backend {backend} returncode={p.returncode}\n")
+                # Backends without native k-way OR (WAH FastBit pairwise
+                # only) can run minutes per iteration on 590k-key inputs.
+                # Cap per-backend wall time and mark as TIMEOUT — the
+                # Excel writer surfaces this so we don't pretend the
+                # cell is missing data.
+                try:
+                    p = subprocess.run([str(duckdb_bin), str(db)],
+                                       cwd=str(REPO_ROOT), env=env,
+                                       input=sql_input,
+                                       text=True,
+                                       stdout=f, stderr=subprocess.STDOUT,
+                                       timeout=timeout_s)
+                    if p.returncode != 0:
+                        f.write(f"\n# Backend {backend} returncode={p.returncode}\n")
+                except subprocess.TimeoutExpired:
+                    f.write(f"\n# Backend {backend} TIMEOUT after {timeout_s}s\n")
+                    print(f"[bench] Q{q} backend {backend}: TIMEOUT after {timeout_s}s",
+                          file=sys.stderr)
                 # Capture this backend's CSV before the next run overwrites.
                 src = REPO_ROOT / f"q{q}_results_{sf_label}.csv"
                 if src.exists():
@@ -834,9 +863,16 @@ def run_single_query(duckdb_bin: Path, db: Path, q: int,
     with log_path.open("w") as f:
         f.write(f"# cwd={REPO_ROOT}\n# cmd={' '.join(cmd)}\n")
         f.flush()
-        p = subprocess.run(cmd, cwd=str(REPO_ROOT), env=env,
-                           stdout=f, stderr=subprocess.STDOUT)
-    return p.returncode
+        try:
+            p = subprocess.run(cmd, cwd=str(REPO_ROOT), env=env,
+                               stdout=f, stderr=subprocess.STDOUT,
+                               timeout=timeout_s)
+            return p.returncode
+        except subprocess.TimeoutExpired:
+            f.write(f"\n# Q{q} legacy TIMEOUT after {timeout_s}s\n")
+            print(f"[bench] Q{q} legacy: TIMEOUT after {timeout_s}s",
+                  file=sys.stderr)
+            return 124  # GNU-timeout convention
 
 
 # --- Output assembly ----------------------------------------------------
@@ -1151,6 +1187,9 @@ def build_excel(records: List[Dict], meta: Dict[str, Dict],
             cell.border = BORDER
             if v is None:
                 cell.fill = NUM_FILL_NA
+                if meta.get(q_tag, {}).get("timed_out", {}).get(b):
+                    cell.value = "Timeout"
+                    cell.font = Font(italic=True, color="C00000")
         v = meta.get(q_tag, {}).get("duckdb_ms")
         cell = ws.cell(row=i, column=2 + len(BACKENDS), value=v)
         cell.number_format = NUM_FMT_MS
@@ -1209,6 +1248,9 @@ def build_excel(records: List[Dict], meta: Dict[str, Dict],
                 cell.border = BORDER
                 if v is None:
                     cell.fill = NUM_FILL_NA
+                    if meta.get(q_tag, {}).get("timed_out", {}).get(b):
+                        cell.value = "Timeout"
+                        cell.font = Font(italic=True, color="C00000")
             rng = f"{get_column_letter(3)}{rownum}:{get_column_letter(2+len(BACKENDS))}{rownum}"
             ws.conditional_formatting.add(rng, ColorScaleRule(
                 start_type="min", start_color="63BE7B",
@@ -1315,6 +1357,9 @@ def build_excel(records: List[Dict], meta: Dict[str, Dict],
             cell.border = BORDER
             if mb is None:
                 cell.fill = NUM_FILL_NA
+                if m.get("timed_out", {}).get(b):
+                    cell.value = "Timeout"
+                    cell.font = Font(italic=True, color="C00000")
                 continue
             kind = m.get("footprint_kind", {}).get(b) or ""
             if kind.startswith("disk"):
@@ -1361,6 +1406,9 @@ def build_excel(records: List[Dict], meta: Dict[str, Dict],
             cell.border = BORDER
             if v is None:
                 cell.fill = NUM_FILL_NA
+                if m.get("timed_out", {}).get(b):
+                    cell.value = "Timeout"
+                    cell.font = Font(italic=True, color="C00000")
         ws.cell(row=i, column=2 + len(BACKENDS),
                 value=m.get("duckdb_rows")).number_format = NUM_FMT_INT
         msg_cell = ws.cell(row=i, column=3 + len(BACKENDS),
@@ -1401,6 +1449,12 @@ def main():
                     help="Skip running queries; reparse existing CSVs + logs")
     ap.add_argument("--only", type=int, nargs="+",
                     help="Only run a subset of Q numbers (for debugging)")
+    ap.add_argument("--timeout", type=int, default=600,
+                    help="Per-backend wall-time cap in seconds (default 600). "
+                         "When exceeded, the cell is rendered as 'Timeout' in "
+                         "the Excel sheet and the bench moves on to the next "
+                         "backend.  Useful for WAH/Concise/EW on Q3/Q4's "
+                         "590k-key OR which lacks a public k-way merge API.")
     args = ap.parse_args()
 
     sf_label = f"SF{args.sf}"
@@ -1425,6 +1479,7 @@ def main():
                 args.duckdb, db_path, q,
                 env_extra={"TPCH_SF": str(args.sf), "TPCH_SF_LABEL": sf_label},
                 log_path=log_path,
+                timeout_s=args.timeout,
             )
             if rc != 0:
                 print(f"[warn] Q{q} exited rc={rc}; continuing", file=sys.stderr)

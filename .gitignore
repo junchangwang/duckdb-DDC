@@ -380,3 +380,6 @@ extension_external
 
 test/sql/pragma/output.json
 tools/pythonpkg/duckdb_build/
+
+# Personal-only Q explanation files (Chinese annotations for thesis review)
+extension/debit/execution/tpch/query/Q*_explain.cpp

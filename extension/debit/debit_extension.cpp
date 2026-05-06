@@ -356,6 +356,21 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
     for (auto& [name, bytes] : bd)
         std::cerr << " " << name << "=" << bytes / 1e6 << " MB";
     std::cerr << std::endl;
+
+    // [D2] Print the SHARED inverted-index runtime cost (sorted_keys +
+    // key_offsets + all_positions).  This is the actual RSS held while the
+    // index is loaded — equal across all backends (one storage shared by
+    // all).  layer_breakdown() above reports the per-backend SHADOW
+    // projection (what each library's native bitmap would compress to);
+    // the true process memory is layer breakdown + this shared cost.
+    if (auto* inv = dynamic_cast<bm_index::InvertedIndex*>(idx)) {
+        size_t inv_bytes = inv->inverted_index_bytes();
+        std::cerr << "[load_bitmap_shared] " << col << ": shared_inverted_index="
+                  << inv_bytes / 1e6 << " MB ("
+                  << inv->num_distinct_keys() << " keys × 4 B + "
+                  << (inv->num_distinct_keys() + 1) << " offsets × 4 B + "
+                  << "positions × 4 B)" << std::endl;
+    }
     return "";
 }
 
