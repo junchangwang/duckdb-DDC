@@ -1,72 +1,8 @@
-// =============================================================================
-// IndexedBitmap — per-backend value-indexed bitmap (mirror of teacher's
-// rabit::Rabit pattern).  Built once from a lineitem column scan and cached
-// in the client context.  Used by Q1 / Q5 / Q6 BMTPCH paths to do bitmap
-// multi-OR over qualifying value sets (replaces SQL JOIN).
-//
-// Storage (unified harness — Plan 1-B flat inverted index):
-//   All per-value IndexedX share one flat inverted-index storage:
-//     sorted_keys_     : K distinct keys, sorted ascending        (8 * K bytes)
-//     key_offsets_     : (K+1)-sized offsets into all_positions_  (4 * (K+1))
-//     all_positions_   : concatenated sorted row IDs per key      (4 * N bytes)
-//   Lookup:  binary_search(sorted_keys_, k) → idx; positions are
-//            all_positions_[key_offsets_[idx] .. key_offsets_[idx+1]).
-//
-// TPC-H 1.5.7 (Page 20 spec): single base table + single column (PK/FK/date);
-// Comment explicitly permits "row IDs" as the auxiliary structure content.
-// This flat inverted index is the textbook form of that permission.
-//
-// Memory accounting (layer_breakdown / storage_bytes):
-//   Reports the per-backend SERIALIZED bitmap projection — compressed
-//   data bytes each library would write as the auxiliary structure,
-//   EXCLUDING C++ class skeletons (sizeof(SparseComBit),
-//   sizeof(roaring::Roaring), sizeof(ibis::bitvector), etc.) and
-//   std::vector capacity padding.  The C++ object shell is a
-//   runtime-implementation choice of the "one bitmap per key" design,
-//   not part of the compression scheme; 15M × sizeof(struct) would
-//   otherwise dominate every FK column and hide the real compression
-//   differences between backends.
-//
-//     ComBit / ComBitGE → ultra / L1 / L2 / L3 / L4 / header
-//                         (ultra = n×4 position bytes, L* = literal
-//                          bytes from size_breakdown, header = 4 B per
-//                          non-empty segment manifest)
-//     CRoaring / CRR    → array / bitset / run / header
-//                         (containers via roaring_statistics_t + any
-//                          remaining portable-serialized overhead)
-//     WAH      → wah     (getSerialSize = compressed word stream bytes)
-//     EWAH     → ewah    (sizeInBytes   = RLW-compressed buffer bytes)
-//     Concise  → concise (sizeInBytes   = compressed word stream bytes)
-//
-//   Computed once per index by walking for_each_key_positions and
-//   shadow-building the native bitmap per key (discarded after sizing).
-//   Cached for subsequent calls.  Runtime OR is unchanged — it still
-//   uses the flat scaffolding for cache-friendly merge-walk + native
-//   scatter (e.g. ComBit::scatter_or_decompressed).
-//
-// Rationale for flat layout (vs. per-backend unordered_map<key, Bitmap>):
-//   - 15M keys × ~32-96 B header overhead each dominated memory on FK
-//     columns (SparseComBit header alone was 1.44 GB for l_orderkey SF10).
-//   - Flat layout puts every backend on the same OR-scaffolding footing,
-//     so per-Q runtime measurements are comparable; meanwhile the native
-//     projection lets memory measurements remain comparable too.
-//
-// Per-backend or_many strategy:
-//   ComBit   → dst.scatter_or_decompressed(positions, n) per key
-//              (native hot path; bypasses library's dense OR walk).
-//   CRoaring → dst.addMany(n, positions) per key
-//              (Roaring's batch insertion with sorted input).
-//   WAH      → build scratch ibis::bitvector from positions (appendFill +
-//              += 1) per key, dst |= scratch.
-//   EWAH     → build scratch EWBA from positions (set()) per key,
-//              dst = dst.logicalor(scratch).
-//   Concise  → build scratch CS from positions (append() for monotonic)
-//              per key, dst = dst | scratch.
-//
-// Apply pattern (Q5, unchanged teacher code):
-//   for (auto& [okey, _] : order_nation_map)
-//       idx_orderkey.apply_or_to(btv_res, okey);
-// =============================================================================
+// IndexedBitmap — per-value bitmap index for Q1 / Q3 / Q5 / Q6 / etc.
+// All backends share a flat inverted index (sorted_keys + key_offsets +
+// all_positions) so per-key bitmaps are not materialised at rest.  Each
+// backend's compute_layers shadow-builds the native bitmap form to
+// report serialized sizes (TPC-H 1.5.7 §5: single base column auxiliary).
 
 #pragma once
 
@@ -86,36 +22,10 @@
 
 namespace bm_index {
 
-// [D1] Compute the SERIALIZED size of `n` sorted positions encoded as
-// chunked uint16_t (Roaring's array-container layout: split high-16 +
-// low-16, group by high-16 chunk).  Per chunk: 2 B chunk_high_id +
-// 2 B count + count × 2 B low positions = 4 + 2n_chunk bytes.
-//
-// This is the shadow-projection size for ComBit's ultra path under D1
-// — what the position list WOULD compress to if stored chunked instead
-// of as flat uint32_t.  Aligns ComBit's ultra report with CRoaring's
-// array-container report so the two bitmap-index families are compared
-// at the same encoding granularity.
-inline size_t chunked_uint16_size(const uint32_t* positions, size_t n) {
-    if (n == 0) return 0;
-    // Per-chunk header: 4 B (chunk_high_16 + count_uint16).
-    // Per-position: 2 B (low_uint16).
-    constexpr size_t HEADER_PER_CHUNK = 4;
-    constexpr size_t BYTES_PER_POS    = 2;
-    size_t bytes = 0;
-    uint16_t cur_chunk = static_cast<uint16_t>(positions[0] >> 16);
-    bytes += HEADER_PER_CHUNK;        // first chunk
-    for (size_t i = 0; i < n; i++) {
-        uint16_t chunk_id = static_cast<uint16_t>(positions[i] >> 16);
-        if (chunk_id != cur_chunk) {
-            bytes += HEADER_PER_CHUNK;  // new chunk header
-            cur_chunk = chunk_id;
-        }
-        bytes += BYTES_PER_POS;
-    }
-    return bytes;
-}
-
+// All ComBit per-value indexes use the same segment size.  Cross-column
+// AND/OR (Q3/Q10/...) requires equal num_segments on both operands, so
+// a single global default is used.
+static constexpr size_t CB_SEGMENT_BITS = 4096;
 
 // -----------------------------------------------------------------------
 // IBitmapIndex — abstract base (mirror of teacher's BaseTable from CUBIT).
@@ -159,7 +69,7 @@ public:
     // Caller passes the column values in row order; we bucket them into
     // per-key position lists, then emit a sorted flat layout.
     //
-    // [D2] sorted_keys_ stored as uint32_t (was int64_t).  All TPC-H SF10/SF100
+
     // key domains fit in 32 bits (max l_orderkey=60M < 2^26, max date raw <
     // 2^14).  External API still takes int64_t for source-compat with Q files;
     // values are bounds-checked at build time and stored compactly.
@@ -175,7 +85,7 @@ public:
         // Pass 2: emit sorted_keys_, key_offsets_, all_positions_.
         sorted_keys_.reserve(by_key.size());
         for (auto& [k, _] : by_key) {
-            // [D2] Bounds check: key must fit in uint32_t.  Negative keys are
+
             // also rejected (TPC-H doesn't have any negative-keyed columns).
             if (k < 0 || k > static_cast<int64_t>(UINT32_MAX)) {
                 std::cerr << "[InvertedIndex] FATAL: key " << k
@@ -205,7 +115,7 @@ public:
     // Binary search over sorted_keys_ is cache-friendly (~60 MB for 15M
     // uint32_t keys, fits well in L3) and avoids unordered_map's pointer-chasing.
     std::pair<const uint32_t*, size_t> positions_for(int64_t key) const {
-        // [D2] sorted_keys_ is uint32_t; reject out-of-range keys gracefully.
+
         if (key < 0 || key > static_cast<int64_t>(UINT32_MAX)) return {nullptr, 0};
         uint32_t key32 = static_cast<uint32_t>(key);
         auto it = std::lower_bound(sorted_keys_.begin(), sorted_keys_.end(), key32);
@@ -218,7 +128,7 @@ public:
 
     // Same but returns the index into sorted_keys_ for range iteration.
     size_t lower_bound_idx(int64_t lo) const {
-        // [D2] Clamp to uint32_t range.
+
         uint32_t lo32 = (lo <= 0) ? 0u
                       : (lo > static_cast<int64_t>(UINT32_MAX) ? UINT32_MAX
                                                                 : static_cast<uint32_t>(lo));
@@ -226,7 +136,7 @@ public:
         return static_cast<size_t>(it - sorted_keys_.begin());
     }
     size_t upper_bound_idx(int64_t hi) const {
-        // [D2] Clamp to uint32_t range.
+
         uint32_t hi32 = (hi <= 0) ? 0u
                       : (hi > static_cast<int64_t>(UINT32_MAX) ? UINT32_MAX
                                                                 : static_cast<uint32_t>(hi));
@@ -240,7 +150,7 @@ public:
     }
 
     bool has_key(int64_t key) const {
-        // [D2] uint32_t storage; reject out-of-range keys.
+
         if (key < 0 || key > static_cast<int64_t>(UINT32_MAX)) return false;
         return std::binary_search(sorted_keys_.begin(), sorted_keys_.end(),
                                   static_cast<uint32_t>(key));
@@ -248,7 +158,7 @@ public:
 
     template <typename F>
     void for_each_key_base(F&& f) const {
-        // [D2] Promote uint32_t back to int64_t for caller compat.
+
         for (uint32_t k : sorted_keys_) f(static_cast<int64_t>(k));
     }
 
@@ -266,7 +176,7 @@ public:
         const size_t nj = sorted_keys_.size();
         while (i < ni && j < nj) {
             int64_t a = sorted_input[i];
-            // [D2] Skip out-of-range input keys — they can't match anything.
+
             if (a < 0 || a > static_cast<int64_t>(UINT32_MAX)) { ++i; continue; }
             uint32_t a32 = static_cast<uint32_t>(a);
             uint32_t b   = sorted_keys_[j];
@@ -328,7 +238,7 @@ public:
     size_t inverted_index_bytes() const {
         return all_positions_.capacity() * sizeof(uint32_t)
              + key_offsets_.capacity()   * sizeof(uint32_t)
-             + sorted_keys_.capacity()   * sizeof(uint32_t);  // [D2] was sizeof(int64_t)
+             + sorted_keys_.capacity()   * sizeof(uint32_t);
     }
 
     // Memoize per-backend native size projection.  Each per-value
@@ -357,7 +267,7 @@ protected:
     size_t num_rows_ = 0;
     std::vector<uint32_t> all_positions_;  // concatenated, per-key sorted
     std::vector<uint32_t> key_offsets_;    // (K+1)-sized prefix-sum
-    std::vector<uint32_t> sorted_keys_;    // [D2] uint32_t, K-sized, ascending
+    std::vector<uint32_t> sorted_keys_;
                                             // (was int64_t — saves 4 B/key,
                                             //  60 MB on l_orderkey at SF10)
 
@@ -383,7 +293,7 @@ public:
     IndexedComBit() = default;
 
     void build(const std::vector<int64_t>& keys, size_t num_rows,
-               size_t segment_bits = 4096) {
+               size_t segment_bits = CB_SEGMENT_BITS) {
         segment_bits_ = segment_bits;
         build_inverted_index(keys, num_rows);
     }
@@ -459,32 +369,22 @@ private:
     //   header — per-segment manifest (seg_indices_, 4 B per non-empty
     //            segment); small and NOT counting the ComBitBtv struct.
     std::vector<std::pair<std::string, size_t>> compute_layers() const {
-        size_t l1 = 0, l2 = 0, l3 = 0, l4 = 0, header = 0, ultra = 0;
+        size_t l1 = 0, l2 = 0, l3 = 0, l4 = 0, header = 0;
         std::vector<uint32_t> tmp;
         for_each_key_positions([&](const uint32_t* p, size_t n) {
             if (!n) return;
             tmp.assign(p, p + n);
             SparseComBit s = SparseComBit::from_positions(tmp, num_rows_, segment_bits_);
-            if (s.is_ultra_sparse()) {
-                // [D1] Auto-pick per key: report min(flat uint32_t, chunked
-                // uint16_t).  Chunked wins when bits cluster (avg > 2 per
-                // 64K-chunk); flat wins when bits scatter sparsely (avg
-                // < 2 per chunk, e.g. partkey 30 bits / 916 chunks).
-                size_t flat    = n * sizeof(uint32_t);
-                size_t chunked = chunked_uint16_size(p, n);
-                ultra += (chunked < flat) ? chunked : flat;
-            } else {
-                for (const auto& seg : s.seg_data()) {
-                    auto sb = seg.size_breakdown();
-                    l1 += sb.l1_literal_bits / 8;
-                    l2 += sb.l2_literal_bits / 8;
-                    l3 += sb.l3_literal_bits / 8;
-                    l4 += (sb.l4_bits + 7) / 8;
-                }
-                header += s.seg_indices().size() * sizeof(uint32_t);
+            for (const auto& seg : s.seg_data()) {
+                auto sb = seg.size_breakdown();
+                l1 += sb.l1_literal_bits / 8;
+                l2 += sb.l2_literal_bits / 8;
+                l3 += sb.l3_literal_bits / 8;
+                l4 += (sb.l4_bits + 7) / 8;
             }
+            header += s.seg_indices().size() * sizeof(uint16_t);
         });
-        return {{"ultra", ultra}, {"L1", l1}, {"L2", l2},
+        return {{"ultra", size_t{0}}, {"L1", l1}, {"L2", l2},
                 {"L3", l3}, {"L4", l4}, {"header", header}};
     }
 };
@@ -505,7 +405,7 @@ public:
     IndexedComBitGE() = default;
 
     void build(const std::vector<int64_t>& group_ids, size_t num_rows,
-               size_t segment_bits = 4096) {
+               size_t segment_bits = CB_SEGMENT_BITS) {
         segment_bits_ = segment_bits;
         build_inverted_index(group_ids, num_rows);
     }
@@ -556,34 +456,24 @@ private:
     // Identical serialized projection as IndexedComBit::compute_layers
     // — GE only affects how keys were chosen (group IDs), not per-key
     // storage.  See parent class for why C++ struct overhead is dropped.
-    // [D1] ultra path uses chunked uint16_t (= Roaring array-container size).
+
     std::vector<std::pair<std::string, size_t>> compute_layers() const {
-        size_t l1 = 0, l2 = 0, l3 = 0, l4 = 0, header = 0, ultra = 0;
+        size_t l1 = 0, l2 = 0, l3 = 0, l4 = 0, header = 0;
         std::vector<uint32_t> tmp;
         for_each_key_positions([&](const uint32_t* p, size_t n) {
             if (!n) return;
             tmp.assign(p, p + n);
             SparseComBit s = SparseComBit::from_positions(tmp, num_rows_, segment_bits_);
-            if (s.is_ultra_sparse()) {
-                // [D1] Auto-pick per key: report min(flat uint32_t, chunked
-                // uint16_t).  Chunked wins when bits cluster (avg > 2 per
-                // 64K-chunk); flat wins when bits scatter sparsely (avg
-                // < 2 per chunk, e.g. partkey 30 bits / 916 chunks).
-                size_t flat    = n * sizeof(uint32_t);
-                size_t chunked = chunked_uint16_size(p, n);
-                ultra += (chunked < flat) ? chunked : flat;
-            } else {
-                for (const auto& seg : s.seg_data()) {
-                    auto sb = seg.size_breakdown();
-                    l1 += sb.l1_literal_bits / 8;
-                    l2 += sb.l2_literal_bits / 8;
-                    l3 += sb.l3_literal_bits / 8;
-                    l4 += (sb.l4_bits + 7) / 8;
-                }
-                header += s.seg_indices().size() * sizeof(uint32_t);
+            for (const auto& seg : s.seg_data()) {
+                auto sb = seg.size_breakdown();
+                l1 += sb.l1_literal_bits / 8;
+                l2 += sb.l2_literal_bits / 8;
+                l3 += sb.l3_literal_bits / 8;
+                l4 += (sb.l4_bits + 7) / 8;
             }
+            header += s.seg_indices().size() * sizeof(uint16_t);
         });
-        return {{"ultra", ultra}, {"L1", l1}, {"L2", l2},
+        return {{"ultra", size_t{0}}, {"L1", l1}, {"L2", l2},
                 {"L3", l3}, {"L4", l4}, {"header", header}};
     }
 };
@@ -613,7 +503,7 @@ public:
     // and `bitmaps_pe_[b]` = rows where value ≤ bucket_max(b).
     void build(const std::vector<int64_t>& values, size_t num_rows,
                int64_t lo_key, int64_t hi_key, int64_t bucket_size,
-               size_t segment_bits = 4096) {
+               size_t segment_bits = CB_SEGMENT_BITS) {
         num_rows_     = num_rows;
         lo_key_       = lo_key;
         hi_key_       = hi_key;
@@ -631,12 +521,16 @@ public:
         }
 
         // Cumulative OR — bitmaps_pe_[b] = bitmaps_pe_[b-1] | bucket_eq[b].
+        // NOTE: use the resolved segment_bits_ (member), not the input
+        // parameter `segment_bits` which may be 0 (= "auto"); passing 0
+        // to ComBit::from_sparse_positions divides by zero in segment
+        // partitioning and crashes with SIGFPE.
         bitmaps_pe_.reserve(num_buckets);
-        ComBit cum = ComBit::from_sparse_positions({}, num_rows, segment_bits);
+        ComBit cum = ComBit::from_sparse_positions({}, num_rows, segment_bits_);
         for (size_t b = 0; b < num_buckets; b++) {
             std::sort(per_bucket_pos[b].begin(), per_bucket_pos[b].end());
             ComBit bucket_eq = ComBit::from_sparse_positions(
-                per_bucket_pos[b], num_rows, segment_bits);
+                per_bucket_pos[b], num_rows, segment_bits_);
             cum |= bucket_eq;
             bitmaps_pe_.push_back(cum);  // copy of cumulative state
         }
@@ -743,17 +637,55 @@ public:
 
     template <typename Iterable>
     roaring::Roaring or_many(const Iterable& keys) const {
+        if (run_optimized_) {
+            // CRR: query-time per-key Roaring construction + native
+            // CRoaring k-way fastunion (priority-queue merge).  Restores
+            // CRR's algorithmic advantage that Plan 1-B's flat inverted
+            // index removed (we no longer keep per-key Roarings at rest,
+            // so build them on the fly).
+            std::vector<roaring::Roaring> bms;
+            std::vector<const roaring::Roaring*> ptrs;
+            or_many_walk(keys, [&](const uint32_t* p, size_t n) {
+                if (!n) return;
+                bms.emplace_back();
+                bms.back().addMany(n, p);
+                bms.back().runOptimize();
+            });
+            ptrs.reserve(bms.size());
+            for (auto& b : bms) ptrs.push_back(&b);
+            if (ptrs.empty()) return roaring::Roaring();
+            return roaring::Roaring::fastunion(ptrs.size(), ptrs.data());
+        }
+        // CR: addMany accumulation (no fastunion — kept as the naive
+        // per-key insertion baseline against which CRR's k-way merge
+        // is compared).
         roaring::Roaring dst;
         or_many_walk(keys, [&](const uint32_t* p, size_t n) {
             dst.addMany(n, p);
         });
-        if (run_optimized_) dst.runOptimize();
         return dst;
     }
     roaring::Roaring or_range(int64_t lo, int64_t hi) const {
+        if (run_optimized_) {
+            // Same fastunion path as or_many but driven by key-range walk.
+            std::vector<roaring::Roaring> bms;
+            std::vector<const roaring::Roaring*> ptrs;
+            size_t i_lo = lower_bound_idx(lo);
+            size_t i_hi = upper_bound_idx(hi);
+            for (size_t i = i_lo; i < i_hi; i++) {
+                auto [p, n] = positions_at(i);
+                if (!n) continue;
+                bms.emplace_back();
+                bms.back().addMany(n, p);
+                bms.back().runOptimize();
+            }
+            ptrs.reserve(bms.size());
+            for (auto& b : bms) ptrs.push_back(&b);
+            if (ptrs.empty()) return roaring::Roaring();
+            return roaring::Roaring::fastunion(ptrs.size(), ptrs.data());
+        }
         roaring::Roaring dst;
         apply_or_range_to(dst, lo, hi);
-        if (run_optimized_) dst.runOptimize();
         return dst;
     }
 

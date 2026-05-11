@@ -594,79 +594,19 @@ private:
     size_t segment_bits_ = default_segment_bits;
 };
 
-// =============================================================================
-// SparseComBit — sparse-storage variant of ComBit for "per-value indexed
-// bitmap" workloads.  Only non-empty segments are stored; empty segments
-// are implicit (l1_fill_ones=false).
-//
-// Use case: rabit-style per-value index over a high-cardinality column.
-// For lineitem.l_orderkey at SF10 (15M unique values, ~4 set bits per value
-// in a 60M-bit bitmap) the regular dense-storage ComBit would need 2.8 TB
-// of segment metadata; SparseComBit fits the same workload in ~10 GB.
-//
-// API is intentionally narrow — built once via from_positions(), then OR'd
-// into a regular dense ComBit to drive Q1/Q5/Q6 multi-OR pattern.
-// =============================================================================
-
+// SparseComBit — per-value bitmap stored as the non-empty segments only.
+// Built once via from_positions(); OR'd into a dense ComBit accumulator
+// to drive multi-key OR (Q1/Q3/Q5/Q6/...).
 class SparseComBit {
 public:
     SparseComBit() = default;
 
-    // Threshold below which a key's whole bitmap is stored as a raw
-    // sorted uint32_t position list (the "ultra-sparse" path) instead
-    // of the L1/L2/L3/L4 ComBitBtv hierarchy.  Tuned to the SF10 TPC-H
-    // density landscape:
-    //
-    //   key density (set bits / key) → storage path
-    //   --------------------------------------------------------------
-    //   l_orderkey    4       ┐
-    //   l_partkey     30      │ ultra-sparse
-    //   l_suppkey     600     │ (set bits scatter ~1 per segment;
-    //   l_shipdate    24000   ┘  216-B-per-seg ComBitBtv overhead is
-    //                           pure waste — store positions instead)
-    //   l_quantity    1.2M    ┐
-    //   l_discount    5.5M    │ hierarchy
-    //   l_shipmode    7.5M    │ (bits cluster ~hundreds per segment;
-    //   l_returnflag  20M     ┘  ComBitBtv compressed L1 wins)
-    //
-    // Break-even is ~50 bits/segment.  For FK / date columns whose set
-    // bits scatter (≤ 1 bit / segment), ultra-sparse always wins both
-    // memory and OR throughput — it stays in or_many's Pass 1 scatter,
-    // skipping the per-segment dispatch overhead that dominated Q5 PhaseB
-    // (~1.7 s on 100k×600-bit suppkey).  64-bit threshold (the original
-    // value) wasted this on l_suppkey / l_partkey; 65 536 covers
-    // everything up through shipdate-per-day while keeping single-key
-    // dense bitmaps (>100 k set bits) in the hierarchy.
-    //
-    // Plan A invariant: this is ComBit's INTERNAL storage choice (analogous
-    // to CRoaring's array/bitset/run container auto-selection or WAH's
-    // compressed/decompressed mode).  The Q dispatch (cb->or_many(keys))
-    // is unchanged — teacher's BMTPCH_Q* logic stays verbatim.
-    static constexpr size_t ULTRA_SPARSE_THRESHOLD = 65536;
-
-    // Build a SparseComBit of `num_rows` bits where only `positions` are set.
-    // Cost: O(positions.size() + segment_bits × non_empty_segments).
     static SparseComBit from_positions(const std::vector<uint32_t>& positions,
                                        size_t num_rows,
                                        size_t segment_bits = ComBit::default_segment_bits);
 
-    // True iff this SparseComBit is using the ultra-sparse storage
-    // mode (raw uint32_t position list, no ComBitBtv segments).
-    bool is_ultra_sparse() const { return !ultra_positions_.empty() || (num_set_bits_ <= ULTRA_SPARSE_THRESHOLD && seg_indices_.empty()); }
-    const std::vector<uint32_t>& ultra_positions() const { return ultra_positions_; }
-
-    // OR this sparse bitmap into a dense ComBit (in-place).
-    // Pre: dst.bit_count() == this->bit_count() and dst.segment_bits() ==
-    // this->segment_bits(); dst's segments_ is dense and at least one
-    // segment per logical slot.
     void apply_or_to(ComBit& dst) const;
 
-    // K-way OR over multiple SparseComBit's into a single ComBit result.
-    // Equivalent to building an empty ComBit and calling apply_or_to for
-    // each input, but does scatter-OR per segment in one pass — avoids
-    // the per-pairwise ComBitBtv |= overhead that dominates Q5/Q1/Q6
-    // multi-OR phases.  Counterpart of CRR's fastunion / EWAH's
-    // fast_logicalor.
     static ComBit or_many(size_t count, const SparseComBit** sparses,
                           size_t num_rows, size_t segment_bits);
 
@@ -675,24 +615,15 @@ public:
     size_t num_set_bits() const { return num_set_bits_; }
     size_t num_non_empty_segments() const { return seg_indices_.size(); }
 
-    // Read-only access to the per-segment storage (used by or_many).
     const std::vector<uint32_t>&  seg_indices() const { return seg_indices_; }
     const std::vector<ComBitBtv>& seg_data()    const { return seg_data_; }
 
-    // Approximate memory footprint in bytes.
     size_t storage_bytes() const;
 
 private:
     size_t bit_count_    = 0;
     size_t segment_bits_ = ComBit::default_segment_bits;
     size_t num_set_bits_ = 0;
-    // Ultra-sparse path: when num_set_bits_ <= ULTRA_SPARSE_THRESHOLD,
-    // `ultra_positions_` holds the sorted set positions and seg_indices_/
-    // seg_data_ are empty.  Avoids paying ~216 bytes/segment of
-    // ComBitBtv struct overhead for per-key bitmaps that have only a
-    // few bits set.
-    std::vector<uint32_t>  ultra_positions_;
-    // Hierarchy path: per-segment ComBitBtv storage.
     std::vector<uint32_t>  seg_indices_;  // sorted ascending
     std::vector<ComBitBtv> seg_data_;     // parallel to seg_indices_
 };

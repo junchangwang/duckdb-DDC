@@ -362,11 +362,31 @@ db_*
 
 # bench_suite.py outputs and local artefacts
 /bm_logs/
+/bm_logs_*/
 /bm_results*.xlsx
+/bm_result*.xlsx
 /bm_results*.csv
+/bm_result*.csv
+/bm_result_backups/
 /q*_results_SF*.csv
 /.breakdown_backup/
 tools/__pycache__/
+
+# TPC-H DuckDB data files (multi-GB local-only build artifacts)
+*.duckdb
+*.duckdb.wal
+*.duckdb.tmp
+
+# Personal-only thesis notes / planning markdown (Chinese annotations,
+# scratch files written by Claude Code or the user during analysis).
+# Upstream DuckDB README/CONTRIBUTING/CODE_OF_CONDUCT remain tracked.
+/CLAUDE.md
+/THESIS*.md
+/NOTES*.md
+/PLAN*.md
+/PROGRESS*.md
+/STATUS*.md
+/extension/debit/**/*.md
 
 # local cmake extension config
 extension/extension_config_local.cmake

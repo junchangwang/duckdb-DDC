@@ -242,6 +242,7 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
     auto backend = bm_bench::parse_backend("DEBIT_BM");
     bm_index::IBitmapIndex* idx = nullptr;
     bool ge_path = (col == "shipdate_GE");
+
     using B = bm_bench::Backend;
     switch (backend) {
         case B::CB:
@@ -345,7 +346,8 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
               << idx->num_keys() << " keys, "
               << idx->storage_bytes() / 1e6 << " MB) in "
               << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count()
-              << " ms" << std::endl;
+              << " ms";
+    std::cerr << std::endl;
 
     // Per-layer breakdown for the Memory Detail (MB) sheet.  ComBit gets
     // L1/L2/L3/L4 (raw position bytes for ultra-sparse keys count as L1);

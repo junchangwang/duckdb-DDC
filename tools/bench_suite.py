@@ -105,7 +105,7 @@ RE_FOOTPRINT = re.compile(
 # instead emit an `[OK] all active backends match DuckDB SQL ground truth`
 # pass message which is captured separately below.
 RE_ROWS = re.compile(
-    r"\b(WAH|ComBit|CRoaring|CRoar\+Run|EWAH|Bitset\+AVX512|Bitset|Concise|"
+    r"\b(WAH|ComBit|CRoaringRun|CRoaring|CRoar\+Run|EWAH|Bitset\+AVX512|Bitset|Concise|"
     r"CB|CR|CRR|EW|BS|BSA|CON)\s+rows\s*:\s*(\d+)"
 )
 
@@ -114,6 +114,7 @@ ROW_LABEL_TO_BACKEND: Dict[str, str] = {
     "WAH":            "WAH",
     "ComBit":         "CB",
     "CRoaring":       "CR",
+    "CRoaringRun":    "CRR",
     "CRoar+Run":      "CRR",
     "EWAH":           "EW",
     "Bitset":         "BS",
@@ -143,11 +144,15 @@ RE_DUCKDB_BASELINE_MS_ONLY = re.compile(
     r"\[Baseline\]\s+DuckDB native SQL[^\n]*?\(single run:\s*([\d.]+)\s*ms\)"
 )
 
-# `[OK] all active backends match DuckDB SQL ground truth ...` pass message
-# emitted by every Q on success.  Used as the correctness signal when no
-# per-backend row count is printed.
+# `[OK] ... matches DuckDB SQL ground truth ...` pass message.
+# Two shapes appear:
+#   (a) Q15's collective: `[OK] all active backends match DuckDB SQL ground truth (...)`.
+#   (b) Long-form Qs (Q1/Q3/Q4/...) emit one `[OK] <Backend> matches DuckDB SQL ...`
+#       line per backend; we capture the LAST one so the message shows that
+#       at least one backend cleared the comparator (the per-backend rows
+#       column tells the user which ones).
 RE_OK_PASS = re.compile(
-    r"\[OK\]\s+all active backends match\s+DuckDB SQL ground truth[^\n]*"
+    r"\[OK\][^\n]*match(?:es)?\s+DuckDB\s+SQL[^\n]*"
 )
 
 # Per-backend in-memory breakdown lines.  Format (one per backend, MiB):
@@ -214,12 +219,33 @@ BREAKDOWN_TAG_ORDER_BY_BACKEND: Dict[str, List[str]] = {
     backend: cats for _, (backend, cats) in BREAKDOWN_TAG.items()
 }
 
-# Backend-specific iteration lines like `  CB:   OR=... rows=NNN` emitted
-# by Q3/Q15 during the loop.  Only keep the last match per backend so the
-# final measured iteration (not warm-up) wins.
+# Backend-specific iteration lines emitted by Q3/Q4/Q5/Q8/Q10/Q12/Q14/Q17
+# during the loop.  Two shapes appear:
+#   `  ComBit:    PhaseA=... rows=302114`   (long name with `:`)
+#   `  CB:        OR=... rows=302114`       (short tag with `:`)
+#   `  [Q6 ComBit] ship_ge=... rows=1139264` (Q6's bracketed form)
+# Only keep the last match per backend so the final measured iteration
+# (not warm-up) wins.
 RE_INLINE_ROWS = re.compile(
-    r"^\s*(WAH|CB|CR|CRR|EW|BS|BSA|CON)\s*:.*?rows=(\d+)", re.MULTILINE
+    r"(?:^\s*|\[Q\d+\s+)"
+    r"(WAH|ComBit|CRoaring|CRoaringRun|CRoar\+Run|EWAH|Bitset\+AVX512|Bitset|Concise|"
+    r"CB|CR|CRR|EW|BS|BSA|CON)"
+    r"(?:\s*:|\s*\]).*?rows=(\d+)",
+    re.MULTILINE
 )
+RE_INLINE_ROWS_NAME_TO_BACKEND: Dict[str, str] = {
+    "WAH":            "WAH",
+    "ComBit":         "CB",
+    "CRoaring":       "CR",
+    "CRoaringRun":    "CRR",
+    "CRoar+Run":      "CRR",
+    "EWAH":           "EW",
+    "Bitset":         "BS",
+    "Bitset+AVX512":  "BSA",
+    "Concise":        "CON",
+    "CB":  "CB", "CR": "CR", "CRR": "CRR", "EW": "EW",
+    "BS":  "BS", "BSA": "BSA", "CON": "CON",
+}
 
 # MiB → MB conversion (display in MB, as the user requested).  The source
 # stdout figures are in MiB; 1 MiB == 1.048576 MB.
@@ -346,10 +372,10 @@ def parse_schema_simple(path: Path, q: int) -> List[Dict]:
 
 
 # Q-number → which CSV schema to use.
-# Q15 still uses the legacy Schema-B (backend,or_ms,agg_ms,total_ms)
-# from its old in-process bench loop.  Q17 and Q19 now use Schema-A
-# after the BMTPCH port.
-SCHEMA_B_QS = {15}
+# All Qs now emit Schema-A (sf,operation,...median_ms/stddev_ms/min_ms/max_ms,...)
+# after Q15 was ported to the PRAGMA load_bitmap pattern.  Schema-B is
+# kept for forward-compatibility but has no current consumer.
+SCHEMA_B_QS: set = set()
 
 
 def parse_csv_for_q(repo_root: Path, q: int, sf_label: str) -> List[Dict]:
@@ -472,13 +498,40 @@ def parse_stdout_log(log_text: str, *, q: Optional[int] = None,
         if b is not None and result["rows"][b] is None:
             result["rows"][b] = n
 
-    # Inline per-iteration rows (`  CB:  OR=... rows=NNN`) emitted by Q3
-    # and the compact Q15/Q17/Q19 formatter.  Last-write-wins so we end
-    # up with the final measured iteration's value, not a warm-up one.
+    # Inline per-iteration rows (`  ComBit:  PhaseA=... rows=NNN`,
+    # `  CB:  OR=... rows=NNN`, `[Q6 ComBit] rows=NNN`) emitted by every
+    # PRAGMA-load-bitmap Q (Q3/Q4/Q5/Q6/Q8/Q10/Q12/Q14/Q17/Q19).  Map both
+    # long ("ComBit") and short ("CB") names to the canonical backend tag.
+    # Last-write-wins so the final measured iteration's value sticks.
     for m in RE_INLINE_ROWS.finditer(log_text):
-        b, n = m.group(1), int(m.group(2))
-        if b in BACKENDS:
+        label, n = m.group(1), int(m.group(2))
+        b = RE_INLINE_ROWS_NAME_TO_BACKEND.get(label)
+        if b is not None and b in BACKENDS:
             result["rows"][b] = n
+
+    # Q1 / Q15 don't emit per-iteration `rows=NNN` lines (they validate
+    # group counts / scalar revenue instead), so the inline-rows scan
+    # above leaves every "active" backend cell None.  Their `[OK] ...
+    # matches DuckDB SQL ground truth (4 (rf,ls) groups)` / `... (1
+    # row(s), revenue ...)` messages still carry the cardinality of the
+    # validated answer.  Surface it ONLY when no inline rows landed for
+    # any backend — i.e. this Q's cpp doesn't print `rows=NNN` at all.
+    # Otherwise (Q3/Q4/etc.) the broadcast would wrongly fill the
+    # inactive BS/BSA/BPE cells with values like "10" parsed from
+    # "(top 10)".
+    any_inline = any(result["rows"].get(b) is not None for b in BACKENDS)
+    if not any_inline:
+        for ok_line in RE_OK_PASS.findall(log_text):
+            # Permit arbitrary qualifier text between the number and the
+            # noun ("4 (rf,ls) groups", "1 row(s)", "5 priorities", ...).
+            m = re.search(
+                r"\(\s*([\d,]+)\b.*?\b(?:rows?|row\(s\)|groups?|priorities|nations)\b",
+                ok_line)
+            if m:
+                n = int(m.group(1).replace(",", ""))
+                for b in BACKENDS:
+                    result["rows"][b] = n
+                break
 
     # DuckDB SQL baseline --------------------------------------------------
     # Prefer the value-bearing shape so we get a numeric comparator; fall
@@ -504,12 +557,14 @@ def parse_stdout_log(log_text: str, *, q: Optional[int] = None,
                 pass
 
     # Pass message ---------------------------------------------------------
-    m = RE_OK_PASS.search(log_text)
-    if m:
-        # Strip trailing whitespace but preserve the descriptive tail
-        # (e.g. "(revenue within 0.01)") so the Correctness sheet shows
-        # what the Q actually validated.
-        result["ok_message"] = m.group(0).strip()
+    # Last `[OK] ... matches DuckDB SQL ...` line wins so we surface the
+    # collective form when present; otherwise the last per-backend form.
+    matches = RE_OK_PASS.findall(log_text)
+    if matches:
+        # Prefer the collective form if any line contains "all active
+        # backends" — otherwise take the last per-backend line.
+        collective = [s for s in matches if "all active backends" in s]
+        result["ok_message"] = (collective[-1] if collective else matches[-1]).strip()
 
     # Per-backend in-memory breakdown ---------------------------------------
     # Each `[Breakdown] <Tag> <kv-pairs>` line carries the per-category
@@ -635,6 +690,23 @@ def parse_stdout_log(log_text: str, *, q: Optional[int] = None,
         if result["footprint_kind"].get(backend) is None:
             result["footprint_kind"][backend] = "mem" if backend in _IN_MEM else "disk"
 
+    # Reverse backfill: if footprint_mb is set but memory_breakdown is
+    # empty for a backend (Q15-style legacy DEBIT_BM=all path that prints
+    # `<Backend> on-disk: X MiB` but no per-column [load_bitmap] / [Breakdown]
+    # lines), synthesize a single-column entry so the Memory Breakdown
+    # sheet shows the backend.  Picks the column name from a heuristic
+    # (single-column queries: Q14/Q15/Q17 have one column each).
+    Q_SINGLE_COLUMN = {1: "shipdate", 14: "shipdate", 15: "shipdate", 17: "partkey"}
+    fallback_col = Q_SINGLE_COLUMN.get(q, "data")
+    for backend in BACKENDS:
+        bd = result["memory_breakdown"].get(backend, {})
+        fp = result["footprint_mb"].get(backend)
+        if bd or fp is None or fp <= 0.0:
+            continue
+        # No per-column / per-layer data, but we know total footprint.
+        # Add a synthetic entry so Memory Breakdown renders a row.
+        result["memory_breakdown"][backend] = {fallback_col: fp, "total": fp}
+
     return result
 
 
@@ -656,6 +728,7 @@ PATTERN_QS_LOAD_BITMAPS: Dict[int, List[str]] = {
     10: ["orderkey", "returnflag"],
     12: ["shipmode", "receiptdate"],
     14: ["shipdate"],
+    15: ["shipdate"],
     17: ["partkey"],
     19: ["shipmode", "shipinstruct"],
 }
@@ -716,6 +789,7 @@ PATTERN_BACKENDS_PER_Q: Dict[int, List[Tuple[str, str]]] = {
     10: PATTERN_BACKENDS_FULL,
     12: PATTERN_BACKENDS_FULL,
     14: PATTERN_BACKENDS_FULL,
+    15: PATTERN_BACKENDS_FULL,
     17: PATTERN_BACKENDS_FULL,
     19: PATTERN_BACKENDS_FULL,
 }

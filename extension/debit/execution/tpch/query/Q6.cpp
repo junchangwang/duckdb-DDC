@@ -66,6 +66,46 @@ static std::mutex     q6_build_mutex;
 static std::atomic<bool> q6_built{false};
 
 // -----------------------------------------------------------------------
+// q6_check_correctness — compares this backend's filter cardinality against
+// the DuckDB SQL ground-truth count of qualifying lineitem rows.  Q6's
+// revenue aggregation is downstream of BMFetch (DuckDB's normal pipeline
+// applies SUM), so we validate the *row set produced by the bitmap
+// pipeline*; matching row count is a strong filter-correctness signal.
+// Emits `[OK] <Backend> matches DuckDB SQL ground truth (rows=N)` on
+// success, `[FAIL]` on mismatch — same shape parse_stdout_log in
+// bench_suite.py picks up for the Correctness sheet.
+// -----------------------------------------------------------------------
+static void q6_check_correctness(ExecutionContext& context,
+                                 const char* backend_name,
+                                 size_t bitmap_rows) {
+    static std::atomic<int64_t> cached_gt{-1};
+    int64_t gt = cached_gt.load();
+    if (gt < 0) {
+        Connection con(*context.client.db);
+        auto r = con.Query(
+            "SELECT count(*) FROM lineitem "
+            "WHERE l_shipdate >= DATE '1994-01-01' "
+            "  AND l_shipdate <  DATE '1995-01-01' "
+            "  AND l_discount BETWEEN 0.05 AND 0.07 "
+            "  AND l_quantity <  24");
+        if (!r || r->HasError() || r->RowCount() != 1) {
+            std::cerr << "[Q6] correctness query failed.\n";
+            return;
+        }
+        gt = r->GetValue(0, 0).GetValue<int64_t>();
+        cached_gt.store(gt);
+    }
+    if (static_cast<int64_t>(bitmap_rows) == gt) {
+        std::cout << "\n[OK] " << backend_name
+                  << " matches DuckDB SQL ground truth (rows=" << gt << ").\n";
+    } else {
+        std::cerr << "\n[FAIL] " << backend_name
+                  << " mismatch: bitmap_rows=" << bitmap_rows
+                  << " gt=" << gt << "\n";
+    }
+}
+
+// -----------------------------------------------------------------------
 // q6_emit_csv — write Schema-A CSV for the just-finished backend run.
 // Per-iteration timings are unavailable (Q6 is a pull-pipeline source,
 // not a controlled iteration loop), so stddev=0 / min=median / max=median.
@@ -280,6 +320,7 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
             {"GetRowIds",   ms(t_e, t_f)},
             {"TOTAL",       ms(t0, t_f)},
         });
+        q6_check_correctness(context, "ComBit", row_ids->size());
         q6_built.store(true);
         return;
     }
@@ -345,6 +386,7 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
             {"GetRowIds",   ms(t_e, t_f)},
             {"TOTAL",       ms(t0, t_f)},
         });
+        q6_check_correctness(context, idx_disc->backend_name(), row_ids->size());
         q6_built.store(true);
         return;
     }
@@ -385,6 +427,7 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
             {"GetRowIds",   ms(t_e, t_f)},
             {"TOTAL",       ms(t0, t_f)},
         });
+        q6_check_correctness(context, "WAH", row_ids->size());
         q6_built.store(true);
         return;
     }
@@ -426,6 +469,7 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
             {"GetRowIds",   ms(t_e, t_f)},
             {"TOTAL",       ms(t0, t_f)},
         });
+        q6_check_correctness(context, "EWAH", row_ids->size());
         q6_built.store(true);
         return;
     }
@@ -465,6 +509,7 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
             {"GetRowIds",   ms(t_e, t_f)},
             {"TOTAL",       ms(t0, t_f)},
         });
+        q6_check_correctness(context, "Concise", row_ids->size());
         q6_built.store(true);
         return;
     }

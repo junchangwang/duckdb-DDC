@@ -57,10 +57,9 @@
 #include "roaring.hh"
 #include "ewah.h"
 
-#include "bitset_simple.h"
 #include "Concise/concise.h"
-#include "execution/tpch/bm_baseline_loaders.hpp"
 #include "execution/tpch/bm_bench_common.hpp"
+#include "execution/tpch/indexed_bitmap.hpp"
 
 #include <iostream>
 #include <fstream>
@@ -78,76 +77,42 @@
 
 namespace duckdb {
 
-// --- Q15 bitmap directories ---
-static const std::string Q15_SF      = bm_bench::sf_suffix();
-static const std::string Q15_CB_DIR  = bm_bench::resolve_bitmap_dir("tpch_q15" + Q15_SF + "_combit");
-static const std::string Q15_WAH_DIR = bm_bench::resolve_bitmap_dir("tpch_q15" + Q15_SF + "_wah");
-static const std::string Q15_CR_DIR  = bm_bench::resolve_bitmap_dir("tpch_q15" + Q15_SF + "_croaring");
-static const std::string Q15_EW_DIR  = bm_bench::resolve_bitmap_dir("tpch_q15" + Q15_SF + "_ewah");
-
-// --- Backend selection (DEBIT_BM=all|wah|cb|cr|crr|ew|bs|bsa|con) ---
+// --- Backend selection (DEBIT_BM=all|wah|cb|cb_bpe|cr|cr_bpe|crr|ew|con) ---
+// Q15's predicate is a single contiguous shipdate range OR — BPE adds no
+// range-skip benefit here (the range is exactly 91 days, smaller than any
+// reasonable BPE bucket).  CB_BPE / CR_BPE therefore route to the same
+// per-day OR path as CB / CR; the bench's PATTERN_BACKEND_CSV_PREFIX maps
+// those columns to the BPE column in the merged Excel.
 using Q15BmType = bm_bench::Backend;
 static const Q15BmType Q15_BM = bm_bench::parse_backend("Q15_BM");
 
 static bool run_all() { return Q15_BM == Q15BmType::ALL; }
 static bool run_wah() { return Q15_BM == Q15BmType::ALL || Q15_BM == Q15BmType::WAH; }
-static bool run_cb()  { return Q15_BM == Q15BmType::ALL || Q15_BM == Q15BmType::CB;  }
-static bool run_cr()  { return Q15_BM == Q15BmType::ALL || Q15_BM == Q15BmType::CR;  }
+static bool run_cb()  { return Q15_BM == Q15BmType::ALL || Q15_BM == Q15BmType::CB
+                            || Q15_BM == Q15BmType::CB_BPE; }
+static bool run_cr()  { return Q15_BM == Q15BmType::ALL || Q15_BM == Q15BmType::CR
+                            || Q15_BM == Q15BmType::CR_BPE; }
 static bool run_crr() { return Q15_BM == Q15BmType::ALL || Q15_BM == Q15BmType::CRR; }
 static bool run_ew()  { return Q15_BM == Q15BmType::ALL || Q15_BM == Q15BmType::EW;  }
-static bool run_bs()  { return Q15_BM == Q15BmType::ALL || Q15_BM == Q15BmType::BS;  }
-static bool run_bsa() { return Q15_BM == Q15BmType::ALL || Q15_BM == Q15BmType::BSA; }
 static bool run_con() { return Q15_BM == Q15BmType::ALL || Q15_BM == Q15BmType::CON; }
 
 static const char* q15_bm_label()     { return bm_bench::backend_label(Q15_BM); }
 static std::string q15_get_sf_label() { return bm_bench::sf_label(); }
 
 // --- Q15 predicate (TPC-H spec §2.4.15, qualification DATE = 1996-01-01) ---
-// Day range [1996-01-01, 1996-04-01) = days [1461, 1552) since 1992-01-01
-//   (1992 leap, 1996 leap):
-//     1996-01-01 = 366 + 365 + 365 + 365         = 1461
-//     1996-04-01 = 1461 + 31 + 29 + 31           = 1552  (exclusive)
-//   91 day bitmaps, inclusive day range [1461, 1551].
-static const int Q15_DATE_START = 1461;  // 1996-01-01 inclusive
-static const int Q15_DATE_END   = 1551;  // 1996-03-31 inclusive (= 1552-1)
+// Day range [1996-01-01, 1996-04-01) = epoch-day [9496, 9587).
+// IndexedX is built via PRAGMA load_bitmap('shipdate'), which keys by
+// DuckDB's int32 epoch-day (days since 1970-01-01), so we use the same
+// convention as the load layer (debit_extension.cpp: 1996 boundary = 9496).
+//   91 day bitmaps, inclusive day range [9496, 9586].
+static const int Q15_DATE_START = 9496;  // 1996-01-01 inclusive
+static const int Q15_DATE_END   = 9586;  // 1996-03-31 inclusive (1996-04-01 = 9587)
 
 // --- Iteration counts (DEBIT_ITER / DEBIT_WARMUP) ---
 static const int Q15_ITERATIONS = bm_bench::iter_count(10);
 static const int Q15_WARMUP     = bm_bench::warmup_count(2);
 
 static std::once_flag q15_once_flag;
-
-// Statistics helper.
-// Bitmap loaders (same set as Q1/Q12/Q14).
-static ComBit q15_load_cb(const std::string& p) {
-    std::ifstream in(p, std::ios::binary);
-    if (!in) { std::cerr << "Error: " << p << std::endl; return ComBit(); }
-    return ComBit::deserialize(in);
-}
-static roaring::Roaring q15_load_cr(const std::string& p) {
-    std::ifstream in(p, std::ios::binary | std::ios::ate);
-    if (!in) return roaring::Roaring();
-    auto sz = in.tellg(); in.seekg(0);
-    uint32_t ls; in.read(reinterpret_cast<char*>(&ls), 4);
-    auto bsz = sz - 4;
-    if (bsz > 0) {
-        std::vector<char> buf(bsz);
-        in.read(buf.data(), bsz);
-        return roaring::Roaring::readSafe(buf.data(), bsz);
-    }
-    return roaring::Roaring();
-}
-static ibis::bitvector q15_load_wah(const std::string& p) {
-    ibis::bitvector b; b.read(p.c_str()); return b;
-}
-static ewah::EWAHBoolArray<uint64_t> q15_load_ew(const std::string& p) {
-    ewah::EWAHBoolArray<uint64_t> b;
-    std::ifstream in(p, std::ios::binary);
-    if (!in) return b;
-    uint64_t bits; in.read(reinterpret_cast<char*>(&bits), 8);
-    b.read(in);
-    return b;
-}
 
 // Byte-LUT for MSB-first bit extraction (same as Q1/Q14).
 // Q15 fused per-row contribution (units: hundredths-of-a-cent — both
@@ -214,12 +179,6 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
               << "then per-row revenue aggregation grouped by l_suppkey"
               << std::endl;
     std::cout << "  TPC-H params: l_shipdate [1996-01-01, 1996-04-01)" << std::endl;
-    std::cout << "  Bitmap dirs:";
-    if (run_cb())              std::cout << " " << Q15_CB_DIR;
-    if (run_cr() || run_crr()) std::cout << " " << Q15_CR_DIR;
-    if (run_wah())             std::cout << " " << Q15_WAH_DIR;
-    if (run_ew())              std::cout << " " << Q15_EW_DIR;
-    std::cout << std::endl;
     std::cout << "  Iterations: " << Q15_ITERATIONS
               << " (first " << Q15_WARMUP << " = warm-up)" << std::endl;
     std::cout << "================================================================" << std::endl;
@@ -293,123 +252,21 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
     const size_t   sk_dim = static_cast<size_t>(max_suppkey) + 1;
 
     // ============================================================
-    // 2. Load shipdate bitmaps
+    // 2. Look up the shipdate bitmap index (built by PRAGMA load_bitmap).
+    //    Same pattern as Q14: backend-specific dynamic_cast on the
+    //    shared context.client.bitmap_shipdate slot.
     // ============================================================
-    std::cout << "\n[Load] Loading shipdate bitmaps (mode=" << q15_bm_label() << ")..." << std::endl;
-    const int n_dates = Q15_DATE_END - Q15_DATE_START + 1;
-
-    // --- ComBit ---
-    std::vector<ComBit> cb_date;
-    std::vector<const ComBit*> cb_date_ptrs;
-    double cb_load_ms = 0;
-    if (run_cb()) {
-        auto t0 = std::chrono::high_resolution_clock::now();
-        cb_date.resize(Q15_DATE_END + 1);
-        for (int d = Q15_DATE_START; d <= Q15_DATE_END; d++)
-            cb_date[d] = q15_load_cb(Q15_CB_DIR + "/shipdate/" + std::to_string(d) + ".bm");
-        cb_date_ptrs.reserve(n_dates);
-        for (int d = Q15_DATE_START; d <= Q15_DATE_END; d++)
-            cb_date_ptrs.push_back(&cb_date[d]);
-        cb_load_ms = ms(t0, std::chrono::high_resolution_clock::now());
+    auto* idx_ship = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate);
+    if (!idx_ship) {
+        std::cerr << "Q15: bitmap_shipdate not loaded.  "
+                     "Run PRAGMA load_bitmap('shipdate'); first." << std::endl;
+        return;
     }
-
-    // --- CRoaring (vanilla) ---
-    std::vector<roaring::Roaring> cr_date;
-    double cr_load_ms = 0;
-    if (run_cr()) {
-        auto t0 = std::chrono::high_resolution_clock::now();
-        cr_date.resize(Q15_DATE_END + 1);
-        for (int d = Q15_DATE_START; d <= Q15_DATE_END; d++)
-            cr_date[d] = q15_load_cr(Q15_CR_DIR + "/shipdate/" + std::to_string(d) + ".bm");
-        cr_load_ms = ms(t0, std::chrono::high_resolution_clock::now());
-    }
-
-    // --- CRoaring + Run (loads fresh + runOptimize) ---
-    std::vector<roaring::Roaring> crr_date;
-    std::vector<const roaring::Roaring*> crr_date_ptrs;
-    double crr_load_ms = 0;
-    if (run_crr()) {
-        auto t0 = std::chrono::high_resolution_clock::now();
-        crr_date.resize(Q15_DATE_END + 1);
-        for (int d = Q15_DATE_START; d <= Q15_DATE_END; d++) {
-            crr_date[d] = q15_load_cr(Q15_CR_DIR + "/shipdate/" + std::to_string(d) + ".bm");
-            crr_date[d].runOptimize();
-        }
-        crr_date_ptrs.reserve(n_dates);
-        for (int d = Q15_DATE_START; d <= Q15_DATE_END; d++)
-            crr_date_ptrs.push_back(&crr_date[d]);
-        crr_load_ms = ms(t0, std::chrono::high_resolution_clock::now());
-    }
-
-    // --- WAH ---
-    std::vector<ibis::bitvector> wah_date;
-    double wah_load_ms = 0;
-    if (run_wah()) {
-        auto t0 = std::chrono::high_resolution_clock::now();
-        wah_date.resize(Q15_DATE_END + 1);
-        for (int d = Q15_DATE_START; d <= Q15_DATE_END; d++)
-            wah_date[d] = q15_load_wah(Q15_WAH_DIR + "/shipdate/" + std::to_string(d) + ".bm");
-        wah_load_ms = ms(t0, std::chrono::high_resolution_clock::now());
-    }
-
-    // --- EWAH ---
-    std::vector<ewah::EWAHBoolArray<uint64_t>> ew_date;
-    std::vector<const ewah::EWAHBoolArray<uint64_t>*> ew_date_ptrs;
-    double ew_load_ms = 0;
-    if (run_ew()) {
-        auto t0 = std::chrono::high_resolution_clock::now();
-        ew_date.resize(Q15_DATE_END + 1);
-        for (int d = Q15_DATE_START; d <= Q15_DATE_END; d++)
-            ew_date[d] = q15_load_ew(Q15_EW_DIR + "/shipdate/" + std::to_string(d) + ".bm");
-        ew_date_ptrs.reserve(n_dates);
-        for (int d = Q15_DATE_START; d <= Q15_DATE_END; d++)
-            ew_date_ptrs.push_back(&ew_date[d]);
-        ew_load_ms = ms(t0, std::chrono::high_resolution_clock::now());
-    }
-
-    // --- Bitset (BS / BSA share) ---
-    std::vector<bs::Bitmap> bs_date;
-    double bs_load_ms = 0;
-    if (run_bs() || run_bsa()) {
-        auto t0 = std::chrono::high_resolution_clock::now();
-        bs_date.resize(Q15_DATE_END + 1);
-        for (int d = Q15_DATE_START; d <= Q15_DATE_END; d++)
-            bs_date[d] = bm_bench::load_bitmap_from_croaring(
-                Q15_CR_DIR + "/shipdate/" + std::to_string(d) + ".bm");
-        bs_load_ms = ms(t0, std::chrono::high_resolution_clock::now());
-    }
-
-    // --- Concise ---
-    std::vector<ConciseSet<false>> con_date;
-    std::vector<const ConciseSet<false>*> con_date_ptrs;
-    double con_load_ms = 0;
-    if (run_con()) {
-        auto t0 = std::chrono::high_resolution_clock::now();
-        con_date.resize(Q15_DATE_END + 1);
-        for (int d = Q15_DATE_START; d <= Q15_DATE_END; d++)
-            con_date[d] = bm_bench::load_concise_from_croaring(
-                Q15_CR_DIR + "/shipdate/" + std::to_string(d) + ".bm");
-        con_date_ptrs.reserve(n_dates);
-        for (int d = Q15_DATE_START; d <= Q15_DATE_END; d++)
-            con_date_ptrs.push_back(&con_date[d]);
-        con_load_ms = ms(t0, std::chrono::high_resolution_clock::now());
-    }
-
-    if (run_wah()) std::cout << "  WAH load:      " << wah_load_ms << " ms" << std::endl;
-    if (run_cb())  std::cout << "  ComBit load:   " << cb_load_ms  << " ms" << std::endl;
-    if (run_cr())  std::cout << "  CRoaring load: " << cr_load_ms  << " ms" << std::endl;
-    if (run_crr()) std::cout << "  CRR load:      " << crr_load_ms << " ms" << std::endl;
-    if (run_ew())  std::cout << "  EWAH load:     " << ew_load_ms  << " ms" << std::endl;
-    if (run_bs() || run_bsa())
-                    std::cout << "  Bitset load:   " << bs_load_ms  << " ms (shared by BS / BSA)" << std::endl;
-    if (run_con()) std::cout << "  Concise load:  " << con_load_ms << " ms" << std::endl;
-
-    std::cout << std::fixed << std::setprecision(2);
-    if (run_wah()) std::cout << "  WAH      on disk: " << bm_bench::mib(bm_bench::dir_size_bytes(Q15_WAH_DIR)) << " MiB" << std::endl;
-    if (run_cb())  std::cout << "  ComBit   on disk: " << bm_bench::mib(bm_bench::dir_size_bytes(Q15_CB_DIR))  << " MiB" << std::endl;
-    if (run_cr() || run_crr())
-                    std::cout << "  CRoaring on disk: " << bm_bench::mib(bm_bench::dir_size_bytes(Q15_CR_DIR))  << " MiB (shared by CR / CRR)" << std::endl;
-    if (run_ew())  std::cout << "  EWAH     on disk: " << bm_bench::mib(bm_bench::dir_size_bytes(Q15_EW_DIR))  << " MiB" << std::endl;
+    auto* cb_ship  = dynamic_cast<bm_index::IndexedComBit*>(idx_ship);
+    auto* cr_ship  = dynamic_cast<bm_index::IndexedCRoaring*>(idx_ship);
+    auto* wah_ship = dynamic_cast<bm_index::IndexedWAH*>(idx_ship);
+    auto* ew_ship  = dynamic_cast<bm_index::IndexedEWAH*>(idx_ship);
+    auto* con_ship = dynamic_cast<bm_index::IndexedConcise*>(idx_ship);
 
     // ============================================================
     // 3. Per-backend aggregation buffer (one int64 per suppkey).
@@ -425,15 +282,13 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
     std::vector<double> crr_or_t, crr_agg_t, crr_tot_t;
     std::vector<double> wah_or_t, wah_agg_t, wah_tot_t;
     std::vector<double> ew_or_t,  ew_agg_t,  ew_tot_t;
-    std::vector<double> bs_or_t,  bs_agg_t,  bs_tot_t;
-    std::vector<double> bsa_or_t, bsa_agg_t, bsa_tot_t;
     std::vector<double> con_or_t, con_agg_t, con_tot_t;
 
     // Final validated state per backend (populated on the last iter).
     int64_t cb_max = 0,  cr_max = 0,  crr_max = 0, wah_max = 0;
-    int64_t ew_max = 0,  bs_max = 0,  bsa_max = 0, con_max = 0;
+    int64_t ew_max = 0,  con_max = 0;
     std::vector<int32_t> cb_ties,  cr_ties,  crr_ties, wah_ties;
-    std::vector<int32_t> ew_ties,  bs_ties,  bsa_ties, con_ties;
+    std::vector<int32_t> ew_ties,  con_ties;
     // ============================================================
     // 4. Benchmark loop — per backend:
     //    OR  (T0→T1): build the shipdate filter
@@ -446,15 +301,11 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
                   << (warmup ? " (warm-up)" : "") << " ---" << std::endl;
 
         // ================= ComBit =================
-        // OR_many returns a Decompressed ComBit (the canonical
-        // post-merge state).  We then walk it directly via
-        // `seg.l1_literal_data()` + the byte-LUT — the same fast path
-        // Q1 / Q14 use for per-row aggregation.  No `&=` here because
-        // the filter is already final after OR_many (Q15's only
-        // bitmap-side predicate is the 91-day shipdate window).
-        if (run_cb()) {
+        if (run_cb() && cb_ship) {
             auto t0 = std::chrono::high_resolution_clock::now();
-            ComBit cb_filt = ComBit::OR_many(cb_date_ptrs.size(), cb_date_ptrs.data());
+            ComBit cb_filt = ComBit::from_sparse_positions(
+                {}, cb_ship->num_rows(), cb_ship->segment_bits());
+            cb_ship->apply_or_range_to(cb_filt, Q15_DATE_START, Q15_DATE_END);
             auto t1 = std::chrono::high_resolution_clock::now();
 
             std::fill(rev_buf.begin(), rev_buf.end(), 0);
@@ -491,12 +342,10 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
             cb_max = pr.first; cb_ties = std::move(pr.second);
         }
 
-        // ================= CRoaring (vanilla pairwise) =================
-        if (run_cr()) {
+        // ================= CRoaring (vanilla addMany) =================
+        if (run_cr() && cr_ship && !cr_ship->run_optimized()) {
             auto t0 = std::chrono::high_resolution_clock::now();
-            roaring::Roaring cr_filt = cr_date[Q15_DATE_START];
-            for (int d = Q15_DATE_START + 1; d <= Q15_DATE_END; d++)
-                cr_filt |= cr_date[d];
+            roaring::Roaring cr_filt = cr_ship->or_range(Q15_DATE_START, Q15_DATE_END);
             auto t1 = std::chrono::high_resolution_clock::now();
 
             std::fill(rev_buf.begin(), rev_buf.end(), 0);
@@ -522,10 +371,9 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
         }
 
         // ================= CRoaring + Run (fastunion) =================
-        if (run_crr()) {
+        if (run_crr() && cr_ship && cr_ship->run_optimized()) {
             auto t0 = std::chrono::high_resolution_clock::now();
-            roaring::Roaring crr_filt = roaring::Roaring::fastunion(
-                crr_date_ptrs.size(), crr_date_ptrs.data());
+            roaring::Roaring crr_filt = cr_ship->or_range(Q15_DATE_START, Q15_DATE_END);
             auto t1 = std::chrono::high_resolution_clock::now();
 
             std::fill(rev_buf.begin(), rev_buf.end(), 0);
@@ -551,12 +399,9 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
         }
 
         // ================= WAH =================
-        if (run_wah()) {
+        if (run_wah() && wah_ship) {
             auto t0 = std::chrono::high_resolution_clock::now();
-            ibis::bitvector wah_filt = wah_date[Q15_DATE_START];
-            wah_filt.decompress();
-            for (int d = Q15_DATE_START + 1; d <= Q15_DATE_END; d++)
-                wah_filt |= wah_date[d];
+            ibis::bitvector wah_filt = wah_ship->or_range(Q15_DATE_START, Q15_DATE_END);
             auto t1 = std::chrono::high_resolution_clock::now();
 
             std::fill(rev_buf.begin(), rev_buf.end(), 0);
@@ -584,10 +429,9 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
         }
 
         // ================= EWAH (fast_logicalor) =================
-        if (run_ew()) {
+        if (run_ew() && ew_ship) {
             auto t0 = std::chrono::high_resolution_clock::now();
-            ewah::EWAHBoolArray<uint64_t> ew_filt = ewah::fast_logicalor(
-                ew_date_ptrs.size(), ew_date_ptrs.data());
+            ewah::EWAHBoolArray<uint64_t> ew_filt = ew_ship->or_range(Q15_DATE_START, Q15_DATE_END);
             auto t1 = std::chrono::high_resolution_clock::now();
 
             std::fill(rev_buf.begin(), rev_buf.end(), 0);
@@ -612,83 +456,10 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
             ew_max = pr.first; ew_ties = std::move(pr.second);
         }
 
-        // ================= Bitset (scalar) =================
-        if (run_bs()) {
-            auto t0 = std::chrono::high_resolution_clock::now();
-            bs::Bitmap bs_filt = bs_date[Q15_DATE_START].clone();
-            for (int d = Q15_DATE_START + 1; d <= Q15_DATE_END; d++)
-                bs::or_inplace(bs_filt, bs_date[d], false);
-            auto t1 = std::chrono::high_resolution_clock::now();
-
-            std::fill(rev_buf.begin(), rev_buf.end(), 0);
-            for (size_t i = 0; i < bs_filt.nwords; ++i) {
-                uint64_t w = bs_filt.words[i];
-                const size_t base = i * 64;
-                while (w) {
-                    size_t r = base + __builtin_ctzll(w);
-                    if (r >= bs_filt.nbits) break;
-                    rev_buf[sp[r]] += Q15_REV_CONTRIB(pp, dp, r);
-                    w &= w - 1;
-                }
-            }
-            auto pr = q15_find_max(rev_buf);
-            auto t2 = std::chrono::high_resolution_clock::now();
-
-            double d_or = ms(t0, t1), d_agg = ms(t1, t2);
-            double d_total = ms(t0, t2);
-            std::cout << "  BS:   OR=" << d_or << "  Agg=" << d_agg
-                      << "  Total=" << d_total
-                      << "  max=" << q15_fp_to_dollars(pr.first)
-                      << "  ties=" << pr.second.size() << std::endl;
-            if (!warmup) {
-                bs_or_t.push_back(d_or);
-                bs_agg_t.push_back(d_agg);
-                bs_tot_t.push_back(d_total);
-            }
-            bs_max = pr.first; bs_ties = std::move(pr.second);
-        }
-
-        // ================= Bitset + AVX-512 =================
-        if (run_bsa()) {
-            auto t0 = std::chrono::high_resolution_clock::now();
-            bs::Bitmap bsa_filt = bs_date[Q15_DATE_START].clone();
-            for (int d = Q15_DATE_START + 1; d <= Q15_DATE_END; d++)
-                bs::or_inplace(bsa_filt, bs_date[d], true);
-            auto t1 = std::chrono::high_resolution_clock::now();
-
-            std::fill(rev_buf.begin(), rev_buf.end(), 0);
-            for (size_t i = 0; i < bsa_filt.nwords; ++i) {
-                uint64_t w = bsa_filt.words[i];
-                const size_t base = i * 64;
-                while (w) {
-                    size_t r = base + __builtin_ctzll(w);
-                    if (r >= bsa_filt.nbits) break;
-                    rev_buf[sp[r]] += Q15_REV_CONTRIB(pp, dp, r);
-                    w &= w - 1;
-                }
-            }
-            auto pr = q15_find_max(rev_buf);
-            auto t2 = std::chrono::high_resolution_clock::now();
-
-            double d_or = ms(t0, t1), d_agg = ms(t1, t2);
-            double d_total = ms(t0, t2);
-            std::cout << "  BSA:  OR=" << d_or << "  Agg=" << d_agg
-                      << "  Total=" << d_total
-                      << "  max=" << q15_fp_to_dollars(pr.first)
-                      << "  ties=" << pr.second.size() << std::endl;
-            if (!warmup) {
-                bsa_or_t.push_back(d_or);
-                bsa_agg_t.push_back(d_agg);
-                bsa_tot_t.push_back(d_total);
-            }
-            bsa_max = pr.first; bsa_ties = std::move(pr.second);
-        }
-
         // ================= Concise (fast_logicalor) =================
-        if (run_con()) {
+        if (run_con() && con_ship) {
             auto t0 = std::chrono::high_resolution_clock::now();
-            ConciseSet<false> con_filt = ConciseSet<false>::fast_logicalor(
-                con_date_ptrs.size(), con_date_ptrs.data());
+            ConciseSet<false> con_filt = con_ship->or_range(Q15_DATE_START, Q15_DATE_END);
             auto t1 = std::chrono::high_resolution_clock::now();
 
             std::fill(rev_buf.begin(), rev_buf.end(), 0);
@@ -725,13 +496,12 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
     int64_t print_max = 0;
     const std::vector<int32_t>* print_ties = nullptr;
     const char* print_label = "";
-    if      (Q15_BM == Q15BmType::ALL || Q15_BM == Q15BmType::CB)  { print_max = cb_max;  print_ties = &cb_ties;  print_label = "ComBit"; }
+    if      (Q15_BM == Q15BmType::ALL || Q15_BM == Q15BmType::CB
+          || Q15_BM == Q15BmType::CB_BPE)                          { print_max = cb_max;  print_ties = &cb_ties;  print_label = "ComBit"; }
     else if (Q15_BM == Q15BmType::WAH)                             { print_max = wah_max; print_ties = &wah_ties; print_label = "WAH"; }
-    else if (Q15_BM == Q15BmType::CR)                              { print_max = cr_max;  print_ties = &cr_ties;  print_label = "CRoaring"; }
+    else if (Q15_BM == Q15BmType::CR || Q15_BM == Q15BmType::CR_BPE) { print_max = cr_max;  print_ties = &cr_ties;  print_label = "CRoaring"; }
     else if (Q15_BM == Q15BmType::CRR)                             { print_max = crr_max; print_ties = &crr_ties; print_label = "CRoaring+Run"; }
     else if (Q15_BM == Q15BmType::EW)                              { print_max = ew_max;  print_ties = &ew_ties;  print_label = "EWAH"; }
-    else if (Q15_BM == Q15BmType::BS)                              { print_max = bs_max;  print_ties = &bs_ties;  print_label = "Bitset"; }
-    else if (Q15_BM == Q15BmType::BSA)                             { print_max = bsa_max; print_ties = &bsa_ties; print_label = "Bitset+AVX512"; }
     else if (Q15_BM == Q15BmType::CON)                             { print_max = con_max; print_ties = &con_ties; print_label = "Concise"; }
 
     if (print_ties) {
@@ -760,8 +530,6 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
         cmp("CRR", crr_max, crr_ties);
         cmp("WAH", wah_max, wah_ties);
         cmp("EW",  ew_max,  ew_ties);
-        cmp("BS",  bs_max,  bs_ties);
-        cmp("BSA", bsa_max, bsa_ties);
         cmp("CON", con_max, con_ties);
         std::cout << "  Consistency: " << (consistent ? "ALL MATCH" : "MISMATCH DETECTED") << std::endl;
     }
@@ -918,36 +686,82 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
     print_stats("CRR", crr_or_t, crr_agg_t, crr_tot_t);
     print_stats("WAH", wah_or_t, wah_agg_t, wah_tot_t);
     print_stats("EW",  ew_or_t,  ew_agg_t,  ew_tot_t);
-    print_stats("BS",  bs_or_t,  bs_agg_t,  bs_tot_t);
-    print_stats("BSA", bsa_or_t, bsa_agg_t, bsa_tot_t);
     print_stats("CON", con_or_t, con_agg_t, con_tot_t);
     std::cout << "================================================================" << std::endl;
 
     // ============================================================
-    // 8. CSV export (optional reproducibility artifact)
+    // 8. CSV export (wide schema matching Q1/Q3/Q4/Q14 — bench_suite.py
+    //    parses one CSV per backend and merges into Excel rows.  Each
+    //    `operation` row carries one cell per backend; the active backend
+    //    fills its column, the rest are zero.)
     // ============================================================
     {
-        std::string csv_path = "q15_results_" + q15_get_sf_label() + ".csv";
+        std::string sf       = q15_get_sf_label();
+        std::string csv_path = "q15_results_" + sf + ".csv";
         std::ofstream csv(csv_path);
         if (csv) {
-            csv << "backend,or_ms,agg_ms,total_ms\n";
-            auto wrow = [&](const char* lbl, std::vector<double>& or_t,
-                            std::vector<double>& agg_t, std::vector<double>& tot_t) {
-                if (or_t.empty()) return;
-                auto so = bm_bench::compute_stats(or_t);
-                auto sa = bm_bench::compute_stats(agg_t);
-                auto st = bm_bench::compute_stats(tot_t);
-                csv << lbl << "," << so.median << "," << sa.median << "," << st.median << "\n";
+            csv << std::fixed << std::setprecision(4);
+            csv << "sf,operation,"
+                << "wah_median_ms,wah_stddev_ms,wah_min_ms,wah_max_ms,"
+                << "combit_median_ms,combit_stddev_ms,combit_min_ms,combit_max_ms,"
+                << "croaring_median_ms,croaring_stddev_ms,croaring_min_ms,croaring_max_ms,"
+                << "croaring_run_median_ms,croaring_run_stddev_ms,croaring_run_min_ms,croaring_run_max_ms,"
+                << "ewah_median_ms,ewah_stddev_ms,ewah_min_ms,ewah_max_ms,"
+                << "bs_median_ms,bs_stddev_ms,bs_min_ms,bs_max_ms,"
+                << "bsa_median_ms,bsa_stddev_ms,bsa_min_ms,bsa_max_ms,"
+                << "concise_median_ms,concise_stddev_ms,concise_min_ms,concise_max_ms,"
+                << "cb_vs_wah,cr_vs_wah,crr_vs_wah,ew_vs_wah,bs_vs_wah,bsa_vs_wah,con_vs_wah\n";
+
+            bm_bench::Stats z{0, 0, 0, 0};
+            auto stats_or_z = [&](std::vector<double>& v) {
+                return v.empty() ? z : bm_bench::compute_stats(v);
             };
-            wrow("CB",  cb_or_t,  cb_agg_t,  cb_tot_t);
-            wrow("CR",  cr_or_t,  cr_agg_t,  cr_tot_t);
-            wrow("CRR", crr_or_t, crr_agg_t, crr_tot_t);
-            wrow("WAH", wah_or_t, wah_agg_t, wah_tot_t);
-            wrow("EW",  ew_or_t,  ew_agg_t,  ew_tot_t);
-            wrow("BS",  bs_or_t,  bs_agg_t,  bs_tot_t);
-            wrow("BSA", bsa_or_t, bsa_agg_t, bsa_tot_t);
-            wrow("CON", con_or_t, con_agg_t, con_tot_t);
-            std::cout << "\n  [CSV] Results written to: " << csv_path << std::endl;
+
+            // Pick the *one* active backend's stats for this run.  When
+            // DEBIT_BM=all every vector is populated; we still emit one
+            // row per operation with the active backend cell set, which
+            // bench_suite's _merge_pattern_csvs combines across runs.
+            struct PerOp { bm_bench::Stats wah, cb, cr, crr, ew, con; };
+            auto fill = [&](std::vector<double>& wah_v,
+                            std::vector<double>& cb_v,
+                            std::vector<double>& cr_v,
+                            std::vector<double>& crr_v,
+                            std::vector<double>& ew_v,
+                            std::vector<double>& con_v) {
+                return PerOp{
+                    stats_or_z(wah_v),
+                    stats_or_z(cb_v),
+                    stats_or_z(cr_v),
+                    stats_or_z(crr_v),
+                    stats_or_z(ew_v),
+                    stats_or_z(con_v),
+                };
+            };
+
+            PerOp op_or  = fill(wah_or_t,  cb_or_t,  cr_or_t,  crr_or_t,  ew_or_t,  con_or_t);
+            PerOp op_agg = fill(wah_agg_t, cb_agg_t, cr_agg_t, crr_agg_t, ew_agg_t, con_agg_t);
+            PerOp op_tot = fill(wah_tot_t, cb_tot_t, cr_tot_t, crr_tot_t, ew_tot_t, con_tot_t);
+
+            auto put = [&](const std::string& opname, const PerOp& p) {
+                csv << sf << "," << opname << ",";
+                auto cell = [&](bm_bench::Stats v) {
+                    csv << v.median << "," << v.stddev << "," << v.min_val << "," << v.max_val << ",";
+                };
+                cell(p.wah);
+                cell(p.cb);
+                cell(p.cr);
+                cell(p.crr);
+                cell(p.ew);
+                cell(z); cell(z);   // BS / BSA: not run for Q15 in PRAGMA-load pattern
+                cell(p.con);
+                csv << "0,0,0,0,0,0,0\n";
+            };
+
+            put("PhaseA_OR",  op_or);
+            put("PhaseB_Agg", op_agg);
+            put("TOTAL",      op_tot);
+
+            std::cout << "\n  [CSV] q15_results_" << sf << ".csv\n";
         }
     }
 
