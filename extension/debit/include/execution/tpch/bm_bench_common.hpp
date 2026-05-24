@@ -65,7 +65,8 @@ inline std::string resolve_bitmap_dir(const std::string& rel) {
 // BS     = uncompressed bitset, scalar (no algorithm + no SIMD baseline)
 // BSA    = uncompressed bitset, AVX-512 (no algorithm + SIMD baseline)
 // CON    = Concise (Colantonio & Di Pietro)
-enum class Backend { ALL, WAH, CB, CB_BPE, CR, CR_BPE, CRR, EW, BS, BSA, CON };
+// CB_GE  = ComBit + GE auto-loading (shipdate also builds shipdate_GE for hybrid)
+enum class Backend { ALL, WAH, CB, CB_BPE, CR, CR_BPE, CRR, EW, BS, BSA, CON, CB_GE };
 
 inline Backend parse_backend(const char* legacy_env) {
     const char* env = std::getenv("DEBIT_BM");
@@ -78,6 +79,7 @@ inline Backend parse_backend(const char* legacy_env) {
     if (s.empty() || s == "all")                                    return Backend::ALL;
     if (s == "wah")                                                 return Backend::WAH;
     if (s == "cb_bpe" || s == "combit_bpe")                         return Backend::CB_BPE;
+    if (s == "cb_ge"  || s == "combit_ge")                          return Backend::CB_GE;
     if (s == "cr_bpe" || s == "croaring_bpe")                       return Backend::CR_BPE;
     if (s == "cb"  || s == "combit")                                return Backend::CB;
     if (s == "cr"  || s == "croaring")                              return Backend::CR;
@@ -98,6 +100,7 @@ inline const char* backend_label(Backend b) {
         case Backend::WAH: return "WAH";
         case Backend::CB:  return "ComBit";
         case Backend::CB_BPE: return "ComBit+BPE";
+        case Backend::CB_GE:  return "ComBit+GE";
         case Backend::CR:  return "CRoaring";
         case Backend::CR_BPE: return "CRoaring+BPE";
         case Backend::CRR: return "CRoaring+Run";

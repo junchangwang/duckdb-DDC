@@ -61,6 +61,9 @@ static std::once_flag q14_once_flag_new;
 
 static constexpr int64_t Q14_DATE_LO = 9374;   // 1995-09-01 epoch days
 static constexpr int64_t Q14_DATE_HI = 9404;   // 1995-10-01 (excl)
+// Month-GE key: 1995-09 = year*100+month = 199509.  Used when
+// bitmap_shipdate_GE_month is pre-loaded (cardinality 84 vs per-day 2526).
+static constexpr int64_t Q14_MONTH_KEY = 199509;
 
 template <typename Btv>
 static void q14_get_rowids(const Btv& b, std::vector<row_t>* out);
@@ -104,13 +107,22 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
     auto& part_table     = Catalog::GetEntry<TableCatalogEntry>(context.client, "", "", "part");
     auto& lineitem_table = Catalog::GetEntry<TableCatalogEntry>(context.client, "", "", "lineitem");
 
+    // Prefer month-GE if pre-loaded (84 keys, single-key OR for 1995-09).
+    // Falls back to per-day shipdate range OR otherwise.
+    auto* idx_ge_m = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_GE_month);
+    auto* idx_ship = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate);
+    auto* idx_use  = idx_ge_m ? idx_ge_m : idx_ship;
+    if (!idx_use) {
+        std::cerr << "[Q14] ERROR: neither bitmap_shipdate_GE_month nor bitmap_shipdate loaded.\n";
+        return;
+    }
+    const bool use_month_ge = (idx_ge_m != nullptr);
+
     std::cout << "\n================================================================" << std::endl;
     std::cout << "  TPC-H Q14 (BitEngine pattern, runtime part-join)" << std::endl;
-    std::cout << "  Pre-loaded: bitmap_shipdate" << std::endl;
+    std::cout << "  Pre-loaded: " << (use_month_ge ? "bitmap_shipdate_GE_month (1-key OR)"
+                                                  : "bitmap_shipdate (30-key range OR)") << std::endl;
     std::cout << "================================================================" << std::endl;
-
-    auto* idx_ship = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate);
-    if (!idx_ship) { std::cerr << "[Q14] ERROR: bitmap_shipdate not loaded.\n"; return; }
 
     std::vector<double> tA_t, tB_t, tC_t, tot_t;
     double last_promo_revenue = 0;
@@ -123,34 +135,60 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
         auto t0 = clk::now();
         auto& lineitem_tx = DuckTransaction::Get(context.client, lineitem_table.catalog);
 
-        // ===== Phase A: shipdate range filter =====
-        size_t num_rows = idx_ship->num_rows();
-        // Plan A — each backend uses its natural multi-key OR primitive
-        // for the ~30-day shipdate range.
+        // ===== Phase A: shipdate filter =====
+        // use_month_ge: 1-key OR on month key 199509 (teacher's GE plan).
+        // else:         30-key range OR on per-day shipdate.
         std::vector<row_t> ids;
-        if (auto* cb_ship = dynamic_cast<bm_index::IndexedComBit*>(idx_ship)) {
-            // ComBit: gather in-range keys + sca or_many.
-            std::vector<int64_t> in_range;
-            cb_ship->for_each_key([&](int64_t k) {
-                if (k >= Q14_DATE_LO && k < Q14_DATE_HI) in_range.push_back(k);
+        if (auto* cbge = dynamic_cast<bm_index::IndexedComBitGE*>(idx_use)) {
+            // Month-GE path always lands here for CB backend
+            // (loader builds IndexedComBitGE for 'shipdate_GE_month').
+            std::vector<int64_t> ks{Q14_MONTH_KEY};
+            ComBit ship_filter = cbge->or_many(ks);
+            q14_get_rowids(ship_filter, &ids);
+        } else if (auto* cb = dynamic_cast<bm_index::IndexedComBit*>(idx_use)) {
+            std::vector<int64_t> ks;
+            cb->for_each_key([&](int64_t k) {
+                if (k >= Q14_DATE_LO && k < Q14_DATE_HI) ks.push_back(k);
             });
-            ComBit ship_filter = cb_ship->or_many(in_range);
+            ComBit ship_filter = cb->or_many(ks);
             q14_get_rowids(ship_filter, &ids);
-        } else if (auto* cr_ship = dynamic_cast<bm_index::IndexedCRoaring*>(idx_ship)) {
-            // Both CR & CRR: Roaring or_range (k-way fastunion).
-            roaring::Roaring ship_filter = cr_ship->or_range(Q14_DATE_LO, Q14_DATE_HI - 1);
-            q14_get_rowids(ship_filter, &ids);
-        } else if (auto* wah_ship = dynamic_cast<bm_index::IndexedWAH*>(idx_ship)) {
-            ibis::bitvector ship_filter = wah_ship->or_range(Q14_DATE_LO, Q14_DATE_HI - 1);
-            q14_get_rowids(ship_filter, &ids);
-        } else if (auto* ew_ship = dynamic_cast<bm_index::IndexedEWAH*>(idx_ship)) {
-            ewah::EWAHBoolArray<uint64_t> ship_filter =
-                ew_ship->or_range(Q14_DATE_LO, Q14_DATE_HI - 1);  // EW: fast_logicalor
-            q14_get_rowids(ship_filter, &ids);
-        } else if (auto* con_ship = dynamic_cast<bm_index::IndexedConcise*>(idx_ship)) {
-            ConciseSet<false> ship_filter =
-                con_ship->or_range(Q14_DATE_LO, Q14_DATE_HI - 1);  // CON: fast_logicalor
-            q14_get_rowids(ship_filter, &ids);
+        } else if (auto* cr = dynamic_cast<bm_index::IndexedCRoaring*>(idx_use)) {
+            if (use_month_ge) {
+                std::vector<int64_t> ks{Q14_MONTH_KEY};
+                roaring::Roaring ship_filter = cr->or_many(ks);
+                q14_get_rowids(ship_filter, &ids);
+            } else {
+                roaring::Roaring ship_filter = cr->or_range(Q14_DATE_LO, Q14_DATE_HI - 1);
+                q14_get_rowids(ship_filter, &ids);
+            }
+        } else if (auto* wah = dynamic_cast<bm_index::IndexedWAH*>(idx_use)) {
+            if (use_month_ge) {
+                std::vector<int64_t> ks{Q14_MONTH_KEY};
+                ibis::bitvector ship_filter = wah->or_many(ks);
+                q14_get_rowids(ship_filter, &ids);
+            } else {
+                ibis::bitvector ship_filter = wah->or_range(Q14_DATE_LO, Q14_DATE_HI - 1);
+                q14_get_rowids(ship_filter, &ids);
+            }
+        } else if (auto* ew = dynamic_cast<bm_index::IndexedEWAH*>(idx_use)) {
+            if (use_month_ge) {
+                std::vector<int64_t> ks{Q14_MONTH_KEY};
+                ewah::EWAHBoolArray<uint64_t> ship_filter = ew->or_many(ks);
+                q14_get_rowids(ship_filter, &ids);
+            } else {
+                ewah::EWAHBoolArray<uint64_t> ship_filter =
+                    ew->or_range(Q14_DATE_LO, Q14_DATE_HI - 1);
+                q14_get_rowids(ship_filter, &ids);
+            }
+        } else if (auto* con = dynamic_cast<bm_index::IndexedConcise*>(idx_use)) {
+            if (use_month_ge) {
+                std::vector<int64_t> ks{Q14_MONTH_KEY};
+                ConciseSet<false> ship_filter = con->or_many(ks);
+                q14_get_rowids(ship_filter, &ids);
+            } else {
+                ConciseSet<false> ship_filter = con->or_range(Q14_DATE_LO, Q14_DATE_HI - 1);
+                q14_get_rowids(ship_filter, &ids);
+            }
         } else {
             std::cerr << "[Q14] ERROR: unrecognised IBitmapIndex backend.\n";
             return;
@@ -226,7 +264,7 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
         double tot = q14_ms(t0, t_c);
         double promo_pct = total_rev > 0 ? 100.0 * double(promo_rev) / double(total_rev) : 0.0;
 
-        std::cout << "  " << idx_ship->backend_name()
+        std::cout << "  " << idx_use->backend_name()
                   << ":  PhaseA(shipdate_OR)=" << tA
                   << "  PhaseB(part_scan)=" << tB
                   << "  PhaseC(BMFetch+agg)=" << tC
@@ -254,7 +292,7 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
         if (r && !r->HasError() && r->RowCount() == 1) {
             double gt = r->GetValue(0, 0).GetValue<double>();
             if (std::fabs(gt - last_promo_revenue) < 0.001)
-                std::cout << "\n[OK] " << idx_ship->backend_name()
+                std::cout << "\n[OK] " << idx_use->backend_name()
                           << " matches DuckDB SQL (promo_revenue = " << gt << ").\n";
             else
                 std::cerr << "\n[FAIL] mismatch: ours=" << last_promo_revenue
@@ -270,7 +308,7 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
     int measured = std::max(0, Q14_ITERATIONS - Q14_WARMUP);
 
     std::cout << "\n================================================================\n";
-    std::cout << "  Q14 RESULTS — " << idx_ship->backend_name()
+    std::cout << "  Q14 RESULTS — " << idx_use->backend_name()
               << " (" << measured << " measured iter, median +/- stddev)\n";
     std::cout << "================================================================\n";
     std::cout << "  PhaseA (shipdate range OR): " << sA.median << " +/- " << sA.stddev << " ms\n";
@@ -294,7 +332,7 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
             << "concise_median_ms,concise_stddev_ms,concise_min_ms,concise_max_ms,"
             << "cb_vs_wah,cr_vs_wah,crr_vs_wah,ew_vs_wah,bs_vs_wah,bsa_vs_wah,con_vs_wah\n";
         bm_bench::Stats z{0,0,0,0};
-        std::string bn = idx_ship->backend_name();
+        std::string bn = idx_use->backend_name();
         auto put = [&](const std::string& op, bm_bench::Stats s) {
             csv << sf << "," << op << ",";
             auto cell = [&](bm_bench::Stats v) {

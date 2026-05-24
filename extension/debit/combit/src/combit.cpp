@@ -272,58 +272,6 @@ ComBitBtv::compress_l3_to_l4() {
 }
 
 // ----------------------------------------------------------------
-// Post-operation in-place compression of expanded segments
-// ----------------------------------------------------------------
-
-void
-ComBitBtv::compact_expanded() {
-    // Only works on fully expanded (Decompressed) segments.
-    assert(state_ == State::Decompressed);
-    if (l1_literal_count_ != l2_count_) return;
-
-    // This function assumes fill = 0x00 (l1_fill_ones_ = false),
-    // since it identifies literals as non-zero words.
-    assert(!l1_fill_ones_);
-
-    const size_t total_words = l2_count_;
-    size_t l2_byte_count = (total_words + 7) / 8;
-
-    // Reset L2 to all-zero (fill = not-literal).
-    l2_flat_.assign(l2_byte_count, 0x00);
-
-    size_t r_off = 0;
-    size_t w = 0;
-
-#ifdef __AVX512BW__
-    // Process 64 words (= 8 L2 bytes) at a time.
-    for (; w + 64 <= total_words; w += 64) {
-        __m512i chunk = _mm512_loadu_si512(l1_literals_.data() + w);
-        __mmask64 nz = _mm512_test_epi8_mask(chunk, chunk);
-        if (nz == 0) continue;
-
-        // Write 8 L2 bytes from the non-zero mask (little-endian layout matches).
-        uint64_t nz64 = static_cast<uint64_t>(nz);
-        memcpy(l2_flat_.data() + w / 8, &nz64, 8);
-
-        // Compress-store non-zero L1 words (writes behind reads => safe).
-        _mm512_mask_compressstoreu_epi8(l1_literals_.data() + r_off, nz, chunk);
-        r_off += __builtin_popcountll(nz64);
-    }
-#endif
-
-    // Scalar tail.
-    for (; w < total_words; w++) {
-        if (l1_literals_[w] != 0x00) {
-            l2_flat_[w / 8] |= uint8_t(1) << (w % 8);
-            l1_literals_[r_off++] = l1_literals_[w];
-        }
-    }
-
-    // Apply L3 compression on L2.
-    compact_l2_l3(r_off);
-}
-
-// ----------------------------------------------------------------
 // Compression
 // ----------------------------------------------------------------
 
@@ -531,51 +479,7 @@ ComBitBtv::to_string() const {
     return s;
 }
 
-// ----------------------------------------------------------------
-// operator~
-// ----------------------------------------------------------------
-
-ComBitBtv
-ComBitBtv::operator~() const {
-    if (bit_count_ == 0) return ComBitBtv();
-    assert(state_ != State::Uncompressed);
-
-    ComBitBtv result = *this;
-    result.l1_fill_ones_ = !l1_fill_ones_;
-
-    // XOR every byte of L1 with 0xFF — flips every bit in place.
-    // L2/L3 structure is unchanged: fill↔literal classification is
-    // preserved because (v != old_fill) ⇔ (v^0xFF != new_fill).
-    // The byte stream is invariant of word_size, so the XOR loop is too.
-    uint8_t* data = result.l1_literals_.data();
-    size_t n = result.l1_literals_.size();   // total bytes
-
-#ifdef __AVX512F__
-    const __m512i ones = _mm512_set1_epi8(static_cast<char>(-1));
-    size_t i = 0;
-    for (; i + 64 <= n; i += 64) {
-        __m512i v = _mm512_loadu_si512(data + i);
-        _mm512_storeu_si512(data + i, _mm512_xor_si512(v, ones));
-    }
-    for (; i < n; i++)
-        data[i] ^= 0xFF;
-#else
-    for (size_t i = 0; i < n; i++)
-        data[i] ^= 0xFF;
-#endif
-
-    // Padding correction.  compress() zero-pads the trailing bits of
-    // the last literal word; the XOR flipped them to 1.  Re-mask them.
-    if (bit_count_ % 8 != 0 && result.l1_literal_count_ > 0
-        && is_last_word_literal()) {
-        size_t valid_bits = bit_count_ % 8;           // 1..7 valid bits
-        size_t byte_off = result.l1_literal_count_ - 1;
-        result.l1_literals_[byte_off] &=
-            static_cast<uint8_t>(0xFF << (8 - valid_bits));
-    }
-
-    return result;
-}
+// operator~ and negate_inplace live in not.cpp.
 
 // ----------------------------------------------------------------
 // Queries
@@ -813,21 +717,7 @@ ComBit::to_string() const {
     return s;
 }
 
-// ----------------------------------------------------------------
-// operator~
-// ----------------------------------------------------------------
-
-ComBit
-ComBit::operator~() const {
-    ComBit result;
-    result.bit_count_ = bit_count_;
-    result.segment_bits_ = segment_bits_;
-
-    for (const auto& seg : segments_)
-        result.segments_.push_back(~seg);
-
-    return result;
-}
+// ComBit operator~ and negate_inplace live in not.cpp.
 
 // ----------------------------------------------------------------
 // Queries

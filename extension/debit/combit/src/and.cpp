@@ -1,7 +1,7 @@
 #include "combit.h"
 
 // ----------------------------------------------------------------
-// Bitwise AND operations (3-level: L3/L2/L1)
+// Bitwise AND operations (4-level: L4/L3/L2/L1)
 // ----------------------------------------------------------------
 
 // ----------------------------------------------------------------
@@ -41,7 +41,6 @@ ComBitBtv::operator&(const ComBitBtv& other) const {
     const uint8_t* b_l1 = other.l1_literals_.data();
     uint8_t* r_l1 = result.l1_literals_.data();
 
-    size_t a_l1_off = 0, b_l1_off = 0;
     size_t r_off = 0;
 
 #ifdef COMBIT_DEBUG
@@ -50,143 +49,244 @@ ComBitBtv::operator&(const ComBitBtv& other) const {
 #endif
 
 #ifdef __AVX512VBMI2__
-    // === AVX-512 main loop ===
-    // Each region: 64 words = 512 bits = 8 L2 bytes = 1 L3 byte (8 L3 bits).
-    // Read L3 byte => expand-load L2 literals => 64-bit mask => expand-load L1.
-    // L3 byte itself is streamed from L4: when the L4 bit is 1 the byte
-    // comes from l3_literals_ (offset advances), otherwise it is the L3
-    // fill value.  Mirrors how L2 literals are expand-loaded by L3 mask.
+    // -----------------------------------------------------------------
+    // 4-level traversal (L4 -> L3 -> L2 -> L1) per side, then AND.
+    //
+    //   1 word    = 8 bits   (one L1 byte)
+    //   1 L2 bit  gates  1 L1 byte           (8 words)
+    //   1 L3 bit  gates  1 L2 byte           (8 L2 bits = 64 words = 1 region)
+    //   1 L4 bit  gates  1 L3 byte           (8 L3 bits = 512 words)
+    //   1 batch   = 8 L4 bytes               (64 regions = 4096 words)
+    //
+    // Each batch SIMD-expands 64 L3 bytes per side from 8 L4 bytes.
+    // Per region we cascade L3 -> L2 -> L1 expand, then AND the two
+    // 64-byte vectors.
+    // -----------------------------------------------------------------
     const size_t avx_regions = total_words / words_per_reg;
-    size_t a_l2_off = 0, b_l2_off = 0;
-    size_t a_l3_lit_off = 0, b_l3_lit_off = 0;
-    const uint8_t* a_l4 = l4_bits_.data();
-    const uint8_t* b_l4 = other.l4_bits_.data();
-    const uint8_t* a_l3_lits = l3_literals_.data();
-    const uint8_t* b_l3_lits = other.l3_literals_.data();
-    const uint8_t a_l3_fill = l3_fill_ones_ ? 0xFF : 0x00;
-    const uint8_t b_l3_fill = other.l3_fill_ones_ ? 0xFF : 0x00;
+    const size_t batch_count = (avx_regions + 63) / 64;
 
-    const __m512i fill_a_vec = l1_fill_ones_
-        ? _mm512_set1_epi8(static_cast<char>(-1))
-        : _mm512_setzero_si512();
-    const __m512i fill_b_vec = other.l1_fill_ones_
-        ? _mm512_set1_epi8(static_cast<char>(-1))
-        : _mm512_setzero_si512();
-
-    // L2 fill vectors for L3 expand (l2_fill_ones_ => 0xFF, else 0x00)
-    const __m512i l2_fill_a_vec = l2_fill_ones_
-        ? _mm512_set1_epi8(static_cast<char>(-1))
-        : _mm512_setzero_si512();
-    const __m512i l2_fill_b_vec = other.l2_fill_ones_
-        ? _mm512_set1_epi8(static_cast<char>(-1))
-        : _mm512_setzero_si512();
+    // Per-side state via ComBitBtv::SideCtx (defined in combit.h, shared
+    // with or.cpp / xor.cpp).  Factory call uses `this->` / `other.` style
+    // so the symmetry of the two paths is visible inline; A/B identifiers
+    // are kept as readable aliases.
+    SideCtx A = this->make_side(a_l1);
+    SideCtx B = other.make_side(b_l1);
 
     // Prefetch distance: 2 regions ahead (128 bytes).  L1 offsets are
-    // data-dependent (via popcount), so we approximate with +128.  This
-    // hides memory latency for the sequential L1 literal stream.
+    // data-dependent (via popcount), so we approximate with +PF_DIST.
+    // This hides memory latency for the sequential L1 literal stream.
     static constexpr size_t PF_DIST = 256;
 
     uint8_t* result_l2 = result.l2_flat_.data();
 
-    // --- Bypass: AND zero-region skip ---
-    // AND: 0 & x = 0, so if EITHER region is all-zero, result is zero.
-    // When fills are zero, L3 bit=0 => entire 64-word region is zero.
-    // Per-side bypass: if that side's fills are zero, L3=0 means all-zero.
-    const bool a_zero_fill = !l1_fill_ones_ && !l2_fill_ones_;
-    const bool b_zero_fill = !other.l1_fill_ones_ && !other.l2_fill_ones_;
+    // -----------------------------------------------------------------
+    // Bypass classification (AND-specific, "zero wins"):
+    //
+    //   A side is region-zero iff (l1_fill=0 AND l2_fill=0 AND l3_fill=0):
+    //   every L2 byte in the region is 0 (literal-zero or fill-zero),
+    //   and every L1 byte gated by those L2 bits is fill-zero.
+    //
+    //   `zero_when_l3_zero[X]` is the side-wide predicate; the L3 byte
+    //   then drives the per-region decision.
+    //
+    // Result region is all-zero iff EITHER side is region-zero, so we
+    // only need to advance the OTHER side's L2/L1 cursors.
+    // -----------------------------------------------------------------
+    const bool a_zero_when_l3_zero = !A.l1_fill_ones && !A.l2_fill_ones;
+    const bool b_zero_when_l3_zero = !B.l1_fill_ones && !B.l2_fill_ones;
+    // Region "implicit all-1s" when l3==0: l2_fill=0 (no L1 literals) AND
+    // l1_fill=1 (all 64 words = 0xFF).  AND: a_is_ones => result = B
+    // (B's L2/L1 still need full expansion since they're the output).
+    const bool a_ones_when_l3_zero = !A.l2_fill_ones && A.l1_fill_ones;
+    const bool b_ones_when_l3_zero = !B.l2_fill_ones && B.l1_fill_ones;
 
-    // Batch-decode 64 L3 bytes per side via SIMD expand-load.  Mirrors
-    // operator&= and for_each_literal: read 8 L4 bytes, expand to 64 L3
-    // bytes, process regions from a stack buffer.  Bulk-skip a 64-region
-    // batch when either side is zero-fill and its L3 chunk is all-zero.
-    const __m512i a_l3_fill_vec = _mm512_set1_epi8(static_cast<char>(a_l3_fill));
-    const __m512i b_l3_fill_vec = _mm512_set1_epi8(static_cast<char>(b_l3_fill));
+    // Structurally zero: a side's L4=0 implies 512 zero words.  Used
+    // for the batch-level fast skip below (mirrors operator&='s
+    // b_clear_skip but symmetric on A/B).
+    const bool a_struct_zero = a_zero_when_l3_zero && !A.l3_fill_ones;
+    const bool b_struct_zero = b_zero_when_l3_zero && !B.l3_fill_ones;
 
-    const size_t batch_count = (avx_regions + 63) / 64;
     for (size_t batch = 0; batch < batch_count; batch++) {
         const size_t batch_start = batch * 64;
         const size_t batch_end   = std::min(batch_start + 64, avx_regions);
         const size_t batch_size  = batch_end - batch_start;
 
+        // ---- L4 -> L3 expand (per side, 64 L3 bytes from 8 L4 bytes) ----
         uint64_t a_l4_mask = 0, b_l4_mask = 0;
-        std::memcpy(&a_l4_mask, a_l4 + batch_start / 8, (batch_size + 7) / 8);
-        std::memcpy(&b_l4_mask, b_l4 + batch_start / 8, (batch_size + 7) / 8);
+        std::memcpy(&a_l4_mask, A.l4_bits + batch_start / 8, (batch_size + 7) / 8);
+        std::memcpy(&b_l4_mask, B.l4_bits + batch_start / 8, (batch_size + 7) / 8);
         if (batch_size < 64) {
-            uint64_t valid = (uint64_t(1) << batch_size) - 1;
+            const uint64_t valid = (uint64_t(1) << batch_size) - 1;
             a_l4_mask &= valid;
             b_l4_mask &= valid;
         }
 
-        __m512i l3a_chunk = _mm512_mask_expandloadu_epi8(a_l3_fill_vec,
-            static_cast<__mmask64>(a_l4_mask), a_l3_lits + a_l3_lit_off);
-        __m512i l3b_chunk = _mm512_mask_expandloadu_epi8(b_l3_fill_vec,
-            static_cast<__mmask64>(b_l4_mask), b_l3_lits + b_l3_lit_off);
-        a_l3_lit_off += __builtin_popcountll(a_l4_mask);
-        b_l3_lit_off += __builtin_popcountll(b_l4_mask);
+        // ---- Batch-level fast skip (L4 bypass) ----
+        // If EITHER side is structurally zero AND its L4 batch is empty,
+        // all 64 regions of that side are zero -> result batch is all
+        // zero.  We skip the L3->L2->L1 cascade for this batch; the
+        // non-zero side (if any) still needs its L2/L1 cursors advanced
+        // past the 64 regions, which is just an L3 expand + per-region
+        // advance_side (no L2->L1 expand, no AND, no store).
+        //
+        // Zero-side cursors don't move: popcount(l4_mask)==0 (so no L3
+        // literal consumed) and every l3 byte is 0 (so no L2/L1 either).
+        const bool a_batch_zero = a_struct_zero && a_l4_mask == 0;
+        const bool b_batch_zero = b_struct_zero && b_l4_mask == 0;
+        if (a_batch_zero || b_batch_zero) {
+            if (!a_batch_zero) {
+                __m512i l3a_chunk = _mm512_mask_expandloadu_epi8(A.l3_fill_vec,
+                    static_cast<__mmask64>(a_l4_mask), A.l3_lits + A.l3_lit_off);
+                A.l3_lit_off += __builtin_popcountll(a_l4_mask);
+                alignas(64) uint8_t l3a_buf[64];
+                _mm512_store_si512(reinterpret_cast<__m512i*>(l3a_buf), l3a_chunk);
+                for (size_t r = 0; r < batch_size; r++)
+                    advance_side(A, l3a_buf[r]);
+            }
+            if (!b_batch_zero) {
+                __m512i l3b_chunk = _mm512_mask_expandloadu_epi8(B.l3_fill_vec,
+                    static_cast<__mmask64>(b_l4_mask), B.l3_lits + B.l3_lit_off);
+                B.l3_lit_off += __builtin_popcountll(b_l4_mask);
+                alignas(64) uint8_t l3b_buf[64];
+                _mm512_store_si512(reinterpret_cast<__m512i*>(l3b_buf), l3b_chunk);
+                for (size_t r = 0; r < batch_size; r++)
+                    advance_side(B, l3b_buf[r]);
+            }
+            if (!compress) {
+                std::memset(r_l1 + r_off, 0, batch_size * 64);
+                r_off += batch_size * 64;
+            }
+            // compress: result.l2_flat_[batch_start..+8] already 0.
+            continue;
+        }
+
+        __m512i l3a_chunk = _mm512_mask_expandloadu_epi8(A.l3_fill_vec,
+            static_cast<__mmask64>(a_l4_mask), A.l3_lits + A.l3_lit_off);
+        __m512i l3b_chunk = _mm512_mask_expandloadu_epi8(B.l3_fill_vec,
+            static_cast<__mmask64>(b_l4_mask), B.l3_lits + B.l3_lit_off);
+        A.l3_lit_off += __builtin_popcountll(a_l4_mask);
+        B.l3_lit_off += __builtin_popcountll(b_l4_mask);
 
         alignas(64) uint8_t l3a_buf[64], l3b_buf[64];
         _mm512_store_si512(reinterpret_cast<__m512i*>(l3a_buf), l3a_chunk);
         _mm512_store_si512(reinterpret_cast<__m512i*>(l3b_buf), l3b_chunk);
 
+        // ---- Per-region loop (64 words per region) ----
         for (size_t r = 0; r < batch_size; r++) {
-            const size_t region = batch_start + r;
-            const uint8_t l3a = l3a_buf[r];
-            const uint8_t l3b = l3b_buf[r];
+            const size_t  region = batch_start + r;
+            const uint8_t l3a    = l3a_buf[r];
+            const uint8_t l3b    = l3b_buf[r];
 
-            // Bypass: either region is all-zero => a & 0 = 0
-            if ((a_zero_fill && l3a == 0) || (b_zero_fill && l3b == 0)) {
-                // Zero-fill side with l3==0: all L2 are fill=0, all L1 are
-                // fill=0 — no literals, so offsets are unchanged.  Only
-                // advance the non-bypassed side.
-                if (!a_zero_fill || l3a != 0) {
-                    __m512i l2a_v = _mm512_mask_expandloadu_epi8(l2_fill_a_vec,
-                        static_cast<__mmask64>(l3a), l2_literals_.data() + a_l2_off);
-                    a_l2_off += __builtin_popcount(l3a);
-                    __mmask64 ma = static_cast<__mmask64>(
-                        _mm_cvtsi128_si64(_mm512_castsi512_si128(l2a_v)));
-                    a_l1_off += __builtin_popcountll(static_cast<uint64_t>(ma));
-                }
-                if (!b_zero_fill || l3b != 0) {
-                    __m512i l2b_v = _mm512_mask_expandloadu_epi8(l2_fill_b_vec,
-                        static_cast<__mmask64>(l3b), other.l2_literals_.data() + b_l2_off);
-                    b_l2_off += __builtin_popcount(l3b);
-                    __mmask64 mb = static_cast<__mmask64>(
-                        _mm_cvtsi128_si64(_mm512_castsi512_si128(l2b_v)));
-                    b_l1_off += __builtin_popcountll(static_cast<uint64_t>(mb));
-                }
-                if (!compress) {
+            // ---- Bypass: a region of zeros on either side wins ----
+            const bool a_is_zero = a_zero_when_l3_zero && l3a == 0;
+            const bool b_is_zero = b_zero_when_l3_zero && l3b == 0;
+            if (a_is_zero || b_is_zero) {
+                // Only the non-zero side has literals to skip over;
+                // a region-zero side has no L2/L1 literals to advance past.
+                if (!a_is_zero) advance_side(A, l3a);
+                if (!b_is_zero) advance_side(B, l3b);
+                if (compress) {
+                    // l2_flat_[region*8 .. +7] already zero-initialized.
+                } else {
                     _mm512_storeu_si512(r_l1 + r_off, _mm512_setzero_si512());
                     r_off += 64;
                 }
                 continue;
             }
 
-            _mm_prefetch(reinterpret_cast<const char*>(a_l1 + a_l1_off + PF_DIST), _MM_HINT_T0);
-            _mm_prefetch(reinterpret_cast<const char*>(b_l1 + b_l1_off + PF_DIST), _MM_HINT_T0);
+            // ---- Bypass: 1 & x = x (ones side passes the other through) ----
+            // a_is_ones / b_is_ones cannot co-occur with a_is_zero / b_is_zero
+            // for the same side (mutually exclusive on l1_fill_ones flag).
+            // These branches are dead in our sparse-1 benchmarks
+            // (l1_fill_ones=false), so branch predictor handles trivially.
+            const bool a_is_ones = a_ones_when_l3_zero && l3a == 0;
+            const bool b_is_ones = b_ones_when_l3_zero && l3b == 0;
+            if (a_is_ones && b_is_ones) {
+                // both all-1s: result = all-1s, no cursors to advance
+                if (compress) {
+                    std::memset(r_l1 + r_off, 0xFF, 64);
+                    std::memset(result_l2 + region * 8, 0xFF, 8);
+                    r_off += 64;
+                } else {
+                    _mm512_storeu_si512(r_l1 + r_off,
+                        _mm512_set1_epi8(static_cast<char>(-1)));
+                    r_off += 64;
+                }
+                continue;
+            }
+            if (a_is_ones) {
+                // 1 & B = B: expand B only and write it directly
+                __m512i l2b_v = _mm512_mask_expandloadu_epi8(B.l2_fill_vec,
+                    static_cast<__mmask64>(l3b), B.l2_lits + B.l2_lit_off);
+                B.l2_lit_off += __builtin_popcount(l3b);
+                __mmask64 mb = static_cast<__mmask64>(
+                    _mm_cvtsi128_si64(_mm512_castsi512_si128(l2b_v)));
+                __m512i vb = _mm512_mask_expandloadu_epi8(B.l1_fill_vec, mb,
+                    B.l1_lits + B.l1_lit_off);
+                B.l1_lit_off += __builtin_popcountll(static_cast<uint64_t>(mb));
+                if (compress) {
+                    __mmask64 lit_mask = _mm512_test_epi8_mask(vb, vb);
+                    uint64_t mask_val = static_cast<uint64_t>(lit_mask);
+                    std::memcpy(result_l2 + region * 8, &mask_val, 8);
+                    _mm512_mask_compressstoreu_epi8(r_l1 + r_off, lit_mask, vb);
+                    r_off += __builtin_popcountll(mask_val);
+                } else {
+                    _mm512_storeu_si512(r_l1 + r_off, vb);
+                    r_off += 64;
+                }
+                continue;
+            }
+            if (b_is_ones) {
+                // A & 1 = A: expand A only
+                __m512i l2a_v = _mm512_mask_expandloadu_epi8(A.l2_fill_vec,
+                    static_cast<__mmask64>(l3a), A.l2_lits + A.l2_lit_off);
+                A.l2_lit_off += __builtin_popcount(l3a);
+                __mmask64 ma = static_cast<__mmask64>(
+                    _mm_cvtsi128_si64(_mm512_castsi512_si128(l2a_v)));
+                __m512i va = _mm512_mask_expandloadu_epi8(A.l1_fill_vec, ma,
+                    A.l1_lits + A.l1_lit_off);
+                A.l1_lit_off += __builtin_popcountll(static_cast<uint64_t>(ma));
+                if (compress) {
+                    __mmask64 lit_mask = _mm512_test_epi8_mask(va, va);
+                    uint64_t mask_val = static_cast<uint64_t>(lit_mask);
+                    std::memcpy(result_l2 + region * 8, &mask_val, 8);
+                    _mm512_mask_compressstoreu_epi8(r_l1 + r_off, lit_mask, va);
+                    r_off += __builtin_popcountll(mask_val);
+                } else {
+                    _mm512_storeu_si512(r_l1 + r_off, va);
+                    r_off += 64;
+                }
+                continue;
+            }
+
+            _mm_prefetch(reinterpret_cast<const char*>(A.l1_lits + A.l1_lit_off + PF_DIST), _MM_HINT_T0);
+            _mm_prefetch(reinterpret_cast<const char*>(B.l1_lits + B.l1_lit_off + PF_DIST), _MM_HINT_T0);
             _mm_prefetch(reinterpret_cast<char*>(r_l1 + r_off + PF_DIST), _MM_HINT_T0);
 
-            __m512i l2a_v = _mm512_mask_expandloadu_epi8(l2_fill_a_vec,
-                static_cast<__mmask64>(l3a), l2_literals_.data() + a_l2_off);
-            a_l2_off += __builtin_popcount(l3a);
-            __mmask64 ma = static_cast<__mmask64>(
+            // ---- L3 -> L2 expand (per side) ----
+            __m512i l2a_v = _mm512_mask_expandloadu_epi8(A.l2_fill_vec,
+                static_cast<__mmask64>(l3a), A.l2_lits + A.l2_lit_off);
+            A.l2_lit_off += __builtin_popcount(l3a);
+            const __mmask64 ma = static_cast<__mmask64>(
                 _mm_cvtsi128_si64(_mm512_castsi512_si128(l2a_v)));
 
-            __m512i l2b_v = _mm512_mask_expandloadu_epi8(l2_fill_b_vec,
-                static_cast<__mmask64>(l3b), other.l2_literals_.data() + b_l2_off);
-            b_l2_off += __builtin_popcount(l3b);
-            __mmask64 mb = static_cast<__mmask64>(
+            __m512i l2b_v = _mm512_mask_expandloadu_epi8(B.l2_fill_vec,
+                static_cast<__mmask64>(l3b), B.l2_lits + B.l2_lit_off);
+            B.l2_lit_off += __builtin_popcount(l3b);
+            const __mmask64 mb = static_cast<__mmask64>(
                 _mm_cvtsi128_si64(_mm512_castsi512_si128(l2b_v)));
 
-            __m512i va = _mm512_mask_expandloadu_epi8(fill_a_vec, ma, a_l1 + a_l1_off);
-            a_l1_off += __builtin_popcountll(static_cast<uint64_t>(ma));
-
-            __m512i vb = _mm512_mask_expandloadu_epi8(fill_b_vec, mb, b_l1 + b_l1_off);
-            b_l1_off += __builtin_popcountll(static_cast<uint64_t>(mb));
-
+            // ---- L2 -> L1 expand (per side), then AND ----
+            __m512i va = _mm512_mask_expandloadu_epi8(A.l1_fill_vec, ma, A.l1_lits + A.l1_lit_off);
+            A.l1_lit_off += __builtin_popcountll(static_cast<uint64_t>(ma));
+            __m512i vb = _mm512_mask_expandloadu_epi8(B.l1_fill_vec, mb, B.l1_lits + B.l1_lit_off);
+            B.l1_lit_off += __builtin_popcountll(static_cast<uint64_t>(mb));
             __m512i vr = _mm512_and_si512(va, vb);
+
+            // ---- Store ----
             if (compress) {
-                __mmask64 lit_mask = _mm512_test_epi8_mask(vr, vr);
-                uint64_t mask_val = static_cast<uint64_t>(lit_mask);
+                const __mmask64 lit_mask = _mm512_test_epi8_mask(vr, vr);
+                const uint64_t  mask_val = static_cast<uint64_t>(lit_mask);
                 std::memcpy(result_l2 + region * 8, &mask_val, 8);
                 _mm512_mask_compressstoreu_epi8(r_l1 + r_off, lit_mask, vr);
                 r_off += __builtin_popcountll(mask_val);
@@ -199,21 +299,23 @@ ComBitBtv::operator&(const ComBitBtv& other) const {
 
     // === Scalar tail: process remaining words without expand_l2() ===
     if (avx_regions * words_per_reg < total_words) {
-        const uint8_t l1_fill_a = l1_fill_ones_ ? 0xFF : 0x00;
-        const uint8_t l1_fill_b = other.l1_fill_ones_ ? 0xFF : 0x00;
-        const uint8_t l2_fill_a = l2_fill_ones_ ? 0xFF : 0x00;
-        const uint8_t l2_fill_b = other.l2_fill_ones_ ? 0xFF : 0x00;
-        bool a_l4_lit = (a_l4[avx_regions / 8] >> (avx_regions % 8)) & 1;
-        bool b_l4_lit = (b_l4[avx_regions / 8] >> (avx_regions % 8)) & 1;
-        uint8_t l3a = a_l4_lit ? a_l3_lits[a_l3_lit_off++] : a_l3_fill;
-        uint8_t l3b = b_l4_lit ? b_l3_lits[b_l3_lit_off++] : b_l3_fill;
+        const uint8_t a_l3_fill = A.l3_fill_ones ? 0xFF : 0x00;
+        const uint8_t b_l3_fill = B.l3_fill_ones ? 0xFF : 0x00;
+        const uint8_t l1_fill_a = A.l1_fill_ones ? 0xFF : 0x00;
+        const uint8_t l1_fill_b = B.l1_fill_ones ? 0xFF : 0x00;
+        const uint8_t l2_fill_a = A.l2_fill_ones ? 0xFF : 0x00;
+        const uint8_t l2_fill_b = B.l2_fill_ones ? 0xFF : 0x00;
+        bool a_l4_lit = (A.l4_bits[avx_regions / 8] >> (avx_regions % 8)) & 1;
+        bool b_l4_lit = (B.l4_bits[avx_regions / 8] >> (avx_regions % 8)) & 1;
+        uint8_t l3a = a_l4_lit ? A.l3_lits[A.l3_lit_off++] : a_l3_fill;
+        uint8_t l3b = b_l4_lit ? B.l3_lits[B.l3_lit_off++] : b_l3_fill;
         size_t pos = avx_regions * words_per_reg;
         for (int l2i = 0; pos < total_words; l2i++) {
-            uint8_t l2a = ((l3a >> l2i) & 1) ? l2_literals_[a_l2_off++] : l2_fill_a;
-            uint8_t l2b = ((l3b >> l2i) & 1) ? other.l2_literals_[b_l2_off++] : l2_fill_b;
+            uint8_t l2a = ((l3a >> l2i) & 1) ? A.l2_lits[A.l2_lit_off++] : l2_fill_a;
+            uint8_t l2b = ((l3b >> l2i) & 1) ? B.l2_lits[B.l2_lit_off++] : l2_fill_b;
             for (int bit = 0; bit < 8 && pos < total_words; bit++, pos++) {
-                uint8_t wa = ((l2a >> bit) & 1) ? a_l1[a_l1_off++] : l1_fill_a;
-                uint8_t wb = ((l2b >> bit) & 1) ? b_l1[b_l1_off++] : l1_fill_b;
+                uint8_t wa = ((l2a >> bit) & 1) ? A.l1_lits[A.l1_lit_off++] : l1_fill_a;
+                uint8_t wb = ((l2b >> bit) & 1) ? B.l1_lits[B.l1_lit_off++] : l1_fill_b;
                 uint8_t vr = wa & wb;
                 if (compress) {
                     if (vr != 0x00) {
@@ -239,6 +341,7 @@ ComBitBtv::operator&(const ComBitBtv& other) const {
 
     // === Scalar fallback (no AVX-512) ===
     {
+        size_t a_l1_off = 0, b_l1_off = 0;
         auto l2_a = expand_l2();
         auto l2_b = other.expand_l2();
 

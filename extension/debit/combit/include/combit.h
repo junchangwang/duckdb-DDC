@@ -15,363 +15,245 @@
 #include <immintrin.h>
 #endif
 
-/// When true, bitwise operators (AND, OR, XOR) produce compressed
-/// result bitvectors directly (region-by-region).  When false (the
-/// default), results are returned fully expanded (all words as
-/// literals) for maximum throughput.
 extern bool combit_compress_results;
 
-///
-/// ComBitBtv: A fixed-length bitvector segment compressed with a
-/// four-level structure:
-///
-///   L1 – literal data: word_size-bit words of the original bitvector
-///         (only non-fill words are stored, packed as raw bytes).
-///   L2 – leading bitstring for L1: one bit per word of the original
-///         bitvector (0 = fill, 1 = literal).  Stored as a packed byte
-///         array; only non-zero bytes are kept when the L3 layer is
-///         active.
-///   L3 – leading bitstring for L2: one bit per 8-bit chunk of L2
-///         (i.e. per group of 64 original words).
-///         0 = the L2 byte is all-zero (entire 64-word region is fills),
-///         1 = the L2 byte is a literal and stored in l2_literals_.
-///         Compressed via L4: only non-fill L3 bytes are stored in
-///         l3_literals_; expand_l3() reconstructs the dense form.
-///   L4 – leading bitstring for L3: one bit per L3 byte
-///         (i.e. per group of 512 original words).
-///         0 = the L3 byte equals the chosen L3 fill value,
-///         1 = the L3 byte is a literal and stored in l3_literals_.
-///
-/// Word size is fixed at 8 bits (1 byte per L1 word).
-///
-/// l1_fill_ones / l2_fill_ones_ / l3_fill_ones_ are the per-level fill
-/// polarities; chosen at compress() time to minimise stored literals.
-///
+// ComBitBtv: 4-level segment (L1 literal words / L2 word-marker bits /
+// L3 byte-marker bits / L4 top-marker bits).  word_size = 8.
 class ComBitBtv {
 public:
     static constexpr unsigned word_size = 8;
     static constexpr size_t word_byte_size = 1;
-    static constexpr size_t words_per_reg = 64;             // 512 / 8
-    static constexpr size_t l2_bits_per_l3_bit = 8;         // 8 L2 bits per L3 bit
-    static constexpr size_t words_per_l3_bit = 64;          // 8 * 8
-    static constexpr size_t default_segment_bits = 1 << 16; // 65536
+    static constexpr size_t words_per_reg = 64;
+    static constexpr size_t default_segment_bits = 1 << 16;
 
-    /// Encoding state of a ComBitBtv segment.
-    ///   Uncompressed  – plain bitvector: only L1 holds raw 8-bit words;
-    ///                    L2 and L3 are empty / unused.
-    ///   Compressed    – full three-level encoding with meaningful L2/L3.
-    ///   Decompressed  – operator result: L1 holds all words; L2 is
-    ///                    logically all-ones (l2_fill_ones_=true, L3
-    ///                    all-zeros, l2_literal_count_=0).
     enum class State { Uncompressed, Compressed, Decompressed };
 
     struct SizeBreakdown {
-        size_t l3_bits;            // L3 logical bits (= l3_count_)
-        size_t l4_bits;            // L4 leading bits (= l4_count_)
-        size_t l3_literal_bits;    // L3 stored literal bytes * 8
-        size_t l2_literal_bits;    // L2 stored literal bytes * 8
-        size_t l1_literal_bits;    // L1 stored literal bytes * 8
-        size_t total_bits;         // L4 + L3_lit + L2_lit + L1_lit
+        size_t l3_bits;
+        size_t l4_bits;
+        size_t l3_literal_bits;
+        size_t l2_literal_bits;
+        size_t l1_literal_bits;
+        size_t total_bits;
     };
 
-    explicit ComBitBtv(bool l1_fill_ones = false,
-                       bool l2_fill_ones = false,
-                       State state = State::Compressed);
+    explicit ComBitBtv(bool l1_fill_ones = false, bool l2_fill_ones = false, State state = State::Compressed);
 
-    // ----------------------------------------------------------------
-    // Compression / Decompression
-    // ----------------------------------------------------------------
-
-    static ComBitBtv compress(const std::vector<bool>& bits,
-                              bool l1_fill_ones = false);
-    // Sparse fast path: build a segment from a sorted list of set positions.
-    // O(positions.size() + seg_bits / 64) instead of O(seg_bits).
-    // Pre: positions sorted ascending, all values < seg_bits, no duplicates.
-    // l1_fill_ones=false only (sparse case); falls back to compress() if true.
-    static ComBitBtv compress_sparse_segment(
-        const std::vector<uint16_t>& sorted_positions,
-        size_t seg_bits,
-        bool l1_fill_ones = false);
+    // compress / decompress
+    static ComBitBtv compress(const std::vector<bool>& bits, bool l1_fill_ones = false);
+    static ComBitBtv compress_sparse_segment(const std::vector<uint16_t>& sorted_positions, size_t seg_bits, bool l1_fill_ones = false);
     std::vector<bool> decompress() const;
-
-    // ----------------------------------------------------------------
-    // Convenience constructors
-    // ----------------------------------------------------------------
 
     static ComBitBtv from_string(const std::string& bitstring, bool l1_fill_ones = false);
     std::string to_string() const;
 
-    // ----------------------------------------------------------------
-    // Bitwise operations
-    // ----------------------------------------------------------------
-
+    // operators
     ComBitBtv operator&(const ComBitBtv& other) const;
     ComBitBtv operator|(const ComBitBtv& other) const;
     ComBitBtv operator^(const ComBitBtv& other) const;
     ComBitBtv operator~() const;
-
-    // In-place compound assignment (avoids allocation when accumulator
-    // is already fully expanded, i.e. after the first operator| / &).
     ComBitBtv& operator|=(const ComBitBtv& other);
     ComBitBtv& operator&=(const ComBitBtv& other);
     ComBitBtv& operator^=(const ComBitBtv& other);
+    // In-place bit complement.  Skips the marker traversal (L4/L3/L2 are
+    // invariant under NOT — see not.cpp header) and only flips the L1
+    // literal byte stream + the l1_fill_ones_ flag.
+    ComBitBtv& negate_inplace();
 
-    // ----------------------------------------------------------------
-    // Post-operation compression
-    // ----------------------------------------------------------------
-
-    /// Compress a fully-expanded segment in-place: compact L1 (remove
-    /// zero words), rebuild L2 from scratch, apply L3 compression.
-    /// No-op if the segment is already compressed.
-    void compact_expanded();
-
-    // ----------------------------------------------------------------
-    // Queries
-    // ----------------------------------------------------------------
-
+    // queries
     size_t popcount() const;
     std::vector<size_t> set_bit_positions() const;
-
-    // Set a single bit at `pos_in_segment` in this segment's L1 byte
-    // array.  Pre: state_ == State::Decompressed, l1_literals_ already
-    // sized to l2_count_ bytes (i.e. the canonical Decompressed layout
-    // produced by ComBit::from_sparse_positions({}) seed segments).
-    // Used by SparseComBit's ultra-sparse fast path to scatter raw
-    // positions directly into a Decompressed-zero result without going
-    // through the L1/L2/L3/L4 hierarchy.
     void set_bit_decompressed(uint32_t pos_in_segment) {
         l1_literals_[pos_in_segment >> 3] |= (uint8_t)(0x80 >> (pos_in_segment & 7));
     }
-
-    /// Fused AND + popcount: returns popcount(*this & other) without
-    /// materialising the intersection.  Mirrors CRoaring's
-    /// `and_cardinality`, EWAH's `logicalandcount`, ibis::bitvector's
-    /// `count(mask)`, and Concise's `logicalandCount` so that ComBit
-    /// competes on equal API footing in queries that group-count many
-    /// AND results (e.g. TPC-H Q4's per-priority counts).
-    /// Requires `*this` to be Decompressed (canonical post-operator
-    /// state); `other` may be Compressed or Decompressed.
     size_t popcount_and(const ComBitBtv& other) const;
 
-    // ----------------------------------------------------------------
-    // Size / statistics
-    // ----------------------------------------------------------------
-
+    // sizes
     SizeBreakdown size_breakdown() const;
     size_t compressed_size_bits()  const { return size_breakdown().total_bits; }
     size_t compressed_size_bytes() const { return (compressed_size_bits() + 7) / 8; }
     size_t original_size_bits()    const { return bit_count_; }
     double compression_ratio() const;
 
-    // ----------------------------------------------------------------
-    // Accessors
-    // ----------------------------------------------------------------
+    // accessors
+    bool   l1_fill_ones() const { return l1_fill_ones_; }
+    bool   l2_fill_ones() const { return l2_fill_ones_; }
+    bool   l3_fill_ones() const { return l3_fill_ones_; }
+    State  state()        const { return state_; }
+    size_t l2_count()     const { return l2_count_; }
+    size_t l3_count()     const { return l3_count_; }
+    size_t l4_count()     const { return l4_count_; }
+    size_t bit_count()    const { return bit_count_; }
+    size_t num_fills()    const;
+    size_t num_literals() const { return l1_literal_count_; }
+    size_t l2_literal_count() const { return l2_literal_count_; }
+    size_t l3_literal_count() const { return l3_literal_count_; }
 
-    bool                          l1_fill_ones()       const { return l1_fill_ones_; }
-    bool                          l2_fill_ones()   const { return l2_fill_ones_; }
-    State                         state()          const { return state_; }
-    size_t                        l2_count()           const { return l2_count_; }
-    size_t                        l3_count()           const { return l3_count_; }
-    size_t                        bit_count()          const { return bit_count_; }
-    size_t num_fills() const;
-    size_t num_literals()  const { return l1_literal_count_; }
-
-    // Logical all-fill predicates: num_literals==0 implies !l2_fill_ones_
-    // (the fill choice in compact_l2_l3 minimizes stored literals).
     bool is_all_zero() const { return l1_literal_count_ == 0 && !l1_fill_ones_; }
     bool is_all_ones() const { return l1_literal_count_ == 0 &&  l1_fill_ones_; }
 
-    // Factory for an all-fill Compressed segment (no scratch buffers).
-    static ComBitBtv make_all_fill(size_t bit_count, size_t l2_count,
-                                   bool l1_fill_ones);
-
-    // Build a Decompressed-zero segment ready for in-place scatter:
-    // l1_literals_ is allocated to l2_count zero bytes, state =
-    // Decompressed (l2_fill_ones canonical), l3/l4 left empty.
-    // Used by ComBit::from_sparse_positions({}) for the OR-accumulator
-    // seed and by SparseComBit::or_many (ultra-sparse fast path) so
-    // that set_bit_decompressed can poke l1_literals_ without going
-    // through the Compressed→Decompressed upgrade path.
+    static ComBitBtv make_all_fill(size_t bit_count, size_t l2_count, bool l1_fill_ones);
     static ComBitBtv make_decompressed_zero(size_t bit_count, size_t l2_count);
 
-    // Raw data access (used by bitwise operators).  In Compressed state
-    // the canonical L3 bytes live in l4_bits_/l3_literals_; call
-    // expand_l3() to materialise the dense l3_bits_ flat byte stream.
-    const uint8_t* l4_data()         const { return l4_bits_.data(); }
-    const uint8_t* l3_literal_data() const { return l3_literals_.data(); }
+    const uint8_t* l1_literal_data() const { return l1_literals_.data(); }
     const uint8_t* l2_flat_data()    const { return l2_flat_.data(); }
     const uint8_t* l2_literal_data() const { return l2_literals_.data(); }
-    const uint8_t* l1_literal_data() const { return l1_literals_.data(); }
-    size_t         l2_literal_count() const { return l2_literal_count_; }
-    size_t         l3_literal_count() const { return l3_literal_count_; }
-    size_t         l4_count()         const { return l4_count_; }
-    bool           l3_fill_ones()     const { return l3_fill_ones_; }
+    const uint8_t* l3_literal_data() const { return l3_literals_.data(); }
+    const uint8_t* l4_data()         const { return l4_bits_.data(); }
 
     uint64_t get_literal(size_t idx) const;
 
-    // ----------------------------------------------------------------
-    // Serialization
-    // ----------------------------------------------------------------
+#ifdef __AVX512VBMI2__
+    // Per-side traversal state for the L4 -> L3 -> L2 -> L1 cascade in the
+    // binary AND/OR/XOR operators.  Bundling the per-side pointers, fills
+    // and cursors keeps the A/B paths visibly symmetric in the operator
+    // body.  Shared across and.cpp / or.cpp / xor.cpp.
+    struct SideCtx {
+        const uint8_t* l4_bits;       // L4 bits (1 bit per L3 byte)
+        const uint8_t* l3_lits;       // L3 literal stream (gated by L4)
+        const uint8_t* l2_lits;       // L2 literal stream (gated by L3)
+        const uint8_t* l1_lits;       // L1 literal stream (gated by L2)
+        bool           l3_fill_ones;  // L3 fill = 0xFF when L4 bit = 0
+        bool           l2_fill_ones;  // L2 fill = 0xFF when L3 bit = 0
+        bool           l1_fill_ones;  // L1 fill = 0xFF when L2 bit = 0
+        __m512i        l3_fill_vec;
+        __m512i        l2_fill_vec;
+        __m512i        l1_fill_vec;
+        size_t         l3_lit_off;    // cursor into l3_lits
+        size_t         l2_lit_off;    // cursor into l2_lits
+        size_t         l1_lit_off;    // cursor into l1_lits
+    };
 
+    // Build a SideCtx pointing at this segment's L4/L3/L2 buffers and the
+    // caller-provided L1 buffer (callers load `l1_literals_.data()` once
+    // up-front so they can pass it here).  Cursors start at 0.
+    //
+    // Inline so the SideCtx initialization folds into the operator& /
+    // operator| / operator^ entry, rather than going through a function
+    // call (a ~256-byte SideCtx returned by value would otherwise traverse
+    // a hidden sret-pointer ABI — measured ~5% overhead vs inlined).
+    inline SideCtx make_side(const uint8_t* l1_data) const {
+        SideCtx c{};
+        c.l4_bits      = l4_bits_.data();
+        c.l3_lits      = l3_literals_.data();
+        c.l2_lits      = l2_literals_.data();
+        c.l1_lits      = l1_data;
+        c.l3_fill_ones = l3_fill_ones_;
+        c.l2_fill_ones = l2_fill_ones_;
+        c.l1_fill_ones = l1_fill_ones_;
+        c.l3_fill_vec  = l3_fill_ones_ ? _mm512_set1_epi8(static_cast<char>(-1))
+                                       : _mm512_setzero_si512();
+        c.l2_fill_vec  = l2_fill_ones_ ? _mm512_set1_epi8(static_cast<char>(-1))
+                                       : _mm512_setzero_si512();
+        c.l1_fill_vec  = l1_fill_ones_ ? _mm512_set1_epi8(static_cast<char>(-1))
+                                       : _mm512_setzero_si512();
+        return c;
+    }
+
+    // Skip one region on a side: expand L3 -> L2 mask and advance L2/L1
+    // cursors past the literals gated by those masks.  Used by the
+    // per-region and batch-level bypass paths when the OTHER side is
+    // region-zero (AND's "0 & x = 0", OR's "x | 0 = x", XOR's "x ^ 0 = x").
+    static inline void advance_side(SideCtx& s, uint8_t l3) {
+        __m512i l2v = _mm512_mask_expandloadu_epi8(s.l2_fill_vec,
+            static_cast<__mmask64>(l3), s.l2_lits + s.l2_lit_off);
+        s.l2_lit_off += __builtin_popcount(l3);
+        __mmask64 m = static_cast<__mmask64>(
+            _mm_cvtsi128_si64(_mm512_castsi512_si128(l2v)));
+        s.l1_lit_off += __builtin_popcountll(static_cast<uint64_t>(m));
+    }
+#endif
+
+    // serialize
     void serialize(std::ostream& os) const;
     static ComBitBtv deserialize(std::istream& is);
-
-    // ----------------------------------------------------------------
-    // Debug printing
-    // ----------------------------------------------------------------
 
     void print(std::ostream& os = std::cout) const;
 
 private:
+    // NOTE: this private layout matches the d420973 ordering verbatim.
+    // The "Fix combit.h" rewrite (88b27e0) regrouped these by L1/L2/L3/L4
+    // blocks for readability, but that reordering moved l1_literals_ from
+    // the END of the struct to the L1 group near the front — pushing the
+    // L2/L3/L4 marker buffers (l2_literals_, l3_literals_, l4_bits_) into
+    // later cache lines.  The AND hot path in src/and.cpp loads pointers
+    // to all four of l1_literals_/l2_literals_/l3_literals_/l4_bits_ at
+    // function entry and then prefetches/loads them in tight nested
+    // loops; the new layout caused ~3× extra L1d cache pressure on dense
+    // disjoint AND at c=2 (5.93 ms vs 2.06 ms).  Restoring the original
+    // layout brings AND back to 2.05 ms.
     State                   state_;
-    // When true, L1 fill words are all-ones (0xFF...); otherwise all-zeros.
-    // An L2 bit of 0 means the corresponding L1 word equals this fill value.
     bool                    l1_fill_ones_;
-    // When true, L2 fill bytes are all-ones (0xFF); otherwise all-zeros (0x00).
-    // An L3 bit of 0 means the corresponding L2 byte equals this fill value.
     bool                    l2_fill_ones_;
-    size_t                  bit_count_;            // original bitvector length
-
-    // --- L2: leading bitstring for L1 (1 bit per word) ---
-    // L2 is always compressed via L3/l2_literals_.
-    // l2_flat_ is used only as a scratch buffer during operator computation.
-    size_t                  l2_count_;             // total L2 bits (= num words = bit_count_/ws)
-    std::vector<uint8_t>    l2_flat_;              // scratch buffer for operators
-
-    // --- L3: leading bitstring for L2 (1 bit per 8-bit chunk of L2) ---
-    // L3 is always compressed via L4/l3_literals_.
-    // l3_bits_ is used only as a scratch buffer during operator
-    // computation (mirrors how l2_flat_ relates to L2).
-    size_t                  l3_count_;             // total L3 bits
-    std::vector<uint8_t>    l3_bits_;              // scratch buffer for operators
-    std::vector<uint8_t>    l2_literals_;          // L2 literal bytes (non-zero L2 chunks)
+    size_t                  bit_count_;
+    size_t                  l2_count_;
+    std::vector<uint8_t>    l2_flat_;
+    size_t                  l3_count_;
+    std::vector<uint8_t>    l3_bits_;
+    std::vector<uint8_t>    l2_literals_;
     size_t                  l2_literal_count_;
-
-    // --- L4: leading bitstring for L3 (1 bit per L3 byte) ---
-    // When true, L3 fill bytes are all-ones (0xFF); otherwise all-zeros (0x00).
-    // An L4 bit of 0 means the corresponding L3 byte equals this fill value.
     bool                    l3_fill_ones_;
-    size_t                  l4_count_;             // total L4 bits (= num L3 bytes)
-    std::vector<uint8_t>    l4_bits_;              // packed L4 bytes
-    std::vector<uint8_t>    l3_literals_;          // L3 literal bytes (non-fill L3 chunks)
+    size_t                  l4_count_;
+    std::vector<uint8_t>    l4_bits_;
+    std::vector<uint8_t>    l3_literals_;
     size_t                  l3_literal_count_;
-
-    // --- L1: literal data ---
-    // l1_literals_.size() == l1_literal_count_ (1 byte per word at ws=8).
-    std::vector<uint8_t>    l1_literals_;          // L1 literal word bytes
+    std::vector<uint8_t>    l1_literals_;
     size_t                  l1_literal_count_;
 
-    // Rebuild flat L3 from L4 + L3 literals (for operators / expand_l2)
+    // helpers
     std::vector<uint8_t> expand_l3() const;
-
-    // Rebuild flat L2 from L3 + L2 literals (for decompression / scalar paths)
     std::vector<uint8_t> expand_l2() const;
-
-    // Finalize a compressed result: shrink L1 to actual_l1_count,
-    // then apply L3 compression on L2 and L4 compression on L3.
     void compact_l2_l3(size_t actual_l1_count);
-
-    // Apply L4 compression on the populated l3_bits_ (chooses the fill
-    // value that minimises stored literals), then drops l3_bits_.  Used
-    // by compress() and compact_l2_l3() at the end of compaction.
     void compress_l3_to_l4();
-
-    // Check whether the last word of the segment is a literal (L2 bit set).
-    // Only meaningful when l2_count_ > 0.  Used by operator~ and popcount
-    // to handle padding-bit corrections for the last partial word.
     bool is_last_word_literal() const;
 
     friend class ComBit;
 };
 
-// ====================================================================
-// ComBit: Segmented bitvector composed of ComBitBtv segments
-// ====================================================================
-
-///
-/// ComBit: A segmented compressed bitvector.
-///
-/// The bitvector is partitioned into fixed-length segments (default 2^16
-/// bits each), where each segment is independently compressed as a
-/// ComBitBtv (8-bit word size).
-///
+// ComBit: segmented bitvector of ComBitBtv segments.
 class ComBit {
 public:
     static constexpr size_t default_segment_bits = size_t(1) << 16;
 
     struct SizeBreakdown {
-        size_t l3_bits;            // L3 logical bits (= sum of seg.l3_count_)
-        size_t l4_bits;            // L4 leading bits (= sum of seg.l4_count_)
-        size_t l3_literal_bits;    // L3 stored literal bytes * 8
-        size_t l2_literal_bits;    // L2 stored literal bytes * 8
-        size_t l1_literal_bits;    // L1 stored literal bytes * 8
-        size_t total_bits;         // L4 + L3_lit + L2_lit + L1_lit
+        size_t l3_bits;
+        size_t l4_bits;
+        size_t l3_literal_bits;
+        size_t l2_literal_bits;
+        size_t l1_literal_bits;
+        size_t total_bits;
     };
 
     ComBit() = default;
 
-    // ----------------------------------------------------------------
-    // Compression / Decompression
-    // ----------------------------------------------------------------
-
-    static ComBit compress(const std::vector<bool>& bits,
-                           bool l1_fill_ones = false,
-                           size_t segment_bits = default_segment_bits);
-
-    // Sparse builder: build a bitmap of `num_rows` bits where only the given
-    // positions are set.  Cost is O(positions.size() + segment_bits ×
-    // non-empty-segments) instead of O(num_rows) — critical for value-indexed
-    // bitmaps over high-cardinality columns (e.g. lineitem.l_orderkey at SF10
-    // has 15M values, each producing a bitmap with ~4 set bits in 60M-bit
-    // space; the std-vector<bool> path would scan 60M*15M ≈ 9e14 bits).
-    //
-    // `positions` does NOT need to be sorted; values must be < num_rows.
-    static ComBit from_sparse_positions(const std::vector<uint32_t>& positions,
-                                        size_t num_rows,
-                                        size_t segment_bits = default_segment_bits);
-
+    // compress / decompress
+    static ComBit compress(const std::vector<bool>& bits, bool l1_fill_ones = false, size_t segment_bits = default_segment_bits);
+    static ComBit from_sparse_positions(const std::vector<uint32_t>& positions, size_t num_rows, size_t segment_bits = default_segment_bits);
     std::vector<bool> decompress() const;
 
-    // ----------------------------------------------------------------
-    // Convenience constructors
-    // ----------------------------------------------------------------
-
-    static ComBit from_string(const std::string& bitstring,
-                              bool l1_fill_ones = false,
-                              size_t segment_bits = default_segment_bits);
-
+    static ComBit from_string(const std::string& bitstring, bool l1_fill_ones = false, size_t segment_bits = default_segment_bits);
     std::string to_string() const;
 
-    // ----------------------------------------------------------------
-    // Bitwise operations (segment-wise)
-    // ----------------------------------------------------------------
-
+    // operators
     ComBit operator&(const ComBit& other) const;
     ComBit operator|(const ComBit& other) const;
     ComBit operator^(const ComBit& other) const;
     ComBit operator~() const;
-
     ComBit& operator|=(const ComBit& other);
     ComBit& operator&=(const ComBit& other);
     ComBit& operator^=(const ComBit& other);
+    // In-place bit complement.  Segment-level fast path: all-fill segments
+    // are O(1) (just flip l1_fill_ones); mixed segments delegate to
+    // ComBitBtv::negate_inplace's AVX-512 XOR.
+    ComBit& negate_inplace();
 
     static ComBit OR_many(size_t number, const ComBit** Btvs);
 
-    // ----------------------------------------------------------------
-    // Queries
-    // ----------------------------------------------------------------
-
+    // queries
     size_t popcount() const;
     std::vector<size_t> set_bit_positions() const;
-
-    /// Fused AND + popcount across all segments: returns
-    /// popcount(*this & other) without materialising the intersection.
-    /// See ComBitBtv::popcount_and for the per-segment contract.
     size_t popcount_and(const ComBit& other) const;
 
-    /// Iterate over all non-zero L1 words, calling
-    /// fn(uint32_t word_pos, uint8_t value) for each.  Walks L4→L3→L2→L1
-    /// and skips all-zero regions efficiently.
     template<typename Fn>
     void for_each_literal(Fn&& fn) const {
         size_t word_off = 0;
@@ -379,20 +261,17 @@ public:
             const uint8_t* l1 = seg.l1_literal_data();
             const size_t l2_total = seg.l2_count();
 
-            // All-zero segment short-circuit: produces nothing.
             if (seg.is_all_zero()) {
                 word_off += l2_total;
                 continue;
             }
 
-            // Decompressed segment: l1 holds all l2_count words, walk it directly.
             if (seg.state() == ComBitBtv::State::Decompressed) {
                 size_t i = 0;
 #ifdef __AVX512BW__
                 for (; i + 64 <= l2_total; i += 64) {
                     __m512i chunk = _mm512_loadu_si512(l1 + i);
-                    uint64_t nz = static_cast<uint64_t>(
-                        _mm512_test_epi8_mask(chunk, chunk));
+                    uint64_t nz = static_cast<uint64_t>(_mm512_test_epi8_mask(chunk, chunk));
                     while (nz) {
                         int b = __builtin_ctzll(nz);
                         nz &= nz - 1;
@@ -408,7 +287,7 @@ public:
                 continue;
             }
 
-            // Compressed segment: walk L4 → L3 → L2 → L1.
+            // L4 → L3 → L2 → L1
             size_t l1_off = 0;
             size_t l2_lit = 0;
             const uint8_t fill = seg.l1_fill_ones() ? 0xFF : 0x00;
@@ -423,15 +302,8 @@ public:
             size_t l3_lit_off = 0;
 
 #ifdef __AVX512VBMI2__
+            // AVX-512
             if (can_skip) {
-                // AVX-512 main path.  When l3_fill==0 (sparse, the common
-                // case) every non-literal L3 byte is zero, so we can walk
-                // the 8-bytes-of-L4 mask directly via bitscan — no SIMD
-                // expand-load, no spill buffer.  When l3_fill!=0 (rare
-                // dense-fill) we fall back to expand-load + test for zero
-                // regions.  Both branches consume the same L4/L3-literal
-                // streams; the split is purely a per-segment performance
-                // shortcut for sparse data (Path B / OR_many).
                 for (size_t l3_base = 0; l3_base < l3_bytes; l3_base += 64) {
                     size_t chunk = l3_bytes - l3_base;
                     if (chunk > 64) chunk = 64;
@@ -444,7 +316,7 @@ public:
                     auto walk_l3_byte = [&](size_t l3_byte_idx, uint8_t l3b) {
                         uint32_t l3_tmp = l3b;
                         while (l3_tmp) {
-                            int l3_bit = _tzcnt_u32(l3_tmp);
+                            int l3_bit = __builtin_ctz(l3_tmp);
                             l3_tmp &= l3_tmp - 1;
                             size_t l3_idx = l3_byte_idx * 8 + l3_bit;
                             if (l3_idx >= l3_total) break;
@@ -453,15 +325,12 @@ public:
                             if (l2_byte == 0) continue;
 
                             size_t base_w = l3_idx * 8;
-                            size_t remaining = (base_w + 8 <= l2_total)
-                                ? 8 : (l2_total - base_w);
-                            uint8_t mask = (remaining >= 8)
-                                ? l2_byte
-                                : static_cast<uint8_t>(l2_byte & ((1u << remaining) - 1));
+                            size_t remaining = (base_w + 8 <= l2_total) ? 8 : (l2_total - base_w);
+                            uint8_t mask = (remaining >= 8) ? l2_byte : static_cast<uint8_t>(l2_byte & ((1u << remaining) - 1));
 
                             uint32_t tmp = mask;
                             while (tmp) {
-                                int bit = _tzcnt_u32(tmp);
+                                int bit = __builtin_ctz(tmp);
                                 tmp &= tmp - 1;
                                 uint8_t val = l1[l1_off++];
                                 if (val != 0)
@@ -471,7 +340,6 @@ public:
                     };
 
                     if (l3_fill == 0) {
-                        // Sparse: only literal L3 bytes are non-zero.
                         while (l4_mask) {
                             size_t bidx = static_cast<size_t>(__builtin_ctzll(l4_mask));
                             l4_mask &= l4_mask - 1;
@@ -480,19 +348,14 @@ public:
                         continue;
                     }
 
-                    // Dense fill (l3_fill != 0): expand-load + test.
-                    const __m512i l3_fill_vec =
-                        _mm512_set1_epi8(static_cast<char>(l3_fill));
-                    __m512i l3v = _mm512_mask_expandloadu_epi8(l3_fill_vec,
-                        static_cast<__mmask64>(l4_mask), l3_lits + l3_lit_off);
+                    const __m512i l3_fill_vec = _mm512_set1_epi8(static_cast<char>(l3_fill));
+                    __m512i l3v = _mm512_mask_expandloadu_epi8(l3_fill_vec, static_cast<__mmask64>(l4_mask), l3_lits + l3_lit_off);
                     l3_lit_off += __builtin_popcountll(l4_mask);
                     if (chunk < 64) {
-                        __mmask64 valid = static_cast<__mmask64>(
-                            (uint64_t(1) << chunk) - 1);
+                        __mmask64 valid = static_cast<__mmask64>((uint64_t(1) << chunk) - 1);
                         l3v = _mm512_maskz_mov_epi8(valid, l3v);
                     }
-                    uint64_t nz = static_cast<uint64_t>(
-                        _mm512_test_epi8_mask(l3v, l3v));
+                    uint64_t nz = static_cast<uint64_t>(_mm512_test_epi8_mask(l3v, l3v));
                     if (nz == 0) continue;
 
                     alignas(64) uint8_t l3_buf[64];
@@ -507,8 +370,7 @@ public:
                 continue;
             }
 #endif
-            // Scalar fallback (fill!=0 or l2_fill_literals; or no AVX-512).
-            // Stream-decode each L3 byte once from L4, reuse for its 8 bits.
+            // scalar fallback
             size_t cur_l3_byte_idx = static_cast<size_t>(-1);
             uint8_t cur_l3_byte = 0;
             for (size_t l3_idx = 0; l3_idx < l3_total; l3_idx++) {
@@ -519,8 +381,7 @@ public:
                     cur_l3_byte = lit ? l3_lits[l3_lit_off++] : l3_fill;
                 }
                 bool l3_is_lit = (cur_l3_byte >> (l3_idx % 8)) & 1;
-                uint8_t l2_byte = l3_is_lit ? l2_lits[l2_lit++]
-                                            : (seg.l2_fill_ones() ? 0xFF : 0x00);
+                uint8_t l2_byte = l3_is_lit ? l2_lits[l2_lit++] : (seg.l2_fill_ones() ? 0xFF : 0x00);
                 if (l2_byte == 0 && fill == 0) continue;
                 for (int bit = 0; bit < 8; bit++) {
                     size_t w = l3_idx * 8 + bit;
@@ -535,20 +396,14 @@ public:
         }
     }
 
-    // ----------------------------------------------------------------
-    // Size / statistics
-    // ----------------------------------------------------------------
-
+    // sizes
     SizeBreakdown size_breakdown() const;
     size_t compressed_size_bits()  const { return size_breakdown().total_bits; }
     size_t compressed_size_bytes() const { return (compressed_size_bits() + 7) / 8; }
     size_t original_size_bits()    const { return bit_count_; }
     double compression_ratio() const;
 
-    // ----------------------------------------------------------------
-    // Accessors
-    // ----------------------------------------------------------------
-
+    // accessors
     size_t bit_count()     const { return bit_count_; }
     size_t num_segments()  const { return segments_.size(); }
     size_t segment_bits()  const { return segment_bits_; }
@@ -557,14 +412,6 @@ public:
     std::vector<ComBitBtv>& segments() { return segments_; }
     const ComBitBtv& segment(size_t i) const { return segments_[i]; }
 
-    // Bulk-scatter a sorted list of set positions into Decompressed segments.
-    // Pre: every segment that any position falls into is in Decompressed
-    // state (this is the canonical state of `from_sparse_positions({})`
-    // seeds used as Q5/Q3 OR accumulators).  Bypasses ComBitBtv's L1/L2/L3/L4
-    // hierarchy entirely — for ultra-sparse per-key bitmaps (orderkey at
-    // SF10: ~4 set bits in 60M rows) this is the fast path that lets
-    // ComBit's per-key memory rival CRoaring's array container without
-    // paying ~216 bytes/segment of struct overhead.
     void scatter_or_decompressed(const uint32_t* positions, size_t n) {
         const uint32_t seg_bits = static_cast<uint32_t>(segment_bits_);
         for (size_t i = 0; i < n; i++) {
@@ -575,40 +422,27 @@ public:
         }
     }
 
-    // ----------------------------------------------------------------
-    // Serialization
-    // ----------------------------------------------------------------
-
+    // serialize
     void serialize(std::ostream& os) const;
     static ComBit deserialize(std::istream& is);
-
-    // ----------------------------------------------------------------
-    // Debug printing
-    // ----------------------------------------------------------------
 
     void print(std::ostream& os = std::cout) const;
 
 private:
     std::vector<ComBitBtv> segments_;
-    size_t bit_count_ = 0;
+    size_t bit_count_    = 0;
     size_t segment_bits_ = default_segment_bits;
 };
 
-// SparseComBit — per-value bitmap stored as the non-empty segments only.
-// Built once via from_positions(); OR'd into a dense ComBit accumulator
-// to drive multi-key OR (Q1/Q3/Q5/Q6/...).
+// SparseComBit: per-value, non-empty segments only.
 class SparseComBit {
 public:
     SparseComBit() = default;
 
-    static SparseComBit from_positions(const std::vector<uint32_t>& positions,
-                                       size_t num_rows,
-                                       size_t segment_bits = ComBit::default_segment_bits);
+    static SparseComBit from_positions(const std::vector<uint32_t>& positions, size_t num_rows, size_t segment_bits = ComBit::default_segment_bits);
 
     void apply_or_to(ComBit& dst) const;
-
-    static ComBit or_many(size_t count, const SparseComBit** sparses,
-                          size_t num_rows, size_t segment_bits);
+    static ComBit or_many(size_t count, const SparseComBit** sparses, size_t num_rows, size_t segment_bits);
 
     size_t bit_count()    const { return bit_count_; }
     size_t segment_bits() const { return segment_bits_; }
@@ -624,8 +458,8 @@ private:
     size_t bit_count_    = 0;
     size_t segment_bits_ = ComBit::default_segment_bits;
     size_t num_set_bits_ = 0;
-    std::vector<uint32_t>  seg_indices_;  // sorted ascending
-    std::vector<ComBitBtv> seg_data_;     // parallel to seg_indices_
+    std::vector<uint32_t>  seg_indices_;
+    std::vector<ComBitBtv> seg_data_;
 };
 
 #endif // COMBIT_H

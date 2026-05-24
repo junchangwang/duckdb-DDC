@@ -120,6 +120,13 @@ public:
 	// instead of per-value.  E.g. `bitmap_shipdate_GE` = 1 bitmap per
 	// 3-month / per-year group.
 	void* bitmap_shipdate_GE = nullptr;
+	// Month-level GE (teacher's revised proposal): 84 buckets = 7 years × 12 months.
+	// One bitmap per (year, month).  Used by Q14 (1 month), Q15 (3 months/quarter),
+	// Q6 (12 months for year 1994).  Cardinality 84 vs per-day 2526.
+	void* bitmap_shipdate_GE_month = nullptr;
+	// Year-level GE on receiptdate (k=7).  Used by Q12 (year 1994 filter)
+	// for a single-key OR instead of 365-day OR — matches Q6's pattern.
+	void* bitmap_receiptdate_GE = nullptr;
 
 	// Bucketed Prefix-Encoded variants (range queries → O(1) AND_NOT).
 	// `bitmap_<col>_BPE` stores per-bucket cumulative bitmaps over the

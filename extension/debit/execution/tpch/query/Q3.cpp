@@ -83,6 +83,22 @@ static std::once_flag q3_once_flag_new;
 
 // 1995-03-15 = 9204 days since 1970-01-01 epoch.
 static constexpr int64_t Q3_CUTOFF_DATE = 9204;
+// Pure month-GE path (teacher 2026-05-19): cutoff rounded up to 1995-04-01,
+// so `shipdate > cutoff` = OR over 45 months 199504..199812.
+// SQL ground-truth comparison adjusts the cutoff to '1995-04-01' as well.
+static const std::vector<int64_t>& Q3_GE_AFTER_MONTHS() {
+    static const std::vector<int64_t> v = []() {
+        std::vector<int64_t> k;
+        // months 1995-04..1998-12 inclusive
+        for (int y = 1995; y <= 1998; y++) {
+            int m_lo = (y == 1995) ? 4 : 1;
+            int m_hi = 12;
+            for (int m = m_lo; m <= m_hi; m++) k.push_back(static_cast<int64_t>(y) * 100 + m);
+        }
+        return k;
+    }();
+    return v;
+}
 
 struct Q3Acc {
     int64_t revenue_raw = 0;   // sum(l_extendedprice * (100 - l_discount))
@@ -190,13 +206,18 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
     std::cout << "================================================================" << std::endl;
 
     auto* idx_okey = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_orderkey);
+    // Teacher 2026-05-19: prefer month-GE on shipdate if loaded.
+    auto* idx_ge_m = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_GE_month);
     auto* idx_ship = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate);
-    if (!idx_okey || !idx_ship) {
-        std::cerr << "[Q3] ERROR: bitmap_orderkey or bitmap_shipdate not loaded.\n"
-                     "      PRAGMA load_bitmap('orderkey'); load_bitmap('shipdate'); first.\n";
+    auto* idx_ship_use = idx_ge_m ? idx_ge_m : idx_ship;
+    if (!idx_okey || !idx_ship_use) {
+        std::cerr << "[Q3] ERROR: bitmap_orderkey or bitmap_shipdate(_GE_month) not loaded.\n"
+                     "      PRAGMA load_bitmap('orderkey'); load_bitmap('shipdate_GE_month'); first.\n";
         return;
     }
-    if (std::string(idx_okey->backend_name()) != idx_ship->backend_name()) {
+    const bool use_month_ge_q3 = (idx_ge_m != nullptr);
+    if (!use_month_ge_q3 &&
+        std::string(idx_okey->backend_name()) != idx_ship->backend_name()) {
         std::cerr << "[Q3] ERROR: backend mismatch (orderkey vs shipdate).\n";
         return;
     }
@@ -330,14 +351,80 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         // k-way merge (fastunion / fast_logicalor) over the in-range
         // per-day bitmaps.
         if (cb_okey) {
-            auto* cb_ship = dynamic_cast<bm_index::IndexedComBit*>(idx_ship);
+            // Month-GE path (teacher 2026-05-19): 45-key OR over 199504..199812.
+            auto* cbge_ship = dynamic_cast<bm_index::IndexedComBitGE*>(idx_ship_use);
+            auto* cb_ship   = dynamic_cast<bm_index::IndexedComBit*>(idx_ship_use);
+            ComBit ship_filter;
+            if (cbge_ship) {
+                ship_filter = cbge_ship->or_many(Q3_GE_AFTER_MONTHS());
+                t_c = clk::now();
+                cb_btv_res &= ship_filter;
+                t_d = clk::now();
+                q3_get_rowids_t(cb_btv_res, &ids);
+                auto t_e1 = clk::now();
+                auto& lineitem_tx = DuckTransaction::Get(context.client, lineitem_table.catalog);
+                q3_aggregate(context.client, lineitem_table, lineitem_tx, ids, l_orderkey_map);
+                auto t_e2 = clk::now();
+                // Phase F (top-10 + heap) and per-iter timing handled by
+                // the common path below; jump there by deferring with goto.
+                // Simpler: replicate the tail by reusing the variables.
+                // Build top-10 inline (same code as common path):
+                struct HeapEntry {
+                    int64_t orderkey; int64_t revenue; int32_t orderdate; int32_t shippriority;
+                };
+                auto cmp = [](const HeapEntry& a, const HeapEntry& b) {
+                    if (a.revenue != b.revenue) return a.revenue > b.revenue;
+                    return a.orderdate < b.orderdate;
+                };
+                std::priority_queue<HeapEntry, std::vector<HeapEntry>, decltype(cmp)> heap(cmp);
+                for (auto& [k, acc] : l_orderkey_map) {
+                    HeapEntry e{k, acc.revenue_raw, acc.orderdate, acc.shippriority};
+                    if (heap.size() < 10) heap.push(e);
+                    else if (heap.top().revenue < e.revenue ||
+                             (heap.top().revenue == e.revenue && heap.top().orderdate > e.orderdate)) {
+                        heap.pop(); heap.push(e);
+                    }
+                }
+                std::map<int64_t, Q3Acc> top10_map;
+                while (!heap.empty()) {
+                    const HeapEntry& e = heap.top();
+                    top10_map[e.orderkey] = {e.revenue, e.orderdate, e.shippriority};
+                    heap.pop();
+                }
+                last_top10_map = top10_map;
+
+                double tA  = q3_ms(t0, t_a);
+                double tB  = q3_ms(t_a, t_b);
+                double tC  = q3_ms(t_b, t_c);
+                double tD  = q3_ms(t_c, t_e1);
+                double tE  = q3_ms(t_e1, t_e2);
+                double tot = q3_ms(t0, t_e2);
+                std::cout << "  " << idx_okey->backend_name()
+                          << ":  PhaseA(cust_scan)=" << tA
+                          << "  PhaseB(orders+okey_OR)=" << tB
+                          << "  PhaseC(shipdate_OR)=" << tC
+                          << "  PhaseD(AND+rowids)=" << tD
+                          << "  PhaseE(BMFetch+agg)=" << tE
+                          << "  Total=" << tot
+                          << "  rows=" << ids.size() << std::endl;
+                if (!warm) {
+                    tA_t.push_back(tA); tB_t.push_back(tB); tC_t.push_back(tC);
+                    tD_t.push_back(tD); tE_t.push_back(tE); tot_t.push_back(tot);
+                }
+                continue;   // skip per-day path below
+            }
             // β scheme: BPE prefix-encoded fast path (active when
             // bitmap_shipdate_BPE was pre-loaded under DEBIT_BM=cb_bpe).
             // ship>cutoff = prefix(LAST) AND_NOT prefix(B) | per-day OR
             // over (cutoff, bucket_max(B)] — TPC-H 1.5.7 §5 compliant.
             auto* cb_ship_bpe = dynamic_cast<bm_index::IndexedComBitBPE*>(
                 static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_BPE));
-            ComBit ship_filter = ComBit::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
+            // ComBit+GE hybrid: if shipdate_GE was auto-loaded under
+            // DEBIT_BM=cb_ge, use year-level GE for the full-year part
+            // (1996/1997/1998) + per-day for 1995-03-16..1995-12-31 boundary.
+            auto* cb_ship_ge = dynamic_cast<bm_index::IndexedComBitGE*>(
+                static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_GE));
+            ship_filter = ComBit::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
             if (cb_ship_bpe) {
                 int B    = cb_ship_bpe->bucket_of(Q3_CUTOFF_DATE);
                 int LAST = static_cast<int>(cb_ship_bpe->num_keys()) - 1;
@@ -349,8 +436,22 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
                     cb_ship->apply_or_range_to(boundary, Q3_CUTOFF_DATE + 1, bmax);
                     ship_filter |= boundary;
                 }
+            } else if (cb_ship_ge) {
+                // GE hybrid: Q3_CUTOFF_DATE=9204 is in year 1995 (1995-03-15).
+                // Year boundaries from epoch_day_to_year:
+                //   1995 = days [9131, 9496)   → end day 9495
+                //   1996 = days [9496, 9862)
+                //   1997 = days [9862, 10227)
+                //   1998 = days [10227, 10592)
+                // ship > 9204 splits into:
+                //   (a) 1995 boundary: days [9205, 9495]  (291 days, per-day OR)
+                //   (b) full years 1996/1997/1998        (3 GE keys, sca scatter)
+                ship_filter = cb_ship_ge->or_many(std::vector<int64_t>{1996, 1997, 1998});
+                ComBit boundary = ComBit::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
+                cb_ship->apply_or_range_to(boundary, Q3_CUTOFF_DATE + 1, 9495);
+                ship_filter |= boundary;
             } else {
-                // ComBit (no BPE): gather in-range keys + sca or_many.
+                // ComBit (no BPE / no GE): gather in-range keys + sca or_many.
                 std::vector<int64_t> in_range;
                 cb_ship->for_each_key([&](int64_t k) {
                     if (k > Q3_CUTOFF_DATE) in_range.push_back(k);
@@ -362,14 +463,16 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
             t_d = clk::now();
             q3_get_rowids_t(cb_btv_res, &ids);
         } else if (cr_okey) {
-            auto* cr_ship = dynamic_cast<bm_index::IndexedCRoaring*>(idx_ship);
+            auto* cr_ship = dynamic_cast<bm_index::IndexedCRoaring*>(idx_ship_use);
             // β scheme: BPE prefix-encoded fast path for CR (and CRR
             // when cr_bpe is selected, though CRR's fastunion is already
             // fast).  Same algebra as ComBit BPE.
             auto* cr_ship_bpe = dynamic_cast<bm_index::IndexedCRoaringBPE*>(
                 static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_BPE));
             roaring::Roaring ship_filter;
-            if (cr_ship_bpe) {
+            if (use_month_ge_q3) {
+                ship_filter = cr_ship->or_many(Q3_GE_AFTER_MONTHS());
+            } else if (cr_ship_bpe) {
                 int B    = cr_ship_bpe->bucket_of(Q3_CUTOFF_DATE);
                 int LAST = static_cast<int>(cr_ship_bpe->num_keys()) - 1;
                 ship_filter = *cr_ship_bpe->prefix_at_bucket(LAST);
@@ -394,17 +497,20 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
             q3_get_rowids_t(cr_btv_res, &ids);
         } else if (wah_okey) {
             // WAH: copy first + decompress + |= rest pairwise (teacher).
-            auto* wah_ship = dynamic_cast<bm_index::IndexedWAH*>(idx_ship);
-            ibis::bitvector ship_filter = wah_ship->or_range(Q3_CUTOFF_DATE + 1, INT64_MAX);
+            auto* wah_ship = dynamic_cast<bm_index::IndexedWAH*>(idx_ship_use);
+            ibis::bitvector ship_filter = use_month_ge_q3
+                ? wah_ship->or_many(Q3_GE_AFTER_MONTHS())
+                : wah_ship->or_range(Q3_CUTOFF_DATE + 1, INT64_MAX);
             t_c = clk::now();
             wah_btv_res &= ship_filter;
             t_d = clk::now();
             q3_get_rowids_t(wah_btv_res, &ids);
         } else if (ew_okey) {
             // EW: fast_logicalor via or_range.
-            auto* ew_ship = dynamic_cast<bm_index::IndexedEWAH*>(idx_ship);
-            ewah::EWAHBoolArray<uint64_t> ship_filter =
-                ew_ship->or_range(Q3_CUTOFF_DATE + 1, INT64_MAX);
+            auto* ew_ship = dynamic_cast<bm_index::IndexedEWAH*>(idx_ship_use);
+            ewah::EWAHBoolArray<uint64_t> ship_filter = use_month_ge_q3
+                ? ew_ship->or_many(Q3_GE_AFTER_MONTHS())
+                : ew_ship->or_range(Q3_CUTOFF_DATE + 1, INT64_MAX);
             t_c = clk::now();
             ewah::EWAHBoolArray<uint64_t> tmp;
             ew_btv_res.logicaland(ship_filter, tmp);
@@ -413,9 +519,10 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
             q3_get_rowids_t(ew_btv_res, &ids);
         } else if (con_okey) {
             // CON: fast_logicalor via or_range.
-            auto* con_ship = dynamic_cast<bm_index::IndexedConcise*>(idx_ship);
-            ConciseSet<false> ship_filter =
-                con_ship->or_range(Q3_CUTOFF_DATE + 1, INT64_MAX);
+            auto* con_ship = dynamic_cast<bm_index::IndexedConcise*>(idx_ship_use);
+            ConciseSet<false> ship_filter = use_month_ge_q3
+                ? con_ship->or_many(Q3_GE_AFTER_MONTHS())
+                : con_ship->or_range(Q3_CUTOFF_DATE + 1, INT64_MAX);
             t_c = clk::now();
             con_btv_res = con_btv_res.logicaland(ship_filter);
             t_d = clk::now();
@@ -483,7 +590,14 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
     // ----- Validate vs DuckDB SQL -----
     {
         Connection con(*context.client.db);
-        const std::string sql =
+        // When month-GE is in use, the shipdate cutoff rounds up to
+        // 1995-04-01 (= shipdate >= 1995-04-01) — matches the 45-month OR.
+        // The orders-side cutoff (orderdate < 1995-03-15) stays exact.
+        const char* ship_cut = use_month_ge_q3
+            ? "DATE '1995-04-01'"
+            : "DATE '1995-03-15'";
+        const char* ship_op = use_month_ge_q3 ? ">=" : ">";
+        const std::string sql = std::string(
             "SELECT l_orderkey, "
             "       sum(l_extendedprice * (1 - l_discount)) AS revenue, "
             "       o_orderdate, o_shippriority "
@@ -492,10 +606,10 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
             "  AND  c_custkey  = o_custkey "
             "  AND  l_orderkey = o_orderkey "
             "  AND  o_orderdate < DATE '1995-03-15' "
-            "  AND  l_shipdate  > DATE '1995-03-15' "
-            "GROUP BY l_orderkey, o_orderdate, o_shippriority "
-            "ORDER BY revenue DESC, o_orderdate "
-            "LIMIT 10";
+            "  AND  l_shipdate  ") + ship_op + " " + ship_cut +
+            " GROUP BY l_orderkey, o_orderdate, o_shippriority "
+            " ORDER BY revenue DESC, o_orderdate "
+            " LIMIT 10";
         auto r = con.Query(sql);
         if (r && !r->HasError()) {
             bool ok = (r->RowCount() == last_top10_map.size());

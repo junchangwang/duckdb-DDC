@@ -89,7 +89,8 @@ static const Q15BmType Q15_BM = bm_bench::parse_backend("Q15_BM");
 static bool run_all() { return Q15_BM == Q15BmType::ALL; }
 static bool run_wah() { return Q15_BM == Q15BmType::ALL || Q15_BM == Q15BmType::WAH; }
 static bool run_cb()  { return Q15_BM == Q15BmType::ALL || Q15_BM == Q15BmType::CB
-                            || Q15_BM == Q15BmType::CB_BPE; }
+                            || Q15_BM == Q15BmType::CB_BPE
+                            || Q15_BM == Q15BmType::CB_GE; }
 static bool run_cr()  { return Q15_BM == Q15BmType::ALL || Q15_BM == Q15BmType::CR
                             || Q15_BM == Q15BmType::CR_BPE; }
 static bool run_crr() { return Q15_BM == Q15BmType::ALL || Q15_BM == Q15BmType::CRR; }
@@ -107,6 +108,8 @@ static std::string q15_get_sf_label() { return bm_bench::sf_label(); }
 //   91 day bitmaps, inclusive day range [9496, 9586].
 static const int Q15_DATE_START = 9496;  // 1996-01-01 inclusive
 static const int Q15_DATE_END   = 9586;  // 1996-03-31 inclusive (1996-04-01 = 9587)
+// Month-GE keys for Q1 1996 (teacher's "1 quarter = 3 months → 3 bitmaps" plan).
+static constexpr int64_t Q15_MONTH_KEYS[3] = {199601, 199602, 199603};
 
 // --- Iteration counts (DEBIT_ITER / DEBIT_WARMUP) ---
 static const int Q15_ITERATIONS = bm_bench::iter_count(10);
@@ -256,17 +259,27 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
     //    Same pattern as Q14: backend-specific dynamic_cast on the
     //    shared context.client.bitmap_shipdate slot.
     // ============================================================
+    // Prefer month-GE if loaded (3-key OR for 1996-Q1 vs 90-key range OR).
+    auto* idx_ge_m = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_GE_month);
     auto* idx_ship = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate);
-    if (!idx_ship) {
-        std::cerr << "Q15: bitmap_shipdate not loaded.  "
-                     "Run PRAGMA load_bitmap('shipdate'); first." << std::endl;
+    auto* idx_use  = idx_ge_m ? idx_ge_m : idx_ship;
+    if (!idx_use) {
+        std::cerr << "Q15: neither bitmap_shipdate_GE_month nor bitmap_shipdate loaded.  "
+                     "Run PRAGMA load_bitmap('shipdate_GE_month'); (or 'shipdate') first."
+                  << std::endl;
         return;
     }
-    auto* cb_ship  = dynamic_cast<bm_index::IndexedComBit*>(idx_ship);
-    auto* cr_ship  = dynamic_cast<bm_index::IndexedCRoaring*>(idx_ship);
-    auto* wah_ship = dynamic_cast<bm_index::IndexedWAH*>(idx_ship);
-    auto* ew_ship  = dynamic_cast<bm_index::IndexedEWAH*>(idx_ship);
-    auto* con_ship = dynamic_cast<bm_index::IndexedConcise*>(idx_ship);
+    const bool use_month_ge = (idx_ge_m != nullptr);
+
+    // CB dispatch splits between per-day (IndexedComBit) and GE
+    // (IndexedComBitGE); other backends use the same class on either index.
+    auto* cb_ship    = dynamic_cast<bm_index::IndexedComBit*>(idx_use);
+    auto* cbge_ship  = dynamic_cast<bm_index::IndexedComBitGE*>(idx_use);
+    auto* cr_ship    = dynamic_cast<bm_index::IndexedCRoaring*>(idx_use);
+    auto* wah_ship   = dynamic_cast<bm_index::IndexedWAH*>(idx_use);
+    auto* ew_ship    = dynamic_cast<bm_index::IndexedEWAH*>(idx_use);
+    auto* con_ship   = dynamic_cast<bm_index::IndexedConcise*>(idx_use);
+    const std::vector<int64_t> q15_ge_keys(Q15_MONTH_KEYS, Q15_MONTH_KEYS + 3);
 
     // ============================================================
     // 3. Per-backend aggregation buffer (one int64 per suppkey).
@@ -301,11 +314,14 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
                   << (warmup ? " (warm-up)" : "") << " ---" << std::endl;
 
         // ================= ComBit =================
-        if (run_cb() && cb_ship) {
+        if (run_cb() && (cb_ship || cbge_ship)) {
             auto t0 = std::chrono::high_resolution_clock::now();
-            ComBit cb_filt = ComBit::from_sparse_positions(
-                {}, cb_ship->num_rows(), cb_ship->segment_bits());
-            cb_ship->apply_or_range_to(cb_filt, Q15_DATE_START, Q15_DATE_END);
+            ComBit cb_filt = use_month_ge
+                ? cbge_ship->or_many(q15_ge_keys)
+                : ComBit::from_sparse_positions({}, cb_ship->num_rows(),
+                                                cb_ship->segment_bits());
+            if (!use_month_ge)
+                cb_ship->apply_or_range_to(cb_filt, Q15_DATE_START, Q15_DATE_END);
             auto t1 = std::chrono::high_resolution_clock::now();
 
             std::fill(rev_buf.begin(), rev_buf.end(), 0);
@@ -345,7 +361,9 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
         // ================= CRoaring (vanilla addMany) =================
         if (run_cr() && cr_ship && !cr_ship->run_optimized()) {
             auto t0 = std::chrono::high_resolution_clock::now();
-            roaring::Roaring cr_filt = cr_ship->or_range(Q15_DATE_START, Q15_DATE_END);
+            roaring::Roaring cr_filt = use_month_ge
+                ? cr_ship->or_many(q15_ge_keys)
+                : cr_ship->or_range(Q15_DATE_START, Q15_DATE_END);
             auto t1 = std::chrono::high_resolution_clock::now();
 
             std::fill(rev_buf.begin(), rev_buf.end(), 0);
@@ -373,7 +391,9 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
         // ================= CRoaring + Run (fastunion) =================
         if (run_crr() && cr_ship && cr_ship->run_optimized()) {
             auto t0 = std::chrono::high_resolution_clock::now();
-            roaring::Roaring crr_filt = cr_ship->or_range(Q15_DATE_START, Q15_DATE_END);
+            roaring::Roaring crr_filt = use_month_ge
+                ? cr_ship->or_many(q15_ge_keys)
+                : cr_ship->or_range(Q15_DATE_START, Q15_DATE_END);
             auto t1 = std::chrono::high_resolution_clock::now();
 
             std::fill(rev_buf.begin(), rev_buf.end(), 0);
@@ -401,7 +421,9 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
         // ================= WAH =================
         if (run_wah() && wah_ship) {
             auto t0 = std::chrono::high_resolution_clock::now();
-            ibis::bitvector wah_filt = wah_ship->or_range(Q15_DATE_START, Q15_DATE_END);
+            ibis::bitvector wah_filt = use_month_ge
+                ? wah_ship->or_many(q15_ge_keys)
+                : wah_ship->or_range(Q15_DATE_START, Q15_DATE_END);
             auto t1 = std::chrono::high_resolution_clock::now();
 
             std::fill(rev_buf.begin(), rev_buf.end(), 0);
@@ -431,7 +453,9 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
         // ================= EWAH (fast_logicalor) =================
         if (run_ew() && ew_ship) {
             auto t0 = std::chrono::high_resolution_clock::now();
-            ewah::EWAHBoolArray<uint64_t> ew_filt = ew_ship->or_range(Q15_DATE_START, Q15_DATE_END);
+            ewah::EWAHBoolArray<uint64_t> ew_filt = use_month_ge
+                ? ew_ship->or_many(q15_ge_keys)
+                : ew_ship->or_range(Q15_DATE_START, Q15_DATE_END);
             auto t1 = std::chrono::high_resolution_clock::now();
 
             std::fill(rev_buf.begin(), rev_buf.end(), 0);
@@ -459,7 +483,9 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
         // ================= Concise (fast_logicalor) =================
         if (run_con() && con_ship) {
             auto t0 = std::chrono::high_resolution_clock::now();
-            ConciseSet<false> con_filt = con_ship->or_range(Q15_DATE_START, Q15_DATE_END);
+            ConciseSet<false> con_filt = use_month_ge
+                ? con_ship->or_many(q15_ge_keys)
+                : con_ship->or_range(Q15_DATE_START, Q15_DATE_END);
             auto t1 = std::chrono::high_resolution_clock::now();
 
             std::fill(rev_buf.begin(), rev_buf.end(), 0);
@@ -497,7 +523,8 @@ void BMTableScan::BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan 
     const std::vector<int32_t>* print_ties = nullptr;
     const char* print_label = "";
     if      (Q15_BM == Q15BmType::ALL || Q15_BM == Q15BmType::CB
-          || Q15_BM == Q15BmType::CB_BPE)                          { print_max = cb_max;  print_ties = &cb_ties;  print_label = "ComBit"; }
+          || Q15_BM == Q15BmType::CB_BPE
+          || Q15_BM == Q15BmType::CB_GE)                           { print_max = cb_max;  print_ties = &cb_ties;  print_label = "ComBit"; }
     else if (Q15_BM == Q15BmType::WAH)                             { print_max = wah_max; print_ties = &wah_ties; print_label = "WAH"; }
     else if (Q15_BM == Q15BmType::CR || Q15_BM == Q15BmType::CR_BPE) { print_max = cr_max;  print_ties = &cr_ties;  print_label = "CRoaring"; }
     else if (Q15_BM == Q15BmType::CRR)                             { print_max = crr_max; print_ties = &crr_ties; print_label = "CRoaring+Run"; }

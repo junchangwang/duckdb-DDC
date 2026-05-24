@@ -62,6 +62,7 @@ enum class Q1ColKind {
     Int32,    // INTEGER / DATE — read as int32_t, promote to int64
     VarChar,  // VARCHAR — first byte ASCII to int64 (linestatus / returnflag / shipmode / shipinstruct)
     DateGEYear, // DATE (epoch days) — bucketed into year (key = year, e.g. 1992..1998)
+    DateGEMonth,// DATE (epoch days) — bucketed into year×100+month (e.g. 199501 for Jan 1995)
 };
 
 // Bucket epoch-days (since 1970-01-01) into the calendar year that contains
@@ -82,6 +83,43 @@ static int64_t epoch_day_to_year(int32_t day) {
     return 2001;
 }
 
+// Convert epoch day → YYYYMM bucket (e.g., 199501 for Jan 1995).
+// 84 distinct buckets cover 1992-01 .. 1998-12 (TPC-H lineitem.l_shipdate range).
+// Used by load_bitmap('shipdate_GE_month') to build IndexedComBitGE with
+// 84 keys instead of 2526 days (teacher's revised proposal, EE encoding).
+// Day-of-month decoding uses cumulative Julian-style table since duckdb's
+// Date utilities aren't in scope here.
+static int64_t epoch_day_to_year_month(int32_t day) {
+    // Same boundaries as epoch_day_to_year + interpolate month within year.
+    // Cumulative days from 1992-01-01 to start of each month, 1992..1999.
+    // Pattern of month lengths (Jan..Dec): 31,28/29,31,30,31,30,31,31,30,31,30,31
+    // 1992 leap; 1993-95 non-leap; 1996 leap; 1997-99 non-leap.
+    static constexpr int year_start[] = {
+        8035,  8401,  8766,  9131,  9496,  9862, 10227, 10592, 10957
+    }; // start day of 1992..2000
+    static constexpr int years[] = {
+        1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000
+    };
+    // Month-length tables for normal vs leap year
+    static constexpr int mlen_normal[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    static constexpr int mlen_leap[12]   = {31,29,31,30,31,30,31,31,30,31,30,31};
+    if (day < year_start[0]) return 199100;
+    // Find year
+    int yi = 0;
+    while (yi + 1 < (int)(sizeof(year_start)/sizeof(year_start[0]))
+           && day >= year_start[yi + 1]) yi++;
+    int year = years[yi];
+    int day_in_year = day - year_start[yi];
+    bool leap = (year == 1992 || year == 1996 || year == 2000);
+    const int* mlen = leap ? mlen_leap : mlen_normal;
+    int month = 1;
+    for (int m = 0; m < 12; m++) {
+        if (day_in_year < mlen[m]) { month = m + 1; break; }
+        day_in_year -= mlen[m];
+    }
+    return static_cast<int64_t>(year) * 100 + month;
+}
+
 struct ColInfo {
     std::string table;
     int storage_index;
@@ -95,6 +133,8 @@ static ColInfo resolve_column(const std::string& col) {
     if (col == "partkey")     return {"lineitem", 1,  Q1ColKind::Int64};
     if (col == "shipdate")    return {"lineitem", 10, Q1ColKind::Int32};
     if (col == "shipdate_GE") return {"lineitem", 10, Q1ColKind::DateGEYear};
+    if (col == "shipdate_GE_month") return {"lineitem", 10, Q1ColKind::DateGEMonth};
+    if (col == "receiptdate_GE") return {"lineitem", 12, Q1ColKind::DateGEMonth};
     if (col == "shipdate_BPE") return {"lineitem", 10, Q1ColKind::Int32};   // BPE built from per-day raw values
     if (col == "discount_BPE") return {"lineitem", 6,  Q1ColKind::Int64};
     if (col == "quantity_BPE") return {"lineitem", 4,  Q1ColKind::Int64};
@@ -116,6 +156,8 @@ static void** resolve_context_field(ClientContext& ctx, const std::string& col) 
     if (col == "partkey")     return &ctx.bitmap_partkey;
     if (col == "shipdate")    return &ctx.bitmap_shipdate;
     if (col == "shipdate_GE") return &ctx.bitmap_shipdate_GE;
+    if (col == "shipdate_GE_month") return &ctx.bitmap_shipdate_GE_month;
+    if (col == "receiptdate_GE") return &ctx.bitmap_receiptdate_GE;
     if (col == "shipdate_BPE") return &ctx.bitmap_shipdate_BPE;
     if (col == "discount_BPE") return &ctx.bitmap_discount_BPE;
     if (col == "quantity_BPE") return &ctx.bitmap_quantity_BPE;
@@ -163,6 +205,12 @@ static std::vector<int64_t> scan_column(ClientContext& ctx, const ColInfo& info)
                 auto p = FlatVector::GetData<int32_t>(chunk.data[0]);
                 for (idx_t i = 0; i < chunk.size(); i++)
                     out.push_back(epoch_day_to_year(p[i]));
+                break;
+            }
+            case Q1ColKind::DateGEMonth: {
+                auto p = FlatVector::GetData<int32_t>(chunk.data[0]);
+                for (idx_t i = 0; i < chunk.size(); i++)
+                    out.push_back(epoch_day_to_year_month(p[i]));
                 break;
             }
             case Q1ColKind::VarChar: {
@@ -241,7 +289,8 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
     // Backend selection via DEBIT_BM env (mirrors BMTPCH gating).
     auto backend = bm_bench::parse_backend("DEBIT_BM");
     bm_index::IBitmapIndex* idx = nullptr;
-    bool ge_path = (col == "shipdate_GE");
+    bool ge_path = (col == "shipdate_GE" || col == "receiptdate_GE");
+    bool ge_month_path = (col == "shipdate_GE_month");
 
     using B = bm_bench::Backend;
     switch (backend) {
@@ -251,7 +300,7 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
                 auto* x = new bm_index::IndexedComBitBPE();
                 x->build(values, values.size(), bpe_lo, bpe_hi, bpe_bs);
                 idx = x;
-            } else if (ge_path) {
+            } else if (ge_path || ge_month_path) {
                 auto* x = new bm_index::IndexedComBitGE();
                 x->build(values, values.size());
                 idx = x;
@@ -320,6 +369,53 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
             idx = x;
             break;
         }
+        case B::CB_GE: {
+            // ComBit + GE hybrid:
+            //  - 'shipdate'      → build IndexedComBit (same as CB)
+            //                      AND auto-build IndexedComBitGE (year-granularity)
+            //                      stored at context.bitmap_shipdate_GE
+            //  - other columns   → same as CB
+            // Q3 detects the auto-loaded shipdate_GE and uses hybrid range OR.
+            if (bpe_path) {
+                auto* x = new bm_index::IndexedComBitBPE();
+                x->build(values, values.size(), bpe_lo, bpe_hi, bpe_bs);
+                idx = x;
+            } else if (ge_path || ge_month_path) {
+                auto* x = new bm_index::IndexedComBitGE();
+                x->build(values, values.size());
+                idx = x;
+            } else {
+                auto* x = new bm_index::IndexedComBit();
+                x->build(values, values.size());
+                idx = x;
+
+                // Auto-build shipdate_GE alongside shipdate when col == "shipdate"
+                if (col == "shipdate" && context.bitmap_shipdate_GE == nullptr) {
+                    auto t_ge0 = clock::now();
+                    std::vector<int64_t> year_values;
+                    year_values.reserve(values.size());
+                    for (int64_t day : values) {
+                        year_values.push_back(epoch_day_to_year(static_cast<int32_t>(day)));
+                    }
+                    auto* xge = new bm_index::IndexedComBitGE();
+                    xge->build(year_values, year_values.size());
+                    context.bitmap_shipdate_GE = xge;
+                    auto t_ge1 = clock::now();
+                    std::cerr << "[load_bitmap] (CB_GE auto) shipdate_GE: built "
+                              << xge->backend_name() << " index ("
+                              << xge->num_keys() << " keys, "
+                              << xge->storage_bytes() / 1e6 << " MB) in "
+                              << std::chrono::duration_cast<std::chrono::milliseconds>(t_ge1 - t_ge0).count()
+                              << " ms\n";
+                    auto bd_ge = xge->layer_breakdown();
+                    std::cerr << "[load_bitmap_breakdown] (CB_GE auto) shipdate_GE " << xge->backend_name() << ":";
+                    for (auto& [name, bytes] : bd_ge)
+                        std::cerr << " " << name << "=" << bytes / 1e6 << " MB";
+                    std::cerr << std::endl;
+                }
+            }
+            break;
+        }
         case B::ALL:
         default: {
             // Default to ComBit when ALL/unspecified.
@@ -327,7 +423,7 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
                 auto* x = new bm_index::IndexedComBitBPE();
                 x->build(values, values.size(), bpe_lo, bpe_hi, bpe_bs);
                 idx = x;
-            } else if (ge_path) {
+            } else if (ge_path || ge_month_path) {
                 auto* x = new bm_index::IndexedComBitGE();
                 x->build(values, values.size());
                 idx = x;

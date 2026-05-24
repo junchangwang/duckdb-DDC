@@ -24,6 +24,7 @@ set(FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/combit/src/and.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/combit/src/or.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/combit/src/xor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/combit/src/not.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/croaring/roaring.c
     ${CMAKE_CURRENT_SOURCE_DIR}/wah_backend/src/utils/util.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/wah_backend/src/fastbit/bitvector.cpp

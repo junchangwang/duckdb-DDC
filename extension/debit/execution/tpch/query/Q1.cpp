@@ -94,6 +94,10 @@ static std::once_flag q1_once_flag_new;
 // 1998-09-02 — TPC-H Q1 cutoff day (epoch days since 1970-01-01).
 // Same value as teacher's `right_days = 10471`.
 static constexpr int64_t Q1_SHIPDATE_CUTOFF = 10471;
+// Pure month-GE path (teacher 2026-05-19): cutoff rounded to month boundary
+// 1998-08-31, so `shipdate > cutoff` = OR over 4 months 199809..199812.
+// SQL ground-truth comparison is adjusted accordingly when this path is used.
+static constexpr int64_t Q1_GE_AFTER_MONTHS[4] = {199809, 199810, 199811, 199812};
 
 struct Q1GroupAns {
     int64_t sum_qty        = 0;
@@ -286,19 +290,29 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
     std::cout << "  Pre-loaded: bitmap_shipdate + bitmap_linestatus + bitmap_returnflag" << std::endl;
     std::cout << "================================================================" << std::endl;
 
+    // Teacher 2026-05-19: prefer month-GE if loaded (4-key complement OR
+    // vs 90-key per-day OR; cutoff rounded to 1998-08-31).
+    auto* idx_ge_m = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_GE_month);
     auto* idx_ship = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate);
     auto* idx_ls   = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_linestatus);
     auto* idx_rf   = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_returnflag);
-    if (!idx_ship || !idx_ls || !idx_rf) {
+    auto* idx_use  = idx_ge_m ? idx_ge_m : idx_ship;
+    if (!idx_use || !idx_ls || !idx_rf) {
         std::cerr << "[Q1] ERROR: required bitmaps not loaded.\n";
         return;
     }
-    if (std::string(idx_ship->backend_name()) != idx_ls->backend_name() ||
-        std::string(idx_ship->backend_name()) != idx_rf->backend_name()) {
-        std::cerr << "[Q1] ERROR: backend mismatch among shipdate/linestatus/returnflag.\n";
-        return;
+    const bool use_month_ge = (idx_ge_m != nullptr);
+    // ls/rf backend tag (ComBit/CRoaring/...) is what's used for dispatch;
+    // shipdate-GE class differs only for ComBit (ComBitGE vs ComBit).  Accept
+    // that mismatch when use_month_ge is true.
+    if (!use_month_ge) {
+        if (std::string(idx_ship->backend_name()) != idx_ls->backend_name() ||
+            std::string(idx_ship->backend_name()) != idx_rf->backend_name()) {
+            std::cerr << "[Q1] ERROR: backend mismatch among shipdate/linestatus/returnflag.\n";
+            return;
+        }
     }
-    size_t num_rows = idx_ship->num_rows();
+    size_t num_rows = idx_use->num_rows();
 
     static const char RF_CHARS[] = {'A', 'N', 'R'};
     static const char LS_CHARS[] = {'F', 'O'};
@@ -326,7 +340,47 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
         // Per-backend: build shipdate_filter_bs + per-(rf, ls) group_bs.
         // The dispatch chain mirrors Q5/Q6 (dynamic_cast on idx_ship).
         // -----------------------------------------------------------------
-        if (auto* cb_ship = dynamic_cast<bm_index::IndexedComBit*>(idx_ship)) {
+        if (auto* cbge_ship = dynamic_cast<bm_index::IndexedComBitGE*>(idx_use)) {
+            // Month-GE path (teacher's plan): 4-key complement OR.
+            auto* cb_ls_x = dynamic_cast<bm_index::IndexedComBit*>(idx_ls);
+            auto* cb_rf_x = dynamic_cast<bm_index::IndexedComBit*>(idx_rf);
+            if (!cb_ls_x || !cb_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
+
+            auto t_a0 = clk::now();
+            std::vector<int64_t> month_keys(Q1_GE_AFTER_MONTHS, Q1_GE_AFTER_MONTHS + 4);
+            ComBit shipdate_gt = cbge_ship->or_many(month_keys);
+            q1_to_byte_stream(shipdate_gt, shipdate_filter_bs, num_rows);
+            q1_byte_stream_not(shipdate_filter_bs, num_rows);
+            auto t_a1 = clk::now();
+            phaseA = q1_ms(t_a0, t_a1);
+
+            // Phase B: per (rf, ls): ls AND rf → bitmap, byte-stream, AND filter.
+            std::map<char, std::vector<uint8_t>> ls_bs, rf_bs;
+            for (int li = 0; li < LS_COUNT; li++) {
+                ComBit b = ComBit::from_sparse_positions({}, num_rows, cbge_ship->segment_bits());
+                cb_ls_x->apply_or_to(b, static_cast<int64_t>(LS_CHARS[li]));
+                std::vector<uint8_t> tmp;
+                q1_to_byte_stream(b, tmp, num_rows);
+                ls_bs[LS_CHARS[li]] = std::move(tmp);
+            }
+            for (int ri = 0; ri < RF_COUNT; ri++) {
+                ComBit b = ComBit::from_sparse_positions({}, num_rows, cbge_ship->segment_bits());
+                cb_rf_x->apply_or_to(b, static_cast<int64_t>(RF_CHARS[ri]));
+                std::vector<uint8_t> tmp;
+                q1_to_byte_stream(b, tmp, num_rows);
+                rf_bs[RF_CHARS[ri]] = std::move(tmp);
+            }
+            for (int ri = 0; ri < RF_COUNT; ri++) {
+                for (int li = 0; li < LS_COUNT; li++) {
+                    char rf = RF_CHARS[ri], ls = LS_CHARS[li];
+                    std::vector<uint8_t> bs = ls_bs[ls];
+                    q1_byte_stream_and(bs, rf_bs[rf]);
+                    q1_byte_stream_and(bs, shipdate_filter_bs);
+                    group_bs[{rf, ls}] = std::move(bs);
+                }
+            }
+        }
+        else if (auto* cb_ship = dynamic_cast<bm_index::IndexedComBit*>(idx_use)) {
             auto* cb_ls_x = dynamic_cast<bm_index::IndexedComBit*>(idx_ls);
             auto* cb_rf_x = dynamic_cast<bm_index::IndexedComBit*>(idx_rf);
             if (!cb_ls_x || !cb_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
@@ -390,32 +444,37 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
                 }
             }
         }
-        else if (auto* cr_ship = dynamic_cast<bm_index::IndexedCRoaring*>(idx_ship)) {
+        else if (auto* cr_ship = dynamic_cast<bm_index::IndexedCRoaring*>(idx_use)) {
             auto* cr_ls_x = dynamic_cast<bm_index::IndexedCRoaring*>(idx_ls);
             auto* cr_rf_x = dynamic_cast<bm_index::IndexedCRoaring*>(idx_rf);
             if (!cr_ls_x || !cr_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
 
-            // Plan A: CR pairwise per-day; CRR fastunion via or_range.
-            // β scheme: BPE prefix-encoded fast path for cr_bpe.
             auto t_a0 = clk::now();
-            auto* cr_ship_bpe = dynamic_cast<bm_index::IndexedCRoaringBPE*>(
-                static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_BPE));
             roaring::Roaring shipdate_gt;
-            if (cr_ship_bpe) {
-                int B    = cr_ship_bpe->bucket_of(Q1_SHIPDATE_CUTOFF);
-                int LAST = static_cast<int>(cr_ship_bpe->num_keys()) - 1;
-                shipdate_gt = *cr_ship_bpe->prefix_at_bucket(LAST);
-                shipdate_gt -= *cr_ship_bpe->prefix_at_bucket(B);
-                int64_t bmax = cr_ship_bpe->bucket_max(B);
-                if (Q1_SHIPDATE_CUTOFF + 1 <= bmax) {
-                    roaring::Roaring boundary;
-                    if (cr_ship->run_optimized()) boundary = cr_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, bmax);
-                    else cr_ship->apply_or_range_to(boundary, Q1_SHIPDATE_CUTOFF + 1, bmax);
-                    shipdate_gt |= boundary;
-                }
+            if (use_month_ge) {
+                // Month-GE: 4-key OR over 199809..199812 (teacher's plan).
+                std::vector<int64_t> month_keys(Q1_GE_AFTER_MONTHS, Q1_GE_AFTER_MONTHS + 4);
+                shipdate_gt = cr_ship->or_many(month_keys);
             } else {
-                // Both CR & CRR: Roaring or_range (= fastunion under the hood).
-                shipdate_gt = cr_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
+                // β scheme: BPE prefix-encoded fast path for cr_bpe.
+                auto* cr_ship_bpe = dynamic_cast<bm_index::IndexedCRoaringBPE*>(
+                    static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_BPE));
+                if (cr_ship_bpe) {
+                    int B    = cr_ship_bpe->bucket_of(Q1_SHIPDATE_CUTOFF);
+                    int LAST = static_cast<int>(cr_ship_bpe->num_keys()) - 1;
+                    shipdate_gt = *cr_ship_bpe->prefix_at_bucket(LAST);
+                    shipdate_gt -= *cr_ship_bpe->prefix_at_bucket(B);
+                    int64_t bmax = cr_ship_bpe->bucket_max(B);
+                    if (Q1_SHIPDATE_CUTOFF + 1 <= bmax) {
+                        roaring::Roaring boundary;
+                        if (cr_ship->run_optimized()) boundary = cr_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, bmax);
+                        else cr_ship->apply_or_range_to(boundary, Q1_SHIPDATE_CUTOFF + 1, bmax);
+                        shipdate_gt |= boundary;
+                    }
+                } else {
+                    // Both CR & CRR: Roaring or_range (= fastunion under the hood).
+                    shipdate_gt = cr_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
+                }
             }
             q1_to_byte_stream(shipdate_gt, shipdate_filter_bs, num_rows);
             q1_byte_stream_not(shipdate_filter_bs, num_rows);
@@ -447,14 +506,20 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
                 }
             }
         }
-        else if (auto* wah_ship = dynamic_cast<bm_index::IndexedWAH*>(idx_ship)) {
+        else if (auto* wah_ship = dynamic_cast<bm_index::IndexedWAH*>(idx_use)) {
             auto* wah_ls_x = dynamic_cast<bm_index::IndexedWAH*>(idx_ls);
             auto* wah_rf_x = dynamic_cast<bm_index::IndexedWAH*>(idx_rf);
             if (!wah_ls_x || !wah_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
 
             auto t_a0 = clk::now();
-            // WAH: copy(first) + decompress + |= rest pairwise (teacher).
-            ibis::bitvector shipdate_gt = wah_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
+            ibis::bitvector shipdate_gt;
+            if (use_month_ge) {
+                std::vector<int64_t> month_keys(Q1_GE_AFTER_MONTHS, Q1_GE_AFTER_MONTHS + 4);
+                shipdate_gt = wah_ship->or_many(month_keys);
+            } else {
+                // WAH: copy(first) + decompress + |= rest pairwise (teacher).
+                shipdate_gt = wah_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
+            }
             q1_to_byte_stream(shipdate_gt, shipdate_filter_bs, num_rows);
             q1_byte_stream_not(shipdate_filter_bs, num_rows);
             auto t_a1 = clk::now();
@@ -485,14 +550,19 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
                 }
             }
         }
-        else if (auto* ew_ship = dynamic_cast<bm_index::IndexedEWAH*>(idx_ship)) {
+        else if (auto* ew_ship = dynamic_cast<bm_index::IndexedEWAH*>(idx_use)) {
             auto* ew_ls_x = dynamic_cast<bm_index::IndexedEWAH*>(idx_ls);
             auto* ew_rf_x = dynamic_cast<bm_index::IndexedEWAH*>(idx_rf);
             if (!ew_ls_x || !ew_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
 
             auto t_a0 = clk::now();
-            ewah::EWAHBoolArray<uint64_t> shipdate_gt =
-                ew_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
+            ewah::EWAHBoolArray<uint64_t> shipdate_gt;
+            if (use_month_ge) {
+                std::vector<int64_t> month_keys(Q1_GE_AFTER_MONTHS, Q1_GE_AFTER_MONTHS + 4);
+                shipdate_gt = ew_ship->or_many(month_keys);
+            } else {
+                shipdate_gt = ew_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
+            }
             q1_to_byte_stream(shipdate_gt, shipdate_filter_bs, num_rows);
             q1_byte_stream_not(shipdate_filter_bs, num_rows);
             auto t_a1 = clk::now();
@@ -523,14 +593,19 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
                 }
             }
         }
-        else if (auto* con_ship = dynamic_cast<bm_index::IndexedConcise*>(idx_ship)) {
+        else if (auto* con_ship = dynamic_cast<bm_index::IndexedConcise*>(idx_use)) {
             auto* con_ls_x = dynamic_cast<bm_index::IndexedConcise*>(idx_ls);
             auto* con_rf_x = dynamic_cast<bm_index::IndexedConcise*>(idx_rf);
             if (!con_ls_x || !con_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
 
             auto t_a0 = clk::now();
-            ConciseSet<false> shipdate_gt =
-                con_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
+            ConciseSet<false> shipdate_gt;
+            if (use_month_ge) {
+                std::vector<int64_t> month_keys(Q1_GE_AFTER_MONTHS, Q1_GE_AFTER_MONTHS + 4);
+                shipdate_gt = con_ship->or_many(month_keys);
+            } else {
+                shipdate_gt = con_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
+            }
             q1_to_byte_stream(shipdate_gt, shipdate_filter_bs, num_rows);
             q1_byte_stream_not(shipdate_filter_bs, num_rows);
             auto t_a1 = clk::now();
@@ -576,7 +651,7 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
         double phaseC = q1_ms(t_b1, t_c1);
         double tot    = q1_ms(t0, t_c1);
 
-        std::cout << "  " << idx_ship->backend_name()
+        std::cout << "  " << idx_use->backend_name()
                   << ":  PhaseA=" << phaseA << "  PhaseB=" << phaseB
                   << "  PhaseC=" << phaseC << "  Total=" << tot << std::endl;
         if (!warm) {
@@ -593,16 +668,21 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
     std::map<std::pair<char,char>, std::vector<double>> gt;
     {
         Connection con(*context.client.db);
-        const std::string sql =
+        // When month-GE is in use the cutoff is rounded down to 1998-08-31
+        // (= '1998-09-01' - 1 day) — matches the 4-month OR over 199809..199812.
+        const char* sql_cutoff = use_month_ge
+            ? "DATE '1998-09-01' - INTERVAL '1' DAY"
+            : "DATE '1998-12-01' - INTERVAL '90' DAY";
+        const std::string sql = std::string(
             "SELECT l_returnflag, l_linestatus, "
             "       sum(l_quantity), sum(l_extendedprice), "
             "       sum(l_extendedprice * (1 - l_discount)) AS sum_disc_price, "
             "       sum(l_extendedprice * (1 - l_discount) * (1 + l_tax)) AS sum_charge, "
             "       sum(l_discount), count(*) "
             "FROM   lineitem "
-            "WHERE  l_shipdate <= DATE '1998-12-01' - INTERVAL '90' DAY "
-            "GROUP BY l_returnflag, l_linestatus "
-            "ORDER BY l_returnflag, l_linestatus";
+            "WHERE  l_shipdate <= ") + sql_cutoff +
+            " GROUP BY l_returnflag, l_linestatus "
+            " ORDER BY l_returnflag, l_linestatus";
         auto r = con.Query(sql);
         if (r && !r->HasError()) {
             for (idx_t i = 0; i < r->RowCount(); i++) {
@@ -654,7 +734,7 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
             }
         }
         if (ok)
-            std::cout << "\n[OK] " << idx_ship->backend_name()
+            std::cout << "\n[OK] " << idx_use->backend_name()
                       << " matches DuckDB SQL ground truth ("
                       << gt.size() << " (rf,ls) groups).\n";
         else
@@ -682,7 +762,7 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
     int measured = std::max(0, Q1_ITERATIONS - Q1_WARMUP);
 
     std::cout << "\n================================================================\n";
-    std::cout << "  Q1 RESULTS — " << idx_ship->backend_name()
+    std::cout << "  Q1 RESULTS — " << idx_use->backend_name()
               << " only (" << measured << " measured iter, median +/- stddev)\n";
     std::cout << "================================================================\n";
     std::cout << "  PhaseA (shipdate ~OR + flip): " << sA.median << " +/- " << sA.stddev << " ms\n";
@@ -707,7 +787,7 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
             << "concise_median_ms,concise_stddev_ms,concise_min_ms,concise_max_ms,"
             << "cb_vs_wah,cr_vs_wah,crr_vs_wah,ew_vs_wah,bs_vs_wah,bsa_vs_wah,con_vs_wah\n";
         bm_bench::Stats z{0,0,0,0};
-        std::string bn = idx_ship->backend_name();
+        std::string bn = idx_use->backend_name();
         auto put = [&](const std::string& op, bm_bench::Stats s) {
             csv << sf << "," << op << ",";
             auto cell = [&](bm_bench::Stats v) {
