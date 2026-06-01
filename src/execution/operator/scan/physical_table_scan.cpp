@@ -152,9 +152,11 @@ SourceResultType PhysicalTableScan::GetData(ExecutionContext &context, DataChunk
 			context.client.query_source = "tpch";
 		}
 		
-		if(context.client.GetCurrentQuery() == (char*)BMTPCH_QUERIES_q15) {
-			bm_table_scan.BMTPCH_Q15(context, *this);
-			context.client.query_source = "tpch";
+		if(context.client.GetCurrentQuery() == (char*)BMTPCH_QUERIES_q15 &&
+			bind_data.get()->Cast<TableScanBindData>().table.name == "lineitem") {
+
+			SourceResultType res = bm_table_scan.BMTPCH_Q15(context, chunk, bind_data.get()->Cast<TableScanBindData>());
+			return res;
 		}
 
 		if(context.client.GetCurrentQuery() == (char*)BMTPCH_QUERIES_q17) {
@@ -162,9 +164,11 @@ SourceResultType PhysicalTableScan::GetData(ExecutionContext &context, DataChunk
 			context.client.query_source = "tpch";
 		}
 
-		if(context.client.GetCurrentQuery() == (char*)BMTPCH_QUERIES_q19) {
-			bm_table_scan.BMTPCH_Q19(context, *this);
-			context.client.query_source = "tpch";
+		if(context.client.GetCurrentQuery() == (char*)BMTPCH_QUERIES_q19 &&
+			bind_data.get()->Cast<TableScanBindData>().table.name == "lineitem") {
+
+			SourceResultType res = bm_table_scan.BMTPCH_Q19(context, chunk, bind_data.get()->Cast<TableScanBindData>());
+			return res;
 		}
 	}
 

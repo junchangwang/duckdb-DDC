@@ -319,20 +319,62 @@ public:
         }
     }
 
-    // K-way OR: sort+dedupe input keys, then merge-walk sorted_keys_
-    // and scatter positions of matched keys into a seeded
-    // Decompressed-empty dst.  Merge-walk avoids the cache-miss storm
-    // that K unsorted binary searches incur on a >L3 sorted_keys_
-    // (l_orderkey SF10: 15M keys / 120 MB — random probes miss L3 by
-    // ~20 cache lines each, Q5's 28k unsorted-input keys cost ~100 ms
-    // in pure cache-miss latency with naive binary search).
-    // Used by Q3 (590k orderkey OR), Q4, Q5, Q8, Q14, Q17.
+    // ComBit-only OPT 1 (galloping or_many): override base merge-walk with
+    // galloping (exponential) search through sorted_keys_, starting from
+    // the previous match position `j` and advancing only forward (input
+    // keys are sorted).  At ni << nj the merge-walk pays O(nj) just to
+    // skip past unrelated entries; galloping pays O(ni × log(nj/ni)).
+    // Cache-friendly because successive input keys land near each other,
+    // so the previous probe's cache lines are still warm.
+    // Sort/dedupe of the input is skipped when it is already monotonic
+    // (TPC-H orders/customer scans emit matched_okeys in scan order).
+    // K-way OR used by Q3 (1.46M orderkey OR), Q4, Q5, Q8, Q10, Q14, Q17.
     template <typename Iterable>
     ComBit or_many(const Iterable& keys) const {
         ComBit dst = ComBit::from_sparse_positions({}, num_rows_, segment_bits_);
-        or_many_walk(keys, [&](const uint32_t* p, size_t n) {
-            dst.scatter_or_decompressed(p, n);
-        });
+        if (sorted_keys_.empty()) return dst;
+
+        std::vector<uint32_t> in;
+        in.reserve(std::distance(std::begin(keys), std::end(keys)));
+        for (auto& k : keys) {
+            int64_t kk = static_cast<int64_t>(k);
+            if (kk >= 0 && kk <= static_cast<int64_t>(UINT32_MAX))
+                in.push_back(static_cast<uint32_t>(kk));
+        }
+        if (in.empty()) return dst;
+
+        if (!std::is_sorted(in.begin(), in.end())) {
+            std::sort(in.begin(), in.end());
+            in.erase(std::unique(in.begin(), in.end()), in.end());
+        }
+
+        const size_t nj = sorted_keys_.size();
+        const uint32_t* sk = sorted_keys_.data();
+        const uint32_t* ko = key_offsets_.data();
+        const uint32_t* ap = all_positions_.data();
+        size_t j = 0;
+        for (size_t i = 0, ni = in.size(); i < ni; i++) {
+            uint32_t target = in[i];
+            if (j >= nj) break;
+            if (sk[j] > target) continue;
+            size_t step = 1;
+            while (j + step < nj && sk[j + step] < target) step *= 2;
+            size_t lo = j + (step / 2);
+            size_t hi = std::min(j + step, nj);
+            while (lo < hi) {
+                size_t mid = lo + ((hi - lo) >> 1);
+                if (sk[mid] < target) lo = mid + 1;
+                else                  hi = mid;
+            }
+            j = lo;
+            if (j < nj && sk[j] == target) {
+                uint32_t lo_off = ko[j];
+                uint32_t hi_off = ko[j + 1];
+                dst.scatter_or_decompressed(ap + lo_off,
+                                            static_cast<size_t>(hi_off - lo_off));
+                j++;
+            }
+        }
         return dst;
     }
 

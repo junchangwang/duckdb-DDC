@@ -938,6 +938,226 @@ ComBit ComBit::deserialize(std::istream& is) {
 }
 
 // =============================================================================
+// V3 packed serialize / deserialize — minimum-overhead opt-in format used
+// for the segment-size ablation study.  Per-segment header drops from
+// 68 byte (V2) to 17 byte by removing derivable count fields and using
+// uint32_t length prefixes.  Production serialize()/deserialize() continues
+// to use V2.
+//
+// Wire format:
+//   Per-bitmap header (25 byte): magic 0xCB + bit_count + segment_bits + num_segs
+//   Per-segment header (17 byte non-last, 21 byte last):
+//     1 byte  flags (l1_fill | l2_fill | l3_fill | is_last_seg)
+//     4 byte  bit_count_ ONLY when is_last_seg
+//     4 byte each: l4_bytes, l3_lit_count, l2_lit_count, l1_lit_count
+//   then four data streams (L4 raw, L3 lit, L2 lit, L1 lit).
+// =============================================================================
+
+static constexpr uint8_t COMBIT_FMT_V3_MAGIC = 0xCB;
+
+void ComBitBtv::serialize_packed(std::ostream& os, bool is_last_seg) const {
+    assert(state_ == State::Compressed);
+
+    uint8_t flags = 0;
+    if (l1_fill_ones_) flags |= 0x01;
+    if (l2_fill_ones_) flags |= 0x02;
+    if (l3_fill_ones_) flags |= 0x04;
+    if (is_last_seg)   flags |= 0x08;
+    write_val<uint8_t>(os, flags);
+
+    if (is_last_seg)
+        write_val<uint32_t>(os, static_cast<uint32_t>(bit_count_));
+
+    uint32_t l4_bytes = static_cast<uint32_t>(l4_bits_.size());
+    write_val<uint32_t>(os, l4_bytes);
+    write_val<uint32_t>(os, static_cast<uint32_t>(l3_literal_count_));
+    write_val<uint32_t>(os, static_cast<uint32_t>(l2_literal_count_));
+    write_val<uint32_t>(os, static_cast<uint32_t>(l1_literal_count_));
+
+    if (l4_bytes > 0)
+        os.write(reinterpret_cast<const char*>(l4_bits_.data()), l4_bytes);
+    if (l3_literal_count_ > 0)
+        os.write(reinterpret_cast<const char*>(l3_literals_.data()), l3_literal_count_);
+    if (l2_literal_count_ > 0)
+        os.write(reinterpret_cast<const char*>(l2_literals_.data()), l2_literal_count_);
+    if (l1_literal_count_ > 0)
+        os.write(reinterpret_cast<const char*>(l1_literals_.data()), l1_literal_count_);
+}
+
+ComBitBtv ComBitBtv::deserialize_packed(std::istream& is, size_t segment_bits) {
+    uint8_t flags = read_val<uint8_t>(is);
+    bool l1_fo  = (flags & 0x01) != 0;
+    bool l2_fo  = (flags & 0x02) != 0;
+    bool l3_fo  = (flags & 0x04) != 0;
+    bool islast = (flags & 0x08) != 0;
+
+    ComBitBtv btv(l1_fo, l2_fo);
+    btv.l3_fill_ones_ = l3_fo;
+
+    btv.bit_count_ = islast ? read_val<uint32_t>(is) : segment_bits;
+    btv.l2_count_  = (btv.bit_count_ + 7) / 8;
+    btv.l3_count_  = (btv.l2_count_  + 7) / 8;
+    btv.l4_count_  = (btv.l3_count_  + 7) / 8;
+
+    uint32_t l4_bytes        = read_val<uint32_t>(is);
+    btv.l3_literal_count_    = read_val<uint32_t>(is);
+    btv.l2_literal_count_    = read_val<uint32_t>(is);
+    btv.l1_literal_count_    = read_val<uint32_t>(is);
+
+    btv.l4_bits_.resize(l4_bytes);
+    if (l4_bytes > 0)
+        is.read(reinterpret_cast<char*>(btv.l4_bits_.data()), l4_bytes);
+    btv.l3_literals_.resize(btv.l3_literal_count_);
+    if (btv.l3_literal_count_ > 0)
+        is.read(reinterpret_cast<char*>(btv.l3_literals_.data()), btv.l3_literal_count_);
+    btv.l2_literals_.resize(btv.l2_literal_count_);
+    if (btv.l2_literal_count_ > 0)
+        is.read(reinterpret_cast<char*>(btv.l2_literals_.data()), btv.l2_literal_count_);
+    btv.l1_literals_.resize(btv.l1_literal_count_);
+    if (btv.l1_literal_count_ > 0)
+        is.read(reinterpret_cast<char*>(btv.l1_literals_.data()), btv.l1_literal_count_);
+    return btv;
+}
+
+void ComBit::serialize_packed(std::ostream& os) const {
+    write_val<uint8_t>(os, COMBIT_FMT_V3_MAGIC);
+    write_val<uint64_t>(os, bit_count_);
+    write_val<uint64_t>(os, segment_bits_);
+    write_val<uint64_t>(os, segments_.size());
+    for (size_t i = 0; i < segments_.size(); i++)
+        segments_[i].serialize_packed(os, /*is_last_seg=*/(i + 1 == segments_.size()));
+}
+
+ComBit ComBit::deserialize_packed(std::istream& is) {
+    uint8_t magic = read_val<uint8_t>(is);
+    if (magic != COMBIT_FMT_V3_MAGIC)
+        throw std::runtime_error("ComBit::deserialize_packed: bad magic "
+                                 + std::to_string(magic));
+    ComBit cb;
+    cb.bit_count_    = read_val<uint64_t>(is);
+    cb.segment_bits_ = read_val<uint64_t>(is);
+    uint64_t num_segs = read_val<uint64_t>(is);
+    cb.segments_.reserve(num_segs);
+    for (uint64_t i = 0; i < num_segs; i++)
+        cb.segments_.push_back(ComBitBtv::deserialize_packed(is, cb.segment_bits_));
+    return cb;
+}
+
+// =============================================================================
+// V4 packed serialize — header-optimized opt-in format.  Per-segment header
+// is 1-13 byte (vs V3's 17 byte): all-fill segs use 1 byte (just flags +
+// has_layer bits), L4 raw length derived from segment_bits.
+//
+// Wire format:
+//   Per-bitmap: magic 0xC4 + bit_count + segment_bits + num_segs
+//   Per-segment:
+//     1 byte flags (4 fill + last + 3 has_layer bits)
+//     [4 byte bit_count_]    if is_last_seg
+//     [4 byte l3_lit_count_] if has_l3_lit
+//     [4 byte l2_lit_count_] if has_l2_lit
+//     [4 byte l1_lit_count_] if has_l1_lit
+//   then L4 raw (always, length derived) + L3/L2/L1 lit (if has_*)
+// =============================================================================
+
+static constexpr uint8_t COMBIT_FMT_V4_MAGIC = 0xC4;
+
+void ComBitBtv::serialize_v4(std::ostream& os, bool is_last_seg) const {
+    assert(state_ == State::Compressed);
+
+    uint8_t flags = 0;
+    if (l1_fill_ones_)             flags |= 0x01;
+    if (l2_fill_ones_)             flags |= 0x02;
+    if (l3_fill_ones_)             flags |= 0x04;
+    if (is_last_seg)               flags |= 0x08;
+    if (l1_literal_count_ > 0)     flags |= 0x10;
+    if (l2_literal_count_ > 0)     flags |= 0x20;
+    if (l3_literal_count_ > 0)     flags |= 0x40;
+    write_val<uint8_t>(os, flags);
+
+    if (is_last_seg)
+        write_val<uint32_t>(os, static_cast<uint32_t>(bit_count_));
+
+    if (l3_literal_count_ > 0)
+        write_val<uint32_t>(os, static_cast<uint32_t>(l3_literal_count_));
+    if (l2_literal_count_ > 0)
+        write_val<uint32_t>(os, static_cast<uint32_t>(l2_literal_count_));
+    if (l1_literal_count_ > 0)
+        write_val<uint32_t>(os, static_cast<uint32_t>(l1_literal_count_));
+
+    uint32_t l4_bytes = static_cast<uint32_t>(l4_bits_.size());
+    if (l4_bytes > 0)
+        os.write(reinterpret_cast<const char*>(l4_bits_.data()), l4_bytes);
+    if (l3_literal_count_ > 0)
+        os.write(reinterpret_cast<const char*>(l3_literals_.data()), l3_literal_count_);
+    if (l2_literal_count_ > 0)
+        os.write(reinterpret_cast<const char*>(l2_literals_.data()), l2_literal_count_);
+    if (l1_literal_count_ > 0)
+        os.write(reinterpret_cast<const char*>(l1_literals_.data()), l1_literal_count_);
+}
+
+ComBitBtv ComBitBtv::deserialize_v4(std::istream& is, size_t segment_bits) {
+    uint8_t flags = read_val<uint8_t>(is);
+    bool l1_fo       = (flags & 0x01) != 0;
+    bool l2_fo       = (flags & 0x02) != 0;
+    bool l3_fo       = (flags & 0x04) != 0;
+    bool islast      = (flags & 0x08) != 0;
+    bool has_l1_lit  = (flags & 0x10) != 0;
+    bool has_l2_lit  = (flags & 0x20) != 0;
+    bool has_l3_lit  = (flags & 0x40) != 0;
+
+    ComBitBtv btv(l1_fo, l2_fo);
+    btv.l3_fill_ones_ = l3_fo;
+
+    btv.bit_count_ = islast ? read_val<uint32_t>(is) : segment_bits;
+    btv.l2_count_  = (btv.bit_count_ + 7) / 8;
+    btv.l3_count_  = (btv.l2_count_  + 7) / 8;
+    btv.l4_count_  = (btv.l3_count_  + 7) / 8;
+    size_t l4_bytes = (btv.l4_count_ + 7) / 8;
+
+    btv.l3_literal_count_ = has_l3_lit ? read_val<uint32_t>(is) : 0;
+    btv.l2_literal_count_ = has_l2_lit ? read_val<uint32_t>(is) : 0;
+    btv.l1_literal_count_ = has_l1_lit ? read_val<uint32_t>(is) : 0;
+
+    btv.l4_bits_.resize(l4_bytes);
+    if (l4_bytes > 0)
+        is.read(reinterpret_cast<char*>(btv.l4_bits_.data()), l4_bytes);
+    btv.l3_literals_.resize(btv.l3_literal_count_);
+    if (btv.l3_literal_count_ > 0)
+        is.read(reinterpret_cast<char*>(btv.l3_literals_.data()), btv.l3_literal_count_);
+    btv.l2_literals_.resize(btv.l2_literal_count_);
+    if (btv.l2_literal_count_ > 0)
+        is.read(reinterpret_cast<char*>(btv.l2_literals_.data()), btv.l2_literal_count_);
+    btv.l1_literals_.resize(btv.l1_literal_count_);
+    if (btv.l1_literal_count_ > 0)
+        is.read(reinterpret_cast<char*>(btv.l1_literals_.data()), btv.l1_literal_count_);
+    return btv;
+}
+
+void ComBit::serialize_v4(std::ostream& os) const {
+    write_val<uint8_t>(os, COMBIT_FMT_V4_MAGIC);
+    write_val<uint64_t>(os, bit_count_);
+    write_val<uint64_t>(os, segment_bits_);
+    write_val<uint64_t>(os, segments_.size());
+    for (size_t i = 0; i < segments_.size(); i++)
+        segments_[i].serialize_v4(os, /*is_last_seg=*/(i + 1 == segments_.size()));
+}
+
+ComBit ComBit::deserialize_v4(std::istream& is) {
+    uint8_t magic = read_val<uint8_t>(is);
+    if (magic != COMBIT_FMT_V4_MAGIC)
+        throw std::runtime_error("ComBit::deserialize_v4: bad magic "
+                                 + std::to_string(magic));
+    ComBit cb;
+    cb.bit_count_    = read_val<uint64_t>(is);
+    cb.segment_bits_ = read_val<uint64_t>(is);
+    uint64_t num_segs = read_val<uint64_t>(is);
+    cb.segments_.reserve(num_segs);
+    for (uint64_t i = 0; i < num_segs; i++)
+        cb.segments_.push_back(ComBitBtv::deserialize_v4(is, cb.segment_bits_));
+    return cb;
+}
+
+// =============================================================================
 // SparseComBit — sparse-storage variant for per-value indexing workloads.
 // =============================================================================
 

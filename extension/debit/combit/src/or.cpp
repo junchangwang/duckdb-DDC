@@ -69,8 +69,6 @@ ComBitBtv::operator|(const ComBitBtv& other) const {
     //                        => OR result saturates to 0xFF regardless of B
     const bool a_zero_when_l3_zero = !A.l1_fill_ones && !A.l2_fill_ones;
     const bool b_zero_when_l3_zero = !B.l1_fill_ones && !B.l2_fill_ones;
-    const bool a_ones_when_l3_zero = !A.l2_fill_ones && A.l1_fill_ones;
-    const bool b_ones_when_l3_zero = !B.l2_fill_ones && B.l1_fill_ones;
 
     // Structurally zero: a side's L4=0 implies 512 zero words.  Used by the
     // batch-level "both all-zero" fast skip below.
@@ -126,92 +124,16 @@ ComBitBtv::operator|(const ComBitBtv& other) const {
             const uint8_t l3a = l3a_buf[r];
             const uint8_t l3b = l3b_buf[r];
 
-            // --- Per-side bypass: x | 0 = x ---
-            if (a_zero_when_l3_zero && l3a == 0) {
-                if (b_zero_when_l3_zero && l3b == 0) {
-                    // Both zero => 0 | 0 = 0
-                    if (!compress) {
-                        _mm512_storeu_si512(r_l1 + r_off, _mm512_setzero_si512());
-                        r_off += 64;
-                    }
-                    continue;
-                }
-                // a is all-zero => result = b (expand b only)
-                __m512i l2b_v = _mm512_mask_expandloadu_epi8(B.l2_fill_vec,
-                    static_cast<__mmask64>(l3b), B.l2_lits + B.l2_lit_off);
-                B.l2_lit_off += __builtin_popcount(l3b);
-                __mmask64 mb = static_cast<__mmask64>(
-                    _mm_cvtsi128_si64(_mm512_castsi512_si128(l2b_v)));
-                __m512i vb = _mm512_mask_expandloadu_epi8(B.l1_fill_vec, mb,
-                    B.l1_lits + B.l1_lit_off);
-                B.l1_lit_off += __builtin_popcountll(static_cast<uint64_t>(mb));
-                if (compress) {
-                    __mmask64 lit_mask = _mm512_test_epi8_mask(vb, vb);
-                    uint64_t mask_val = static_cast<uint64_t>(lit_mask);
-                    std::memcpy(result_l2 + region * 8, &mask_val, 8);
-                    _mm512_mask_compressstoreu_epi8(r_l1 + r_off, lit_mask, vb);
-                    r_off += __builtin_popcountll(mask_val);
-                } else {
-                    _mm512_storeu_si512(r_l1 + r_off, vb);
-                    r_off += 64;
-                }
-                continue;
-            }
-            if (b_zero_when_l3_zero && l3b == 0) {
-                // b is all-zero => result = a (expand a only)
-                __m512i l2a_v = _mm512_mask_expandloadu_epi8(A.l2_fill_vec,
-                    static_cast<__mmask64>(l3a), A.l2_lits + A.l2_lit_off);
-                A.l2_lit_off += __builtin_popcount(l3a);
-                __mmask64 ma = static_cast<__mmask64>(
-                    _mm_cvtsi128_si64(_mm512_castsi512_si128(l2a_v)));
-                __m512i va = _mm512_mask_expandloadu_epi8(A.l1_fill_vec, ma,
-                    A.l1_lits + A.l1_lit_off);
-                A.l1_lit_off += __builtin_popcountll(static_cast<uint64_t>(ma));
-                if (compress) {
-                    __mmask64 lit_mask = _mm512_test_epi8_mask(va, va);
-                    uint64_t mask_val = static_cast<uint64_t>(lit_mask);
-                    std::memcpy(result_l2 + region * 8, &mask_val, 8);
-                    _mm512_mask_compressstoreu_epi8(r_l1 + r_off, lit_mask, va);
-                    r_off += __builtin_popcountll(mask_val);
-                } else {
-                    _mm512_storeu_si512(r_l1 + r_off, va);
-                    r_off += 64;
-                }
-                continue;
-            }
-
-            // --- Per-side bypass: x | 1 = 1 (saturate) ---
-            // When A's l3==0 region is implicit-all-1s (l2_fill=0, l1_fill=1),
-            // OR saturates to 0xFF; B's L2/L1 still need cursor advancement
-            // since subsequent regions read them.  Symmetric for B.
-            // These branches are dead code in our sparse-1 benchmarks
-            // (l1_fill_ones=false), so branch predictor handles trivially.
-            if (a_ones_when_l3_zero && l3a == 0) {
-                advance_side(B, l3b);
-                if (compress) {
-                    std::memset(r_l1 + r_off, 0xFF, 64);
-                    std::memset(result_l2 + region * 8, 0xFF, 8);
-                    r_off += 64;
-                } else {
-                    _mm512_storeu_si512(r_l1 + r_off,
-                        _mm512_set1_epi8(static_cast<char>(-1)));
-                    r_off += 64;
-                }
-                continue;
-            }
-            if (b_ones_when_l3_zero && l3b == 0) {
-                advance_side(A, l3a);
-                if (compress) {
-                    std::memset(r_l1 + r_off, 0xFF, 64);
-                    std::memset(result_l2 + region * 8, 0xFF, 8);
-                    r_off += 64;
-                } else {
-                    _mm512_storeu_si512(r_l1 + r_off,
-                        _mm512_set1_epi8(static_cast<char>(-1)));
-                    r_off += 64;
-                }
-                continue;
-            }
+            // [EXPERIMENT 2] ALL per-region bypass removed — every region
+            // goes through the uniform full-expand path below (branchless
+            // inner loop).  Empty regions are handled for free:
+            // mask_expandloadu with l3==0 returns the zero fill_vec and
+            // advances cursors by 0, so 0|0=0, 0|B=B, A|0=A all compute
+            // correctly.  The batch-level both-all-zero skip (above) still
+            // fires for fully-empty 4096-word batches.  Removes the
+            // per-region branch mispredict that caused OR's sparse dip.
+            // (x|1=1 saturate path dropped too — dead on sparse-1 data;
+            //  the fill-vec fallback saturates correctly.)
 
             _mm_prefetch(reinterpret_cast<const char*>(A.l1_lits + A.l1_lit_off + PF_DIST), _MM_HINT_T0);
             _mm_prefetch(reinterpret_cast<const char*>(B.l1_lits + B.l1_lit_off + PF_DIST), _MM_HINT_T0);

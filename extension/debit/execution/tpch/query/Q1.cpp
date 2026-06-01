@@ -61,6 +61,7 @@
 #include "execution/tpch/indexed_bitmap.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -73,6 +74,10 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#if defined(__AVX512F__)
+#  include <immintrin.h>
+#endif
 
 namespace duckdb {
 
@@ -108,7 +113,8 @@ struct Q1GroupAns {
     int64_t count_order    = 0;
 };
 
-// Per-row aggregator (matches teacher's q1_exe_aggregation scalar path).
+// Per-row aggregator (scalar — used for the byte-stream tail when num_rows
+// is not a multiple of 8, and as the #else fallback for non-AVX512 builds).
 #define Q1_AGG_ROW(g, r, qty, price, disc, tax) do { \
     (g).sum_qty        += (qty)[(r)];                 \
     (g).sum_discount   += (disc)[(r)];                \
@@ -118,6 +124,83 @@ struct Q1GroupAns {
     (g).sum_charge     += _dp * (100 + (tax)[(r)]);   \
     (g).count_order++;                                \
 } while (0)
+
+// =========================================================================
+// q1_reverse_table — bit-reverse a MSB-first packed byte to LSB-first so
+// it can drive AVX512 _mm512_maskz_compress_epi64 (whose mask is LSB-first).
+// Mirrors teacher's `reverse_table` in BMTPCH_Q1.  Initialised at process
+// start via the make_q1_reverse_table() helper below.
+// =========================================================================
+static std::array<uint8_t, 256> make_q1_reverse_table() {
+    std::array<uint8_t, 256> t{};
+    for (int i = 0; i < 256; i++) {
+        uint8_t b = static_cast<uint8_t>(i), r = 0;
+        for (int k = 0; k < 8; k++)
+            if (b & (1u << k)) r |= static_cast<uint8_t>(1u << (7 - k));
+        t[i] = r;
+    }
+    return t;
+}
+static const std::array<uint8_t, 256> q1_reverse_table = make_q1_reverse_table();
+
+// =========================================================================
+// q1_agg_8rows — SIMD-vectorised inline aggregation of 8 contiguous rows.
+//
+// `bits_msb` is the MSB-first packed-byte from the group's byte-stream:
+// bit (0x80 >> i) corresponds to row (base + i).  We bit-reverse it to
+// LSB-first and feed AVX512 maskz_compress to compress the selected
+// lanes, then reduce-add.  This is a port of teacher's BitEngine
+// `q1_exe_aggregation` (Q1.cpp lines 168-220 on origin/BitEngine).
+//
+// All five running sums (sum_qty, sum_discount, sum_base_price,
+// sum_disc_price, sum_charge) and count_order are folded into one
+// pass over the 8-row window.  Falls back to a scalar loop when AVX512
+// is unavailable (compile-time guarded).
+// =========================================================================
+static inline void q1_agg_8rows(
+    const int64_t* qty, const int64_t* price, const int64_t* disc, const int64_t* tax,
+    size_t base, uint8_t bits_msb, Q1GroupAns& ans)
+{
+#if defined(__AVX512F__)
+    if (!bits_msb) return;
+
+    const uint8_t mask = q1_reverse_table[bits_msb];
+
+    __m512i qty_v   = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(qty + base));
+    __m512i price_v = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(price + base));
+    __m512i disc_v  = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(disc + base));
+    __m512i tax_v   = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(tax + base));
+    __m512i c100    = _mm512_set1_epi64(100);
+
+    // sum_qty += sum of selected qty lanes
+    ans.sum_qty += _mm512_reduce_add_epi64(_mm512_maskz_compress_epi64(mask, qty_v));
+
+    // sum_discount += sum of selected disc lanes
+    ans.sum_discount += _mm512_reduce_add_epi64(_mm512_maskz_compress_epi64(mask, disc_v));
+
+    // sum_base_price += sum of selected price lanes
+    __m512i cprice = _mm512_maskz_compress_epi64(mask, price_v);
+    ans.sum_base_price += _mm512_reduce_add_epi64(cprice);
+
+    // sum_disc_price += sum of price * (100 - disc) for selected lanes
+    __m512i cdisc_inv = _mm512_maskz_compress_epi64(mask, _mm512_sub_epi64(c100, disc_v));
+    __m512i dp_v = _mm512_mullo_epi64(cprice, cdisc_inv);
+    ans.sum_disc_price += _mm512_reduce_add_epi64(dp_v);
+
+    // sum_charge += sum of price * (100 - disc) * (100 + tax) for selected lanes
+    __m512i ctax_p100 = _mm512_maskz_compress_epi64(mask, _mm512_add_epi64(c100, tax_v));
+    __m512i ch_v = _mm512_mullo_epi64(dp_v, ctax_p100);
+    ans.sum_charge += _mm512_reduce_add_epi64(ch_v);
+
+    ans.count_order += __builtin_popcount(static_cast<unsigned>(bits_msb));
+#else
+    // Scalar fallback — preserves MSB-first ordering.
+    for (int i = 0; i < 8; i++) {
+        if (bits_msb & (0x80 >> i))
+            Q1_AGG_ROW(ans, base + i, qty, price, disc, tax);
+    }
+#endif
+}
 
 // =========================================================================
 // Per-backend "decompress to MSB-first packed byte-stream of length
@@ -242,19 +325,16 @@ static void q1_run_aggregate(
         // Walk 8 rows at a time using byte-aligned access into the
         // group's byte-stream.  row_offset is always a multiple of 8
         // for all but possibly the very last chunk (TPC-H lineitem
-        // chunks are 2048 = 256 bytes worth of bits).
+        // chunks are 2048 = 256 bytes worth of bits).  Per-byte we
+        // dispatch to the AVX512 lane-compressed kernel (q1_agg_8rows)
+        // — this folds all 5 running sums + count_order into one
+        // _mm512_maskz_compress + _mm512_reduce_add per accumulator.
         idx_t base = 0;
         while (base + 7 < n) {
             size_t bs_off = (row_offset + base) / 8;
             for (auto& slot : slots) {
                 uint8_t bits = slot.bs_base[bs_off];
-                if (!bits) continue;
-                // 8 rows, MSB-first scan: bit (0x80 >> i) corresponds
-                // to chunk row (base + i).
-                for (int i = 0; i < 8; i++) {
-                    if (bits & (0x80 >> i))
-                        Q1_AGG_ROW(*slot.ans_ptr, base + i, qty, price, disc, tax);
-                }
+                q1_agg_8rows(qty, price, disc, tax, base, bits, *slot.ans_ptr);
             }
             base += 8;
         }

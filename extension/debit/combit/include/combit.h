@@ -168,6 +168,19 @@ public:
     void serialize(std::ostream& os) const;
     static ComBitBtv deserialize(std::istream& is);
 
+    // Packed V3 serialize (segment-size ablation / optional disk format).
+    // Per-segment header is 17 byte vs V2's 68 byte.  Opt-in: production
+    // serialize()/deserialize() continue to use V2.  See
+    // ComBit::serialize_packed for the per-bitmap header.
+    void serialize_packed(std::ostream& os, bool is_last_seg) const;
+    static ComBitBtv deserialize_packed(std::istream& is, size_t segment_bits);
+
+    // Packed V4 (header-optimized).  Per-segment header is 1-13 byte:
+    // all-fill seg = 1 byte; otherwise 5/9/13 byte based on which layers
+    // have lit data.  L4 raw length derived from segment_bits.
+    void serialize_v4(std::ostream& os, bool is_last_seg) const;
+    static ComBitBtv deserialize_v4(std::istream& is, size_t segment_bits);
+
     void print(std::ostream& os = std::cout) const;
 
 private:
@@ -425,6 +438,16 @@ public:
     // serialize
     void serialize(std::ostream& os) const;
     static ComBit deserialize(std::istream& is);
+
+    // Packed V3 serialize (see ComBitBtv::serialize_packed).  Top-level
+    // header writes a magic byte 0xCB followed by bit_count / segment_bits
+    // / num_segments.  Opt-in API — production V2 path is unchanged.
+    void serialize_packed(std::ostream& os) const;
+    static ComBit deserialize_packed(std::istream& is);
+
+    // Packed V4 (header-optimized).  Magic byte 0xC4.  Opt-in.
+    void serialize_v4(std::ostream& os) const;
+    static ComBit deserialize_v4(std::istream& is);
 
     void print(std::ostream& os = std::cout) const;
 

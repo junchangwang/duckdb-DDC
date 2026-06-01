@@ -42,9 +42,21 @@ public:
     void BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan &op);
     void BMTPCH_Q12(ExecutionContext &context, const PhysicalTableScan &op);
     void BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan &op);
-    void BMTPCH_Q15(ExecutionContext &context, const PhysicalTableScan &op);
+    // Q15: streaming pattern (mirrors BitEngine paper).  First call builds
+    // row_ids via shipdate range / month-GE OR; each subsequent call BMFetches
+    // a 2048-row chunk of (l_suppkey, l_extendedprice, l_discount) for DuckDB
+    // upstream's GROUP BY l_suppkey + MAX + JOIN supplier.
+    void TPCH_Q15_Lineitem_GetRowIds(ExecutionContext &context, vector<row_t> *row_ids);
+    SourceResultType BMTPCH_Q15(ExecutionContext &context, DataChunk &chunk,
+                                const TableScanBindData &bind_data);
     void BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan &op);
-    void BMTPCH_Q19(ExecutionContext &context, const PhysicalTableScan &op);
+    // Q19: streaming pattern (mirrors BitEngine paper).  First call into the
+    // lineitem table-scan builds row_ids via shipmode AND shipinstruct; each
+    // subsequent call Fetches one 2048-row chunk and returns it to DuckDB's
+    // upstream (hash join with part + 3-OR predicate filter + SUM agg).
+    void TPCH_Q19_Lineitem_GetRowIds(ExecutionContext &context, vector<row_t> *row_ids);
+    SourceResultType BMTPCH_Q19(ExecutionContext &context, DataChunk &chunk,
+                                const TableScanBindData &bind_data);
 };
 
 }
