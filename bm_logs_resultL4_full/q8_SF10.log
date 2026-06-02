@@ -7,9 +7,9 @@ PRAGMA load_bitmap('orderkey');
 PRAGMA load_bitmap('partkey');
 PRAGMA bm_tpch(8);
 [load_bitmap] orderkey: scanned 59986052 rows in 649 ms
-[load_bitmap] orderkey: built ComBit index (15000000 keys, 1679.94 MB) in 4909 ms
+[load_bitmap] orderkey: built DDC index (15000000 keys, 1679.94 MB) in 4909 ms
 [load_bitmap] partkey: scanned 59986052 rows in 293 ms
-[load_bitmap] partkey: built ComBit index (2000000 keys, 431.944 MB) in 6535 ms
+[load_bitmap] partkey: built DDC index (2000000 keys, 431.944 MB) in 6535 ms
 
 ================================================================
   TPC-H Q8 (BitEngine pattern, runtime semi-joins)
@@ -17,24 +17,24 @@ PRAGMA bm_tpch(8);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  ComBit:  PhaseA(side_tables)=106.291  PhaseB(orders)=463.039  PhaseCDE(okey/part_OR+AND)=131.466  PhaseF(BMFetch+agg)=291.935  PhaseG(share)=0  Total=992.732  rows=24254  share_1995=0.038820  share_1996=0.039490
+  DDC:  PhaseA(side_tables)=106.291  PhaseB(orders)=463.039  PhaseCDE(okey/part_OR+AND)=131.466  PhaseF(BMFetch+agg)=291.935  PhaseG(share)=0  Total=992.732  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 2/5 ---
-  ComBit:  PhaseA(side_tables)=87.990000  PhaseB(orders)=347.757000  PhaseCDE(okey/part_OR+AND)=129.300000  PhaseF(BMFetch+agg)=29.359000  PhaseG(share)=0.000000  Total=594.408000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  DDC:  PhaseA(side_tables)=87.990000  PhaseB(orders)=347.757000  PhaseCDE(okey/part_OR+AND)=129.300000  PhaseF(BMFetch+agg)=29.359000  PhaseG(share)=0.000000  Total=594.408000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 3/5 ---
-  ComBit:  PhaseA(side_tables)=88.071000  PhaseB(orders)=340.485000  PhaseCDE(okey/part_OR+AND)=123.729000  PhaseF(BMFetch+agg)=29.373000  PhaseG(share)=0.000000  Total=581.659000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  DDC:  PhaseA(side_tables)=88.071000  PhaseB(orders)=340.485000  PhaseCDE(okey/part_OR+AND)=123.729000  PhaseF(BMFetch+agg)=29.373000  PhaseG(share)=0.000000  Total=581.659000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 4/5 ---
-  ComBit:  PhaseA(side_tables)=87.935000  PhaseB(orders)=339.829000  PhaseCDE(okey/part_OR+AND)=125.953000  PhaseF(BMFetch+agg)=29.252000  PhaseG(share)=0.000000  Total=582.971000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  DDC:  PhaseA(side_tables)=87.935000  PhaseB(orders)=339.829000  PhaseCDE(okey/part_OR+AND)=125.953000  PhaseF(BMFetch+agg)=29.252000  PhaseG(share)=0.000000  Total=582.971000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
 --- Iteration 5/5 ---
-  ComBit:  PhaseA(side_tables)=88.380000  PhaseB(orders)=343.885000  PhaseCDE(okey/part_OR+AND)=122.816000  PhaseF(BMFetch+agg)=29.485000  PhaseG(share)=0.000000  Total=584.568000  rows=24254  share_1995=0.038820  share_1996=0.039490
+  DDC:  PhaseA(side_tables)=88.380000  PhaseB(orders)=343.885000  PhaseCDE(okey/part_OR+AND)=122.816000  PhaseF(BMFetch+agg)=29.485000  PhaseG(share)=0.000000  Total=584.568000  rows=24254  share_1995=0.038820  share_1996=0.039490
 
-[OK] ComBit matches DuckDB SQL ground truth (1995=0.038820, 1996=0.039490).
+[OK] DDC matches DuckDB SQL ground truth (1995=0.038820, 1996=0.039490).
 
 ================================================================
-  Q8 RESULTS — ComBit (4 measured iter, median +/- stddev)
+  Q8 RESULTS — DDC (4 measured iter, median +/- stddev)
 ================================================================
   PhaseA (side tables)         : 88.030500 +/- 0.172062 ms
   PhaseB (orders scan)         : 342.185000 +/- 3.154055 ms

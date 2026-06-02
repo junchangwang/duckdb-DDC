@@ -8,33 +8,33 @@ PRAGMA load_bitmap('linestatus');
 PRAGMA load_bitmap('returnflag');
 PRAGMA bm_tpch(1);
 [load_bitmap] shipdate: scanned 59986052 rows in 698 ms
-[load_bitmap] shipdate: built ComBit index (2526 keys, 6586.64 MB) in 23483 ms
+[load_bitmap] shipdate: built DDC index (2526 keys, 6586.64 MB) in 23483 ms
 [load_bitmap] linestatus: scanned 59986052 rows in 884 ms
-[load_bitmap] linestatus: built ComBit index (2 keys, 20.6325 MB) in 2335 ms
+[load_bitmap] linestatus: built DDC index (2 keys, 20.6325 MB) in 2335 ms
 [load_bitmap] returnflag: scanned 59986052 rows in 866 ms
-[load_bitmap] returnflag: built ComBit index (3 keys, 29.7765 MB) in 2413 ms
+[load_bitmap] returnflag: built DDC index (3 keys, 29.7765 MB) in 2413 ms
 
 ================================================================
-  TPC-H Q1 (BitEngine pattern, BMFetch) — ComBit (SF10)
+  TPC-H Q1 (BitEngine pattern, BMFetch) — DDC (SF10)
   Pre-loaded auxiliary structures: bitmap_shipdate + bitmap_linestatus + bitmap_returnflag
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  ComBit:  PhaseA=1682.25  PhaseB=593.685  PhaseC=3119.38  Total=5395.31
+  DDC:  PhaseA=1682.25  PhaseB=593.685  PhaseC=3119.38  Total=5395.31
 
 --- Iteration 2/5 ---
-  ComBit:  PhaseA=1676.91  PhaseB=595.371  PhaseC=2894.93  Total=5167.21
+  DDC:  PhaseA=1676.91  PhaseB=595.371  PhaseC=2894.93  Total=5167.21
 
 --- Iteration 3/5 ---
-  ComBit:  PhaseA=1672.53  PhaseB=592.21  PhaseC=2909.7  Total=5174.45
+  DDC:  PhaseA=1672.53  PhaseB=592.21  PhaseC=2909.7  Total=5174.45
 
 --- Iteration 4/5 ---
-  ComBit:  PhaseA=1672.35  PhaseB=592.619  PhaseC=2903.88  Total=5168.86
+  DDC:  PhaseA=1672.35  PhaseB=592.619  PhaseC=2903.88  Total=5168.86
 
 --- Iteration 5/5 ---
-  ComBit:  PhaseA=1671.9  PhaseB=592.407  PhaseC=2900.66  Total=5164.97
+  DDC:  PhaseA=1671.9  PhaseB=592.407  PhaseC=2900.66  Total=5164.97
 
-[OK] ComBit matches DuckDB SQL ground truth (4 (rf,ls) groups).
+[OK] DDC matches DuckDB SQL ground truth (4 (rf,ls) groups).
 
   Q1 group results (rf,ls): qty / base_price / disc_price / charge / discount / count
   (A,F): 377518399.00  566065727797.25  537759104278.07  559276670892.12  740301.18  14804077
@@ -43,7 +43,7 @@ PRAGMA bm_tpch(1);
   (R,F): 377732830.00  566431054976.00  538110922664.77  559634780885.09  740361.65  14808183
 
 ================================================================
-  Q1 RESULTS — ComBit only (4 measured iter, median +/- stddev)
+  Q1 RESULTS — DDC only (4 measured iter, median +/- stddev)
 ================================================================
   PhaseA (shipdate range OR): 1672.44 +/- 2.03 ms
   PhaseB (per-group AND)    : 592.51 +/- 1.29 ms

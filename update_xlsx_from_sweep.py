@@ -48,14 +48,14 @@ def col_for(pass_, bm):
 # distinguish per-backend output sections in Q15's combined log.
 # Note: Q15 prints SHORT tags (CB/CR/CRR/WAH/EW/CON) regardless of
 # cb vs cb_ge, since it always selects run_cb() for both.  Other Qs
-# print the IndexedX class name ("ComBit", "ComBitGE", "CRoaring"…).
+# print the IndexedX class name ("DDC", "DDCGE", "CRoaring"…).
 Q15_SHORT_LABEL = {
     "cb": "CB", "cb_ge": "CB",
     "cr": "CR", "crr": "CRR",
     "wah": "WAH", "ew": "EW", "con": "CON",
 }
 BACKEND_LABEL_FOR = {
-    "cb": "ComBit", "cb_ge": "ComBitGE",
+    "cb": "DDC", "cb_ge": "DDCGE",
     "cr": "CRoaring", "crr": "CRoaringRun",
     "wah": "WAH", "ew": "EWAH", "con": "Concise",
 }
@@ -217,7 +217,7 @@ def header_to_col(ws, header_text, header_row=1):
 
     Handles two header conventions:
       - bare:  'CB'   (Time Matrix, Storage Total, Phase Time Detail)
-      - dashed: 'CB — ComBit' (Memory Breakdown — short tag, em-dash, description)
+      - dashed: 'CB — DDC' (Memory Breakdown — short tag, em-dash, description)
     """
     target = header_text.strip()
     for col in range(1, ws.max_column + 1):
@@ -300,9 +300,9 @@ BITMAPS_ROW_LABEL = {
 # Backend column header in Bitmaps_for_TPCH_SF10 sheet.
 BITMAPS_COL_FOR_BACKEND = {
     "WAH":         "WAH",
-    "ComBit":      "ComBit",
-    "ComBitGE":    "ComBit",      # same column — GE variant is built from same algorithm
-    "ComBitBPE":   "ComBit+BPE",
+    "DDC":      "DDC",
+    "DDCGE":    "DDC",      # same column — GE variant is built from same algorithm
+    "DDCBPE":   "DDC+BPE",
     "CRoaring":    "CRoaring",
     "CRoaringBPE": "CRoaring+BPE",
     "CRoaringRun": "CRoaring+Run",
@@ -708,7 +708,7 @@ def update_memory_detail(ws, log_dir):
     for q in BPE_MIRRORS_NONBPE & QS_TO_UPDATE:
         for src_row in cb_rows_by_q.get(q, []):
             new_rows.append([src_row[0], "CB+BPE",
-                             "ComBit + BPE (β scheme)",
+                             "DDC + BPE (β scheme)",
                              src_row[3], src_row[4]])
         for src_row in cr_rows_by_q.get(q, []):
             new_rows.append([src_row[0], "CR+BPE",

@@ -102,7 +102,7 @@ C_ORDERKEY = """\
 Q3 (~1500 key)
 --
 customer 扫 'BUILDING' + orders [<1995-03-15] 扫
--> matched orderkey 做 k-way OR（ComBit 用 sca scatter）
+-> matched orderkey 做 k-way OR（DDC 用 sca scatter）
 -> AND shipdate 200 天 range -> BMFetch
 + per-orderkey revenue -> top-10 heap
 
@@ -140,7 +140,7 @@ C_SUPPKEY = """\
 Q5 (~8K key)
 --
 region -> nation -> customer / supplier 半连接 -> ~8K suppkey
--> ComBit::or_many（sca scatter_or_decompressed）
+-> DDC::or_many（sca scatter_or_decompressed）
 -> AND orderkey OR (~590K) -> get_rowids -> BMFetch
 + per-row (okey 国家 == skey 国家) 校验
 + per-nation revenue 聚合"""
@@ -262,7 +262,7 @@ ROWS = [
      467.57, 258.33, 258.33, 138.52, 138.52, 138.52, 922.61, None, None, 239.84),
 ]
 
-ALGO_COLS = ["WAH", "ComBit", "ComBit+BPE", "CRoaring", "CRoaring+BPE",
+ALGO_COLS = ["WAH", "DDC", "DDC+BPE", "CRoaring", "CRoaring+BPE",
              "CRoaring+Run", "EWAH", "Bitset", "Bitset+AVX512", "Concise"]
 
 # ---------------------------------------------------------------------------

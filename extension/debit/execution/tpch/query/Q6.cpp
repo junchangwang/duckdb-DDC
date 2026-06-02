@@ -1,20 +1,4 @@
-// TPC-H Q6 — Forecasting Revenue Change Query
-// Verbatim port of teacher's BitEngine BMTPCH_Q6 + TPCH_Q6_Lineitem_GetRowIds
-// pattern.  Uses Group Encoding for shipdate (one bitmap per year) +
-// per-value indexes for discount and quantity (range OR).
-//
-// Logic (mirrors teacher 1:1):
-//   Phase A — bitmap_shipdate_GE.apply_or_to(dst, 1994)            (1 OR)
-//   Phase B — bitmap_discount.apply_or_range_to(dst, 5, 7)        (3 ORs)
-//   Phase C — bitmap_quantity.apply_or_range_to(dst, 0, 2399)     (range OR)
-//   Phase D — AND all three → row_ids
-//   Phase E — DuckDB consumes row_ids via BMFetch(l_discount, l_extendedprice)
-//             and aggregates SUM(l_extendedprice * l_discount).
-//
-// Pre-loaded auxiliary structures (PRAGMA load_bitmap, NOT in latency):
-//   - bitmap_shipdate_GE  (per-year  IndexedComBitGE / IndexedX)
-//   - bitmap_discount     (per-value IndexedX over l_discount raw int64)
-//   - bitmap_quantity     (per-value IndexedX over l_quantity raw int64)
+
 
 #include "duckdb/execution/execution_context.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -28,8 +12,8 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
 
-#include "combit_adapter.h"
-#include "combit/include/combit.h"
+#include "ddc_adapter.h"
+#include "ddc/include/ddc.h"
 #include "fastbit/bitvector.h"
 #include "roaring.hh"
 #include "ewah.h"
@@ -51,30 +35,17 @@
 
 namespace duckdb {
 
-// TPC-H Q6 spec parameters (translated for our raw int64 storage scaling):
-// l_shipdate >= '1994-01-01' AND l_shipdate < '1995-01-01'  → year == 1994
-// l_discount BETWEEN 0.05 AND 0.07                          → raw [5, 7]
-// l_quantity <  24                                          → raw < 2400
 static constexpr int64_t Q6_SHIPDATE_YEAR     = 1994;
 static constexpr int64_t Q6_DISCOUNT_LO       = 5;
 static constexpr int64_t Q6_DISCOUNT_HI       = 7;
 static constexpr int64_t Q6_QUANTITY_LO       = 0;
-static constexpr int64_t Q6_QUANTITY_HI_EXCL  = 2400;  // raw int64 < 2400 means value < 24.00
+static constexpr int64_t Q6_QUANTITY_HI_EXCL  = 2400;
 
 static std::once_flag q6_once_flag_new;
 static std::mutex     q6_build_mutex;
 static std::atomic<bool> q6_built{false};
 
-// -----------------------------------------------------------------------
-// q6_check_correctness — compares this backend's filter cardinality against
-// the DuckDB SQL ground-truth count of qualifying lineitem rows.  Q6's
-// revenue aggregation is downstream of BMFetch (DuckDB's normal pipeline
-// applies SUM), so we validate the *row set produced by the bitmap
-// pipeline*; matching row count is a strong filter-correctness signal.
-// Emits `[OK] <Backend> matches DuckDB SQL ground truth (rows=N)` on
-// success, `[FAIL]` on mismatch — same shape parse_stdout_log in
-// bench_suite.py picks up for the Correctness sheet.
-// -----------------------------------------------------------------------
+// SQL ground truth
 static void q6_check_correctness(ExecutionContext& context,
                                  const char* backend_name,
                                  size_t bitmap_rows) {
@@ -105,12 +76,6 @@ static void q6_check_correctness(ExecutionContext& context,
     }
 }
 
-// -----------------------------------------------------------------------
-// q6_emit_csv — write Schema-A CSV for the just-finished backend run.
-// Per-iteration timings are unavailable (Q6 is a pull-pipeline source,
-// not a controlled iteration loop), so stddev=0 / min=median / max=median.
-// bench_suite.py merges per-backend CSV captures into one combined file.
-// -----------------------------------------------------------------------
 struct Q6Phase { std::string op; double median; };
 
 static void q6_emit_csv(const char* backend_name,
@@ -123,7 +88,7 @@ static void q6_emit_csv(const char* backend_name,
     csv << std::fixed << std::setprecision(4);
     csv << "sf,operation,"
         << "wah_median_ms,wah_stddev_ms,wah_min_ms,wah_max_ms,"
-        << "combit_median_ms,combit_stddev_ms,combit_min_ms,combit_max_ms,"
+        << "ddc_median_ms,ddc_stddev_ms,ddc_min_ms,ddc_max_ms,"
         << "croaring_median_ms,croaring_stddev_ms,croaring_min_ms,croaring_max_ms,"
         << "croaring_run_median_ms,croaring_run_stddev_ms,croaring_run_min_ms,croaring_run_max_ms,"
         << "ewah_median_ms,ewah_stddev_ms,ewah_min_ms,ewah_max_ms,"
@@ -140,23 +105,19 @@ static void q6_emit_csv(const char* backend_name,
     for (auto& ph : phases) {
         csv << sf << "," << ph.op << ",";
         cell_pick(bn, "WAH",         ph.median);
-        cell_pick(bn, "ComBit",      ph.median);
+        cell_pick(bn, "DDC",      ph.median);
         cell_pick(bn, "CRoaring",    ph.median);
         cell_pick(bn, "CRoaringRun", ph.median);
         cell_pick(bn, "EWAH",        ph.median);
-        cell_z();   // BS  — N/A
-        cell_z();   // BSA — N/A
+        cell_z();
+        cell_z();
         cell_pick(bn, "Concise",     ph.median);
         csv << "0,0,0,0,0,0,0\n";
     }
 }
 
-// -----------------------------------------------------------------------
-// q6_get_rowids — extract sorted ascending row IDs from a backend's
-// final filter bitmap into a `vector<row_t>` consumable by DataTable
-// ::BMFetch (mirror of Q5's get_rowids).
-// -----------------------------------------------------------------------
-static void q6_get_rowids(const ComBit& btv, std::vector<row_t>* out) {
+// rowids via byte LUT
+static void q6_get_rowids(const DDC& btv, std::vector<row_t>* out) {
     out->clear();
     btv.for_each_literal([&](uint32_t word_pos, uint8_t val) {
         size_t rbase = static_cast<size_t>(word_pos) * 8;
@@ -194,17 +155,9 @@ static void q6_get_rowids(const ConciseSet<false>& btv, std::vector<row_t>* out)
         out->push_back(static_cast<row_t>(*it));
 }
 
-// =========================================================================
-// TPCH_Q6_Lineitem_GetRowIds — produce row IDs into `row_ids` for DuckDB's
-// downstream BMFetch.  Mirrors teacher's homonymous function: dynamic_cast
-// the per-backend index, multi-OR the predicate columns, AND, get row IDs.
-// =========================================================================
 void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<row_t> *row_ids)
 {
-    // Caller (BMTPCH_Q6) already holds q6_build_mutex, so this body
-    // runs single-threaded; q6_built guards against double-build when
-    // BMTPCH_Q6 is called multiple times in a row (e.g. successive
-    // queries reusing the same client context).
+
     if (q6_built.load()) return;
 
     std::call_once(q6_once_flag_new, [&]() {
@@ -216,6 +169,7 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
         std::cout << "================================================================" << std::endl;
     });
 
+    // preloaded indexes
     auto* idx_ship_ge = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_GE);
     auto* idx_disc    = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_discount);
     auto* idx_qty     = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_quantity);
@@ -230,35 +184,32 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
 
     size_t num_rows = idx_disc->num_rows();
 
-    // ---- ComBit (teacher's Q6 logic: GE shipdate single-key OR + range
-    // OR for discount/quantity).  GE step = single apply_or_to(year).
-    // Range OR uses sca or_many (ComBit's design contribution).
-    // β scheme: BPE prefix-encoded fast path for cb_bpe (active when
-    // bitmap_discount_BPE / bitmap_quantity_BPE are pre-loaded).
-    if (auto* cb_ship = dynamic_cast<bm_index::IndexedComBitGE*>(idx_ship_ge)) {
-        auto* cb_disc_x = dynamic_cast<bm_index::IndexedComBit*>(idx_disc);
-        auto* cb_qty_x  = dynamic_cast<bm_index::IndexedComBit*>(idx_qty);
-        if (!cb_disc_x || !cb_qty_x) { std::cerr << "[Q6] ComBit type mismatch.\n"; return; }
-        auto* cb_disc_bpe = dynamic_cast<bm_index::IndexedComBitBPE*>(
+    // DDC backend
+    if (auto* cb_ship = dynamic_cast<bm_index::IndexedDDCGE*>(idx_ship_ge)) {
+        auto* cb_disc_x = dynamic_cast<bm_index::IndexedDDC*>(idx_disc);
+        auto* cb_qty_x  = dynamic_cast<bm_index::IndexedDDC*>(idx_qty);
+        if (!cb_disc_x || !cb_qty_x) { std::cerr << "[Q6] DDC type mismatch.\n"; return; }
+        auto* cb_disc_bpe = dynamic_cast<bm_index::IndexedDDCBPE*>(
             static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_discount_BPE));
-        auto* cb_qty_bpe = dynamic_cast<bm_index::IndexedComBitBPE*>(
+        auto* cb_qty_bpe = dynamic_cast<bm_index::IndexedDDCBPE*>(
             static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_quantity_BPE));
 
-        ComBit btv_ship = ComBit::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
+        DDC btv_ship = DDC::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
 
         auto t_a = clk::now();
         cb_ship->apply_or_to(btv_ship, Q6_SHIPDATE_YEAR);
         auto t_b = clk::now();
-        ComBit btv_disc;
+        DDC btv_disc;
+        // discount range OR
         if (cb_disc_bpe) {
-            // BPE: bucket=1 → perfectly aligned. disc∈[5,7] = prefix(7) AND_NOT prefix(4).
+
             int hi_b = cb_disc_bpe->bucket_of(Q6_DISCOUNT_HI);
             int lo_b = cb_disc_bpe->bucket_of(Q6_DISCOUNT_LO - 1);
             btv_disc = *cb_disc_bpe->prefix_at_bucket(hi_b);
-            const ComBit* lo_pe = cb_disc_bpe->prefix_at_bucket(lo_b);
+            const DDC* lo_pe = cb_disc_bpe->prefix_at_bucket(lo_b);
             if (lo_pe) btv_disc &= ~(*lo_pe);
         } else {
-            // Gather in-range disc keys + sca or_many.
+
             std::vector<int64_t> disc_keys;
             cb_disc_x->for_each_key([&](int64_t k) {
                 if (k >= Q6_DISCOUNT_LO && k <= Q6_DISCOUNT_HI) disc_keys.push_back(k);
@@ -266,15 +217,15 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
             btv_disc = cb_disc_x->or_many(disc_keys);
         }
         auto t_c = clk::now();
-        ComBit btv_qty;
+        DDC btv_qty;
+        // quantity range OR
         if (cb_qty_bpe) {
-            // BPE: qty raw ≤ 2399 = prefix(bucket(2399)) — boundary trim
-            // for raw values in (2399, bucket_max] via per-value index.
+
             int hi_b = cb_qty_bpe->bucket_of(Q6_QUANTITY_HI_EXCL - 1);
             btv_qty = *cb_qty_bpe->prefix_at_bucket(hi_b);
             int64_t bmax = cb_qty_bpe->bucket_max(hi_b);
             if (bmax > Q6_QUANTITY_HI_EXCL - 1) {
-                ComBit boundary = ComBit::from_sparse_positions({}, num_rows, cb_qty_x->segment_bits());
+                DDC boundary = DDC::from_sparse_positions({}, num_rows, cb_qty_x->segment_bits());
                 cb_qty_x->apply_or_range_to(boundary, Q6_QUANTITY_HI_EXCL, bmax);
                 btv_qty &= ~boundary;
             }
@@ -286,17 +237,11 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
             btv_qty = cb_qty_x->or_many(qty_keys);
         }
         auto t_d = clk::now();
-        // Reordered AND: (disc & qty) then & ship.  ship contains a
-        // SparseComBit-OR'd result that triggers an AVX-512 memcpy
-        // crash when used as LHS of `&=` against a SparseComBit-OR'd
-        // RHS; reordering materialises the dense (disc & qty) first
-        // (segments transition to Decompressed via the binary path),
-        // then `& ship` runs the in-place Decompressed `&=` which is
-        // crash-free.  Pre-reorder commit: 1336074392.
+
+        // 3-way AND
         btv_disc &= btv_qty;
         btv_disc &= btv_ship;
-        // Final result lives in btv_disc — move into btv_ship for
-        // the downstream get_rowids call.
+
         btv_ship = std::move(btv_disc);
         auto t_e = clk::now();
         q6_get_rowids(btv_ship, row_ids);
@@ -305,14 +250,14 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
         auto ms = [](clk::time_point a, clk::time_point b) {
             return std::chrono::duration_cast<std::chrono::microseconds>(b - a).count() / 1000.0;
         };
-        std::cout << "  [Q6 ComBit] ship_ge=" << ms(t_a, t_b)
+        std::cout << "  [Q6 DDC] ship_ge=" << ms(t_a, t_b)
                   << "  disc_or=" << ms(t_b, t_c)
                   << "  qty_or="  << ms(t_c, t_d)
                   << "  AND="     << ms(t_d, t_e)
                   << "  rowids="  << ms(t_e, t_f)
                   << "  total="   << ms(t0, t_f)
                   << "  rows="    << row_ids->size() << std::endl;
-        q6_emit_csv("ComBit", {
+        q6_emit_csv("DDC", {
             {"ship_GE",     ms(t_a, t_b)},
             {"OR_discount", ms(t_b, t_c)},
             {"OR_quantity", ms(t_c, t_d)},
@@ -320,13 +265,12 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
             {"GetRowIds",   ms(t_e, t_f)},
             {"TOTAL",       ms(t0, t_f)},
         });
-        q6_check_correctness(context, "ComBit", row_ids->size());
+        q6_check_correctness(context, "DDC", row_ids->size());
         q6_built.store(true);
         return;
     }
-    // ---- CR (pairwise per-value |=) / CRR (fastunion via or_range) ----
-    // β scheme: BPE prefix-encoded fast path for cr_bpe (active when
-    // bitmap_discount_BPE / bitmap_quantity_BPE are pre-loaded).
+
+    // CRoaring backend
     if (auto* cr_ship = dynamic_cast<bm_index::IndexedCRoaring*>(idx_ship_ge)) {
         auto* cr_disc_x = dynamic_cast<bm_index::IndexedCRoaring*>(idx_disc);
         auto* cr_qty_x  = dynamic_cast<bm_index::IndexedCRoaring*>(idx_qty);
@@ -390,7 +334,8 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
         q6_built.store(true);
         return;
     }
-    // ---- WAH ----
+
+    // WAH backend
     if (auto* wah_ship = dynamic_cast<bm_index::IndexedWAH*>(idx_ship_ge)) {
         auto* wah_disc_x = dynamic_cast<bm_index::IndexedWAH*>(idx_disc);
         auto* wah_qty_x  = dynamic_cast<bm_index::IndexedWAH*>(idx_qty);
@@ -431,7 +376,8 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
         q6_built.store(true);
         return;
     }
-    // ---- EWAH (always fast_logicalor) ----
+
+    // EWAH backend
     if (auto* ew_ship = dynamic_cast<bm_index::IndexedEWAH*>(idx_ship_ge)) {
         auto* ew_disc_x = dynamic_cast<bm_index::IndexedEWAH*>(idx_disc);
         auto* ew_qty_x  = dynamic_cast<bm_index::IndexedEWAH*>(idx_qty);
@@ -473,7 +419,8 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
         q6_built.store(true);
         return;
     }
-    // ---- Concise (always fast_logicalor) ----
+
+    // Concise backend
     if (auto* con_ship = dynamic_cast<bm_index::IndexedConcise*>(idx_ship_ge)) {
         auto* con_disc_x = dynamic_cast<bm_index::IndexedConcise*>(idx_disc);
         auto* con_qty_x  = dynamic_cast<bm_index::IndexedConcise*>(idx_qty);
@@ -517,24 +464,10 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
     std::cerr << "[Q6] ERROR: unrecognised IBitmapIndex backend.\n";
 }
 
-// =========================================================================
-// BMTPCH_Q6 — DuckDB pull-style entry point.  On the first call, builds
-// the row_ids list via TPCH_Q6_Lineitem_GetRowIds; on subsequent calls,
-// streams 2048-row BMFetch chunks of (l_discount, l_extendedprice) until
-// exhausted.  DuckDB's normal pipeline applies the SUM(price * discount)
-// aggregate downstream.
-// =========================================================================
 SourceResultType BMTableScan::BMTPCH_Q6(ExecutionContext &context, DataChunk &chunk,
                                         const TableScanBindData &bind_data)
 {
-    // Single global lock for the whole call: BMFetch's RowGroupCollection
-    // path uses a global `col_states` vector that is NOT thread-safe (see
-    // src/storage/table/row_group_collection.cpp BMFetchColState).  Lock
-    // also serialises the build-once and the cursor advancement.  We
-    // never reset q6_built within a process — DuckDB's parallel scan
-    // would otherwise see multiple workers re-enter BMTPCH_Q6 after one
-    // worker reset state, double-build, and double-stream the row_ids
-    // (manifests as the aggregate being summed twice).
+
     std::lock_guard<std::mutex> lock(q6_build_mutex);
 
     if (*cursor == 0 && !q6_built.load()) {
@@ -542,10 +475,11 @@ SourceResultType BMTableScan::BMTPCH_Q6(ExecutionContext &context, DataChunk &ch
         num_idlist = row_ids->size();
     }
 
+    // BMFetch by rowid
     if (*cursor < row_ids->size()) {
         vector<StorageIndex> storage_column_ids;
-        storage_column_ids.push_back(StorageIndex(6));  // l_discount
-        storage_column_ids.push_back(StorageIndex(5));  // l_extendedprice
+        storage_column_ids.push_back(StorageIndex(6));
+        storage_column_ids.push_back(StorageIndex(5));
 
         TableScanState local_storage_state;
         local_storage_state.Initialize(storage_column_ids);
@@ -566,13 +500,8 @@ SourceResultType BMTableScan::BMTPCH_Q6(ExecutionContext &context, DataChunk &ch
         *cursor += fetch_count;
         return SourceResultType::HAVE_MORE_OUTPUT;
     }
-    // Stream exhausted.  Keep q6_built=true so any straggler thread
-    // that races into BMTPCH_Q6 sees `*cursor >= row_ids->size()` and
-    // returns FINISHED without rebuilding the row_ids vector.  We do
-    // NOT reset query_source here either — that would route stragglers
-    // through DuckDB's normal scan path and emit the entire lineitem
-    // table as if no filter ran.
+
     return SourceResultType::FINISHED;
 }
 
-}  // namespace duckdb
+}

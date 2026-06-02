@@ -7,7 +7,7 @@
         AND with l_shipmode IN ('AIR','AIR REG')
         AND with l_shipinstruct = 'DELIVER IN PERSON'
   TPC-H params: BRAND1=Brand#12 (Q1=1..11), BRAND2=Brand#23 (Q2=10..20), BRAND3=Brand#34 (Q3=20..30)
-  Bitmap dirs: tpch_q19_combit tpch_q19_croaring tpch_q19_wah tpch_q19_ewah
+  Bitmap dirs: tpch_q19_ddc tpch_q19_croaring tpch_q19_wah tpch_q19_ewah
   Iterations: 10 (first 2 = warm-up)
 ================================================================
 
@@ -16,14 +16,14 @@
 
 [Load] Loading bitmaps (mode=ALL)...
   WAH load:      283.869 ms
-  ComBit load:   61.544 ms
+  DDC load:   61.544 ms
   CRoaring load: 64.006 ms
   CRR load:      84.231 ms
   EWAH load:     134.896 ms
   Bitset load:   267.666 ms (shared by BS / BSA)
   Concise load:  1051.44 ms
   WAH      on disk: 15.82 MiB
-  ComBit   on disk: 13.90 MiB
+  DDC   on disk: 13.90 MiB
   CRoaring on disk: 14.62 MiB (shared by CR / CRR)
   EWAH     on disk: 16.35 MiB
 
@@ -130,7 +130,7 @@
 ================================================================
   Q19 Correctness Validation
 ================================================================
-  Q19 Result (ComBit):
+  Q19 Result (DDC):
     revenue = 30104438.09   (sum×10000 = 301044380911)
   Consistency: ALL MATCH
 
@@ -158,4 +158,4 @@
 ├───────────────┤
 │ 30104438.0911 │
 └───────────────┘
-  [Breakdown] ComBit   L1=43.65 MiB  L2=20.93 MiB  L3=3.91 MiB  L4=0.01 MiB  total=68.50 MiB
+  [Breakdown] DDC   L1=43.65 MiB  L2=20.93 MiB  L3=3.91 MiB  L4=0.01 MiB  total=68.50 MiB

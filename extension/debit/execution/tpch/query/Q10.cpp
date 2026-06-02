@@ -1,36 +1,4 @@
-// TPC-H Q10 — Returned Item Reporting (spec v3.0.1 §2.4.10)
-//
-//   SELECT c_custkey, c_name,
-//          sum(l_extendedprice * (1 - l_discount)) AS revenue,
-//          c_acctbal, n_name, c_address, c_phone, c_comment
-//     FROM customer, orders, lineitem, nation
-//    WHERE c_custkey  = o_custkey
-//      AND l_orderkey = o_orderkey
-//      AND o_orderdate >= DATE '1993-10-01'
-//      AND o_orderdate <  DATE '1993-10-01' + INTERVAL '3' MONTH
-//      AND l_returnflag = 'R'
-//      AND c_nationkey = n_nationkey
-//    GROUP BY c_custkey, c_name, c_acctbal, c_phone, n_name, c_address, c_comment
-//    ORDER BY revenue DESC
-//    LIMIT 20;
-//
-// TPC-H 1.5.7 compliance: bitmap_returnflag references l_returnflag
-// (VARCHAR — kept per teacher's BitEngine convention, same caveat as
-// Q1); bitmap_orderkey references l_orderkey (FK, strict-compliant).
-// The o_orderdate filter happens at query-time on a fresh orders scan
-// — there is no pre-built lineitem×orders date bitmap (the prior
-// tpch_q5/orderdate/*.bm violated 1.5.7 §5 by encoding a join result).
-//
-// Pipeline:
-//   Phase A: scan orders → o_orderdate IN [1993-10-01, 1994-01-01) AND
-//            collect (orderkey, custkey) pairs into a hash map.
-//   Phase B: bitmap_orderkey OR (qualifying orderkeys) → orderkey_filter.
-//   Phase C: bitmap_returnflag for 'R' (single key) → returnflag_filter.
-//   Phase D: orderkey_filter & returnflag_filter → mask; get_rowids.
-//   Phase E: BMFetch lineitem(orderkey, extendedprice, discount); look
-//            up custkey from orderkey→custkey map; sum revenue per
-//            custkey (in raw int64).
-//   Phase F: top-20 heap by revenue DESC, tie-break by custkey ASC.
+
 
 #include "duckdb/execution/execution_context.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -43,8 +11,8 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
 
-#include "combit_adapter.h"
-#include "combit/include/combit.h"
+#include "ddc_adapter.h"
+#include "ddc/include/ddc.h"
 #include "fastbit/bitvector.h"
 #include "roaring.hh"
 #include "ewah.h"
@@ -78,18 +46,17 @@ static const int Q10_ITERATIONS = bm_bench::iter_count(5);
 static const int Q10_WARMUP     = bm_bench::warmup_count(1);
 static std::once_flag q10_once_flag_new;
 
-// 1993-10-01 / 1994-01-01 epoch days (relative to 1970-01-01).
 static constexpr int64_t Q10_DATE_LO = 8674;
 static constexpr int64_t Q10_DATE_HI = 8766;
 
-// l_returnflag = 'R' — single key.  bitmap_returnflag encodes first
-// ASCII byte (R = 82).
 static constexpr int64_t Q10_RETURNFLAG_R = 'R';
 
+// rowid decode per backend
 template <typename Btv>
 static void q10_get_rowids(const Btv& b, std::vector<row_t>* out);
 template <>
-void q10_get_rowids<ComBit>(const ComBit& b, std::vector<row_t>* out) {
+void q10_get_rowids<DDC>(const DDC& b, std::vector<row_t>* out) {
+    // DDC literal walk
     out->clear();
     b.for_each_literal([&](uint32_t word_pos, uint8_t val) {
         size_t rbase = static_cast<size_t>(word_pos) * 8;
@@ -154,22 +121,13 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         auto t0 = clk::now();
         auto& lineitem_tx = DuckTransaction::Get(context.client, lineitem_table.catalog);
 
-        // ===== Phase A: nation + customer + orders scan, build c->n + okey->custkey =====
-        // TPC-H Q10 spec joins customer, orders, lineitem, nation; the
-        // customer-nation semi-join is required by 1.5.7 even though all
-        // customers map to *some* nation (no actual rows filtered).
-        // BitEngine paper Q10 does the same 3-table scan up-front.
-
-        // (1) nation scan -- builds nationkey -> n_name map.  The name is
-        // needed in PhaseG (top-20 attribute lookup) and the .count() on
-        // this map doubles as the membership check used by the customer
-        // semi-join below (matches teacher's BitEngine Q10 nation_map).
+        // nation scan
         std::unordered_map<int32_t, std::string> nation_map;
         nation_map.reserve(64);
         {
             auto& tx = DuckTransaction::Get(context.client, nation_table.catalog);
             TableScanState ss;
-            vector<StorageIndex> col_ids = {StorageIndex(0), StorageIndex(1)};  // n_nationkey, n_name
+            vector<StorageIndex> col_ids = {StorageIndex(0), StorageIndex(1)};
             nation_table.GetStorage().InitializeScan(context.client, tx, ss, col_ids);
             vector<LogicalType> types = {
                 nation_table.GetColumns().GetColumnTypes()[0],
@@ -186,15 +144,13 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
             }
         }
 
-        // (2) customer scan -- builds custkey -> nationkey (only customers
-        // whose nation_key is in nation_set, which is all of them; BitEngine
-        // also pays this scan).
+        // customer->nation
         std::unordered_map<int64_t, int32_t> customer_nation;
         customer_nation.reserve(2000000);
         {
             auto& tx = DuckTransaction::Get(context.client, customer_table.catalog);
             TableScanState ss;
-            // c_custkey, c_nationkey
+
             vector<StorageIndex> col_ids = {StorageIndex(0), StorageIndex(3)};
             customer_table.GetStorage().InitializeScan(context.client, tx, ss, col_ids);
             vector<LogicalType> types = {
@@ -214,8 +170,6 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
             }
         }
 
-        // (3) orders scan -- filter o_orderdate in [1993-10-01, 1994-01-01),
-        // semi-join with customer_nation (TPC-H spec requires).
         std::unordered_map<int64_t, int64_t> okey_to_custkey;
         okey_to_custkey.reserve(2000000);
         std::vector<int64_t> matched_okeys;
@@ -223,7 +177,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         {
             auto& tx = DuckTransaction::Get(context.client, orders_table.catalog);
             TableScanState ss;
-            // o_orderkey, o_custkey, o_orderdate
+
             vector<StorageIndex> col_ids = {StorageIndex(0), StorageIndex(1), StorageIndex(4)};
             orders_table.GetStorage().InitializeScan(context.client, tx, ss, col_ids);
             vector<LogicalType> types;
@@ -236,9 +190,10 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
                 auto okey = FlatVector::GetData<int64_t>(chunk.data[0]);
                 auto ck   = FlatVector::GetData<int64_t>(chunk.data[1]);
                 auto od   = FlatVector::GetData<int32_t>(chunk.data[2]);
+                // date + nation filter
                 for (idx_t i = 0; i < chunk.size(); i++) {
                     if (od[i] < Q10_DATE_LO || od[i] >= Q10_DATE_HI) continue;
-                    if (!customer_nation.count(ck[i])) continue;  // semi-join
+                    if (!customer_nation.count(ck[i])) continue;
                     okey_to_custkey.emplace(okey[i], ck[i]);
                     matched_okeys.push_back(okey[i]);
                 }
@@ -246,30 +201,27 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         }
         auto t_a = clk::now();
 
-        // ===== Phase B: orderkey OR (batched) =====
-        // ===== Phase C: returnflag OR (single key 'R') =====
-        // ===== Phase D: AND + get_rowids =====
         size_t num_rows = idx_okey->num_rows();
         std::vector<row_t> ids;
 
-        // Plan A — each backend uses its natural multi-key OR primitive
-        // for orderkey; returnflag is single-key (apply_or_to); &= shared.
         clk::time_point t_b, t_c, t_d;
-        if (auto* cb_okey = dynamic_cast<bm_index::IndexedComBit*>(idx_okey)) {
-            auto* cb_rf = dynamic_cast<bm_index::IndexedComBit*>(idx_rf);
+        // DDC backend
+        if (auto* cb_okey = dynamic_cast<bm_index::IndexedDDC*>(idx_okey)) {
+            auto* cb_rf = dynamic_cast<bm_index::IndexedDDC*>(idx_rf);
             if (!cb_rf) { std::cerr << "[Q10] type mismatch.\n"; return; }
-            ComBit okey_filter = cb_okey->or_many(matched_okeys);  // ComBit: sca
+            DDC okey_filter = cb_okey->or_many(matched_okeys);  // orderkey OR
             t_b = clk::now();
-            ComBit rf_filter = ComBit::from_sparse_positions({}, num_rows, cb_rf->segment_bits());
-            cb_rf->apply_or_to(rf_filter, Q10_RETURNFLAG_R);
+            DDC rf_filter = DDC::from_sparse_positions({}, num_rows, cb_rf->segment_bits());
+            cb_rf->apply_or_to(rf_filter, Q10_RETURNFLAG_R);  // returnflag OR
             t_c = clk::now();
-            okey_filter &= rf_filter;
+            okey_filter &= rf_filter;  // AND
             q10_get_rowids(okey_filter, &ids);
             t_d = clk::now();
+        // baselines: same OR/AND shape
         } else if (auto* cr_okey = dynamic_cast<bm_index::IndexedCRoaring*>(idx_okey)) {
             auto* cr_rf = dynamic_cast<bm_index::IndexedCRoaring*>(idx_rf);
             if (!cr_rf) { std::cerr << "[Q10] type mismatch.\n"; return; }
-            // Both CR & CRR use Roaring fastunion (k-way primitive).
+
             roaring::Roaring okey_filter = cr_okey->or_many(matched_okeys);
             t_b = clk::now();
             roaring::Roaring rf_filter;
@@ -281,7 +233,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         } else if (auto* wah_okey = dynamic_cast<bm_index::IndexedWAH*>(idx_okey)) {
             auto* wah_rf = dynamic_cast<bm_index::IndexedWAH*>(idx_rf);
             if (!wah_rf) { std::cerr << "[Q10] type mismatch.\n"; return; }
-            ibis::bitvector okey_filter = wah_okey->or_many(matched_okeys);  // WAH: copy+decompress+|=
+            ibis::bitvector okey_filter = wah_okey->or_many(matched_okeys);
             t_b = clk::now();
             ibis::bitvector rf_filter;
             wah_rf->apply_or_to(rf_filter, Q10_RETURNFLAG_R);
@@ -292,7 +244,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         } else if (auto* ew_okey = dynamic_cast<bm_index::IndexedEWAH*>(idx_okey)) {
             auto* ew_rf = dynamic_cast<bm_index::IndexedEWAH*>(idx_rf);
             if (!ew_rf) { std::cerr << "[Q10] type mismatch.\n"; return; }
-            ewah::EWAHBoolArray<uint64_t> okey_filter = ew_okey->or_many(matched_okeys);  // EW: fast_logicalor
+            ewah::EWAHBoolArray<uint64_t> okey_filter = ew_okey->or_many(matched_okeys);
             t_b = clk::now();
             ewah::EWAHBoolArray<uint64_t> rf_filter;
             ew_rf->apply_or_to(rf_filter, Q10_RETURNFLAG_R);
@@ -304,7 +256,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         } else if (auto* con_okey = dynamic_cast<bm_index::IndexedConcise*>(idx_okey)) {
             auto* con_rf = dynamic_cast<bm_index::IndexedConcise*>(idx_rf);
             if (!con_rf) { std::cerr << "[Q10] type mismatch.\n"; return; }
-            ConciseSet<false> okey_filter = con_okey->or_many(matched_okeys);  // CON: fast_logicalor
+            ConciseSet<false> okey_filter = con_okey->or_many(matched_okeys);
             t_b = clk::now();
             ConciseSet<false> rf_filter;
             con_rf->apply_or_to(rf_filter, Q10_RETURNFLAG_R);
@@ -317,14 +269,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
             return;
         }
 
-        // ===== Phase E: Fetch lineitem + per-custkey revenue =====
-        // l_orderkey (0), l_extendedprice (5), l_discount (6).
-        //
-        // Streak cache amortises the okey->custkey lookup: lineitem is
-        // stored sorted by l_orderkey, so ~2 consecutive rows share the
-        // same orderkey — memoising the revenue-slot pointer cuts the
-        // hashmap probes by ~50%.  Pre-reserve revenue_by_custkey so
-        // operator[] doesn't rehash and invalidate the cached pointer.
+        // BMFetch + revenue agg
         std::unordered_map<int64_t, int64_t> revenue_by_custkey;
         revenue_by_custkey.reserve(600000);
         if (!ids.empty()) {
@@ -346,12 +291,8 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
                 Vector row_ids_vec(LogicalType::ROW_TYPE, row_ids_data);
                 idx_t fetch_count = 2048;
                 if (cursor + fetch_count > ids.size()) fetch_count = ids.size() - cursor;
-                // NOTE: switched from BMFetch (fast batched path) to Fetch
-                // (per-call init) to match BitEngine paper Q10's measurement
-                // methodology.  See user request 2026-05-26: the BMFetch
-                // path makes our Q10 ~2x faster than BitEngine DEBIT, which
-                // is mostly an engineering win (faster fetch primitive), not
-                // a bitmap-algorithm win.  Fetch keeps the comparison fair.
+
+                // fetch by rowid
                 lineitem_table.GetStorage().Fetch(lineitem_tx, chunk, col_ids, row_ids_vec,
                                                   fetch_count, column_fetch_state);
                 (void)num_idlist;
@@ -359,6 +300,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
                 auto okey = FlatVector::GetData<int64_t>(chunk.data[0]);
                 auto pr   = FlatVector::GetData<int64_t>(chunk.data[1]);
                 auto dc   = FlatVector::GetData<int64_t>(chunk.data[2]);
+                // accumulate, cache custkey slot
                 for (idx_t i = 0; i < chunk.size(); i++) {
                     if (okey[i] != prev_okey) {
                         prev_okey = okey[i];
@@ -366,9 +308,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
                         if (it == okey_to_custkey.end()) {
                             rev_slot = nullptr;
                         } else {
-                            // operator[] returns a stable reference because
-                            // we pre-reserved enough buckets and won't
-                            // exceed them (max ~381K custkeys at SF=10).
+
                             rev_slot = &revenue_by_custkey[it->second];
                         }
                     }
@@ -379,17 +319,16 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         }
         auto t_e = clk::now();
 
-        // ===== Phase F: top-20 heap (revenue DESC, custkey ASC) =====
         struct Entry {
             int64_t custkey;
             int64_t revenue;
         };
-        // min-heap on (revenue ASC, then custkey DESC) — when full and a
-        // new entry beats the min, pop+push.
+
         auto cmp = [](const Entry& a, const Entry& b) {
             if (a.revenue != b.revenue) return a.revenue > b.revenue;
             return a.custkey < b.custkey;
         };
+        // top-20 heap
         std::priority_queue<Entry, std::vector<Entry>, decltype(cmp)> heap(cmp);
         for (auto& [ck, rev] : revenue_by_custkey) {
             if (heap.size() < 20) heap.push({ck, rev});
@@ -406,14 +345,6 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         std::reverse(top20.begin(), top20.end());
         auto t_f = clk::now();
 
-        // ===== Phase G: second customer scan for top-20 attributes =====
-        // TPC-H Q10 SELECT clause requires 8 columns; PhaseE only produced
-        // (custkey, revenue) so we still owe c_name, c_address, c_phone,
-        // c_comment, c_acctbal, c_nationkey (→ n_name via nation_map).
-        // Mirrors teacher BitEngine Q10 ([teacher_Q10.cpp:387-440]):
-        // scan customer, pick up the 7 columns we still need, populate
-        // attribute map for the ≤20 hits.  This is the spec-required work
-        // we previously skipped — without it Q10 would not be compliant.
         struct Q10Attrs {
             std::string c_name;
             std::string c_address;
@@ -426,15 +357,16 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         topk_custkeys.reserve(64);
         for (auto& e : top20) topk_custkeys.insert(e.custkey);
 
+        // fetch top-20 cust attrs
         std::unordered_map<int64_t, Q10Attrs> cust_attr;
         cust_attr.reserve(64);
         {
             auto& tx = DuckTransaction::Get(context.client, customer_table.catalog);
             TableScanState ss;
             vector<StorageIndex> col_ids = {
-                StorageIndex(0), StorageIndex(1), StorageIndex(2),  // custkey, name, address
-                StorageIndex(3), StorageIndex(4), StorageIndex(5),  // nationkey, phone, acctbal
-                StorageIndex(7),                                    // comment (skip mktsegment col 6)
+                StorageIndex(0), StorageIndex(1), StorageIndex(2),
+                StorageIndex(3), StorageIndex(4), StorageIndex(5),
+                StorageIndex(7),
             };
             customer_table.GetStorage().InitializeScan(context.client, tx, ss, col_ids);
             vector<LogicalType> types;
@@ -502,6 +434,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         }
     }
 
+    // SQL ground-truth check
     {
         Connection con(*context.client.db);
         auto r = con.Query(
@@ -518,8 +451,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         if (r && !r->HasError() && r->RowCount() == 1) {
             int64_t gt_ck = r->GetValue(0, 0).GetValue<int64_t>();
             double  gt_rv = r->GetValue(1, 0).GetValue<double>();
-            // Ours is raw int64 = price * (100 - discount).
-            // SQL revenue = price/100 * (1 - discount/100) = raw / 10000.
+
             double ours = static_cast<double>(last_top1_revenue) / 10000.0;
             bool ok = gt_ck == last_top1_custkey && std::fabs(gt_rv - ours) < 0.01;
             if (ok) {
@@ -564,7 +496,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         csv << std::fixed << std::setprecision(4);
         csv << "sf,operation,"
             << "wah_median_ms,wah_stddev_ms,wah_min_ms,wah_max_ms,"
-            << "combit_median_ms,combit_stddev_ms,combit_min_ms,combit_max_ms,"
+            << "ddc_median_ms,ddc_stddev_ms,ddc_min_ms,ddc_max_ms,"
             << "croaring_median_ms,croaring_stddev_ms,croaring_min_ms,croaring_max_ms,"
             << "croaring_run_median_ms,croaring_run_stddev_ms,croaring_run_min_ms,croaring_run_max_ms,"
             << "ewah_median_ms,ewah_stddev_ms,ewah_min_ms,ewah_max_ms,"
@@ -580,7 +512,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
                 csv << v.median << "," << v.stddev << "," << v.min_val << "," << v.max_val << ",";
             };
             cell(bn == "WAH" ? s : z);
-            cell(bn == "ComBit" ? s : z);
+            cell(bn == "DDC" ? s : z);
             cell(bn == "CRoaring" ? s : z);
             cell(bn == "CRoaringRun" ? s : z);
             cell(bn == "EWAH" ? s : z);
@@ -599,7 +531,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         std::cout << "  [CSV] q10_results_" << sf << ".csv\n";
     }
 
-    });  // end call_once
+    });
 }
 
-}  // namespace duckdb
+}

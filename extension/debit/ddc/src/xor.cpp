@@ -1,26 +1,18 @@
-#include "combit.h"
+#include "ddc.h"
 
-// ----------------------------------------------------------------
-// Bitwise XOR operations (3-level: L3/L2/L1)
-// ----------------------------------------------------------------
-
-// ----------------------------------------------------------------
-// ComBitBtv XOR operator
-// ----------------------------------------------------------------
-
-ComBitBtv
-ComBitBtv::operator^(const ComBitBtv& other) const {
+// XOR kernel
+DDCBtv
+DDCBtv::operator^(const DDCBtv& other) const {
     assert(bit_count_ == other.bit_count_);
-    if (bit_count_ == 0) return ComBitBtv();
+    if (bit_count_ == 0) return DDCBtv();
     assert(state_ != State::Uncompressed);
     assert(other.state_ != State::Uncompressed);
 
     const size_t total_words = l2_count_;
 
-    // Result: all words become literals (we compute every word).
-    const bool compress = combit_compress_results;
-    ComBitBtv result = compress ? ComBitBtv(false, false, State::Compressed)
-                                : ComBitBtv(false, true, State::Decompressed);
+    const bool compress = ddc_compress_results;
+    DDCBtv result = compress ? DDCBtv(false, false, State::Compressed)
+                                : DDCBtv(false, true, State::Decompressed);
     result.bit_count_ = bit_count_;
     result.l2_count_ = total_words;
     size_t l2_byte_count = (total_words + 7) / 8;
@@ -28,8 +20,7 @@ ComBitBtv::operator^(const ComBitBtv& other) const {
     if (compress) {
         result.l2_flat_.assign(l2_byte_count, 0x00);
     } else {
-        // Fully expanded: all L2 bytes are 0xFF (all words literal).
-        // l3_bits_ canonically all-zero in Decompressed; skip alloc.
+
         result.l3_count_ = l2_byte_count;
         result.l2_literal_count_ = 0;
     }
@@ -43,16 +34,15 @@ ComBitBtv::operator^(const ComBitBtv& other) const {
 
     size_t r_off = 0;
 
-#ifdef COMBIT_DEBUG
+#ifdef DDC_DEBUG
     using clock = std::chrono::high_resolution_clock;
     auto t0 = clock::now();
 #endif
 
 #ifdef __AVX512VBMI2__
+    // SIMD path
     const size_t avx_regions = total_words / words_per_reg;
 
-    // Per-side state via ComBitBtv::SideCtx (defined in combit.h, shared
-    // with and.cpp / or.cpp).  Factory uses `this->` / `other.` style.
     SideCtx A = this->make_side(a_l1);
     SideCtx B = other.make_side(b_l1);
 
@@ -60,32 +50,30 @@ ComBitBtv::operator^(const ComBitBtv& other) const {
 
     uint8_t* result_l2 = result.l2_flat_.data();
 
-    // --- Bypass: XOR zero-region skip ---
-    // XOR: 0 ^ 0 = 0, so both-zero regions can be skipped.
-    // Per-side: if that side's fills are zero, L3=0 means all-zero.
     const bool a_zero_when_l3_zero = !A.l1_fill_ones && !A.l2_fill_ones;
     const bool b_zero_when_l3_zero = !B.l1_fill_ones && !B.l2_fill_ones;
 
     const uint8_t a_l3_fill = A.l3_fill_ones ? 0xFF : 0x00;
     const uint8_t b_l3_fill = B.l3_fill_ones ? 0xFF : 0x00;
 
+    // per-region hot loop
     for (size_t region = 0; region < avx_regions; region++) {
         bool a_l4_lit = (A.l4_bits[region / 8] >> (region % 8)) & 1;
         bool b_l4_lit = (B.l4_bits[region / 8] >> (region % 8)) & 1;
         uint8_t l3a = a_l4_lit ? A.l3_lits[A.l3_lit_off++] : a_l3_fill;
         uint8_t l3b = b_l4_lit ? B.l3_lits[B.l3_lit_off++] : b_l3_fill;
 
-        // --- Per-side bypass: x ^ 0 = x ---
+        // A empty: bypass
         if (a_zero_when_l3_zero && l3a == 0) {
             if (b_zero_when_l3_zero && l3b == 0) {
-                // Both zero => 0 ^ 0 = 0
+
                 if (!compress) {
                     _mm512_storeu_si512(r_l1 + r_off, _mm512_setzero_si512());
                     r_off += 64;
                 }
                 continue;
             }
-            // a is all-zero => result = b (expand b only)
+
             __m512i l2b_v = _mm512_mask_expandloadu_epi8(B.l2_fill_vec,
                 static_cast<__mmask64>(l3b), B.l2_lits + B.l2_lit_off);
             B.l2_lit_off += __builtin_popcount(l3b);
@@ -106,8 +94,9 @@ ComBitBtv::operator^(const ComBitBtv& other) const {
             }
             continue;
         }
+        // B empty: copy A
         if (b_zero_when_l3_zero && l3b == 0) {
-            // b is all-zero => result = a (expand a only)
+
             __m512i l2a_v = _mm512_mask_expandloadu_epi8(A.l2_fill_vec,
                 static_cast<__mmask64>(l3a), A.l2_lits + A.l2_lit_off);
             A.l2_lit_off += __builtin_popcount(l3a);
@@ -129,6 +118,7 @@ ComBitBtv::operator^(const ComBitBtv& other) const {
             continue;
         }
 
+        // prefetch
         _mm_prefetch(reinterpret_cast<const char*>(A.l1_lits + A.l1_lit_off + PF_DIST), _MM_HINT_T0);
         _mm_prefetch(reinterpret_cast<const char*>(B.l1_lits + B.l1_lit_off + PF_DIST), _MM_HINT_T0);
         _mm_prefetch(reinterpret_cast<char*>(r_l1 + r_off + PF_DIST), _MM_HINT_T0);
@@ -145,6 +135,7 @@ ComBitBtv::operator^(const ComBitBtv& other) const {
         __mmask64 mb = static_cast<__mmask64>(
             _mm_cvtsi128_si64(_mm512_castsi512_si128(l2b_v)));
 
+        // expand L1
         __m512i va = _mm512_mask_expandloadu_epi8(A.l1_fill_vec, ma, A.l1_lits + A.l1_lit_off);
         A.l1_lit_off += __builtin_popcountll(static_cast<uint64_t>(ma));
 
@@ -152,6 +143,7 @@ ComBitBtv::operator^(const ComBitBtv& other) const {
         B.l1_lit_off += __builtin_popcountll(static_cast<uint64_t>(mb));
 
         __m512i vr = _mm512_xor_si512(va, vb);
+        // emit result
         if (compress) {
             __mmask64 lit_mask = _mm512_test_epi8_mask(vr, vr);
             uint64_t mask_val = static_cast<uint64_t>(lit_mask);
@@ -164,7 +156,7 @@ ComBitBtv::operator^(const ComBitBtv& other) const {
         }
     }
 
-    // === Scalar tail: process remaining words without expand_l2() ===
+    // scalar tail
     if (avx_regions * words_per_reg < total_words) {
         const uint8_t l1_fill_a = A.l1_fill_ones ? 0xFF : 0x00;
         const uint8_t l1_fill_b = B.l1_fill_ones ? 0xFF : 0x00;
@@ -194,17 +186,17 @@ ComBitBtv::operator^(const ComBitBtv& other) const {
         }
     }
 
-#ifdef COMBIT_DEBUG
+#ifdef DDC_DEBUG
     auto t1 = clock::now();
 #endif
 
-#else  // !__AVX512VBMI2__
+#else
 
-#ifdef COMBIT_DEBUG
+#ifdef DDC_DEBUG
     auto t1 = clock::now();
 #endif
 
-    // === Scalar fallback (no AVX-512) ===
+    // scalar fallback
     {
         size_t a_l1_off = 0, b_l1_off = 0;
         auto l2_a = expand_l2();
@@ -246,9 +238,9 @@ ComBitBtv::operator^(const ComBitBtv& other) const {
         }
     }
 
-#endif  // __AVX512VBMI2__
+#endif
 
-#ifdef COMBIT_DEBUG
+#ifdef DDC_DEBUG
     auto t2 = clock::now();
     auto us = [](auto a, auto b) {
         return std::chrono::duration<double, std::micro>(b - a).count();
@@ -265,16 +257,13 @@ ComBitBtv::operator^(const ComBitBtv& other) const {
     return result;
 }
 
-// ----------------------------------------------------------------
-// ComBit (segmented) XOR operator
-// ----------------------------------------------------------------
-
-ComBit
-ComBit::operator^(const ComBit& other) const {
+// per-segment XOR
+DDC
+DDC::operator^(const DDC& other) const {
     assert(bit_count_ == other.bit_count_);
     assert(segments_.size() == other.segments_.size());
 
-    ComBit result;
+    DDC result;
     result.bit_count_ = bit_count_;
     result.segment_bits_ = segment_bits_;
 
@@ -282,9 +271,7 @@ ComBit::operator^(const ComBit& other) const {
         const auto& sa = segments_[i];
         const auto& sb = other.segments_[i];
 
-        // Segment-level bypass (mirrors operator| / operator&):
-        //   0 ^ b = b,  a ^ 0 = a,  1 ^ b = ~b,  a ^ 1 = ~a.
-        // Catches 0^0=0 (via sa zero-bypass), 1^1=0 (via sa ones → ~sb=~all1=all0).
+        // fill shortcuts
         if (sa.is_all_zero()) { result.segments_.push_back(sb); continue; }
         if (sb.is_all_zero()) { result.segments_.push_back(sa); continue; }
         if (sa.is_all_ones()) { result.segments_.push_back(~sb); continue; }
@@ -296,45 +283,29 @@ ComBit::operator^(const ComBit& other) const {
     return result;
 }
 
-// ----------------------------------------------------------------
-// ComBitBtv in-place XOR (operator^=)
-// ----------------------------------------------------------------
-//
-// XOR has no in-place AVX-512 fast path that meaningfully beats the
-// binary operator^ followed by move-assignment: every output bit
-// depends on both inputs, so unlike |= (which can short-circuit on
-// fill_ones RHS) and &= (fill_zero RHS), there's no per-byte case
-// where the LHS byte stays unchanged.  Delegate to operator^ to
-// reuse its AVX-512 core; the rvalue is move-assigned with no copy.
-// ----------------------------------------------------------------
-
-ComBitBtv&
-ComBitBtv::operator^=(const ComBitBtv& other) {
+DDCBtv&
+DDCBtv::operator^=(const DDCBtv& other) {
     *this = *this ^ other;
     return *this;
 }
 
-// ----------------------------------------------------------------
-// ComBit (segmented) in-place XOR
-// ----------------------------------------------------------------
-
-ComBit&
-ComBit::operator^=(const ComBit& other) {
+DDC&
+DDC::operator^=(const DDC& other) {
     assert(bit_count_ == other.bit_count_);
     assert(segments_.size() == other.segments_.size());
 
     for (size_t i = 0; i < segments_.size(); i++) {
         const auto& seg = other.segments_[i];
-        if (seg.is_all_zero()) continue;                     // a ^ 0 = a
-        if (segments_[i].is_all_zero()) {                    // 0 ^ b = b
+        if (seg.is_all_zero()) continue;
+        if (segments_[i].is_all_zero()) {
             segments_[i] = seg;
             continue;
         }
-        if (seg.is_all_ones()) {                             // a ^ 1 = ~a
+        if (seg.is_all_ones()) {
             segments_[i] = ~segments_[i];
             continue;
         }
-        if (segments_[i].is_all_ones()) {                    // 1 ^ b = ~b
+        if (segments_[i].is_all_ones()) {
             segments_[i] = ~seg;
             continue;
         }

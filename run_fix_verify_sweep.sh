@@ -7,7 +7,7 @@
 #                       shipdate_GE_month so each backend's class is
 #                       built with month-bucketed keys, 84 cardinality)
 # Q14 / Q15 / Q1 use the month-GE column when available (the loader
-# auto-builds IndexedComBitGE for cb_ge, the others build IndexedX
+# auto-builds IndexedDDCGE for cb_ge, the others build IndexedX
 # with month keys).  Q10 / Q17 / Q19 do not use a shipdate column,
 # so the GE rerun for them is identical to per-day — we still emit
 # the bar so the table is uniform across Qs.
@@ -21,7 +21,7 @@ mkdir -p "$LOG_DIR"
 ITER=${DEBIT_ITER:-5}
 WARM=${DEBIT_WARMUP:-1}
 
-# Per-Q (per-day) column loads — mirrors run_combit_sweep.sh.
+# Per-Q (per-day) column loads — mirrors run_ddc_sweep.sh.
 declare -A LOADS_DAY=(
   [1]="shipdate linestatus returnflag"
   [10]="orderkey returnflag"

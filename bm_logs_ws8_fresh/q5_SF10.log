@@ -2,11 +2,11 @@
 # cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(5);
 
 ================================================================
-  TPC-H Q5 Benchmark — ComBit vs WAH vs CRoaring vs EWAH (SF10)
+  TPC-H Q5 Benchmark — DDC vs WAH vs CRoaring vs EWAH (SF10)
   OR orderdate days 731..1095 (365 bitmaps)
   Then AND each nation_join bitmap -> Aggregate revenue
   TPC-H params: r_name = 'ASIA', orderdate [1994-01-01, 1995-01-01)
-  Bitmap dirs: tpch_q5_combit tpch_q5_croaring tpch_q5_wah tpch_q5_ewah
+  Bitmap dirs: tpch_q5_ddc tpch_q5_croaring tpch_q5_wah tpch_q5_ewah
   Iterations: 10 (first 2 = warm-up)
 ================================================================
   Nations: INDIA(8) INDONESIA(9) JAPAN(12) CHINA(18) VIETNAM(21) 
@@ -16,14 +16,14 @@
 
 [Load] Loading bitmaps (mode=ALL)...
   WAH load:      31.869 ms
-  ComBit load:   159.332 ms
+  DDC load:   159.332 ms
   CRoaring load: 42.223 ms
   CRR load:      91.208 ms
   EWAH load:     27.275 ms
   Bitset load:   1263.1 ms (shared by BS / BSA)
   Concise load:  147.715 ms
   WAH      on disk: 122.88 MiB
-  ComBit   on disk: 412.28 MiB
+  DDC   on disk: 412.28 MiB
   CRoaring on disk: 132.19 MiB (shared by CR / CRR)
   EWAH     on disk: 238.96 MiB
   Bitset in mem:    2645.85 MiB (rebuilt from CRoaring at load)
@@ -134,7 +134,7 @@
 ================================================================
   Row counts: WAH=72985 CB=72985 CR=72985 CRR=72985 EW=72985 BS=72985 BSA=72985 CON=72985
 
-  Q5 Results (revenue = SUM(l_extendedprice * (1 - l_discount)), sorted by ComBit):
+  Q5 Results (revenue = SUM(l_extendedprice * (1 - l_discount)), sorted by DDC):
   nation                     CB_revenue            CR_revenue           CRR_revenue           WAH_revenue            EW_revenue            BS_revenue           BSA_revenue           CON_revenue
   INDIA                  536862587.9995        536862587.9995        536862587.9995        536862587.9995        536862587.9995        536862587.9995        536862587.9995        536862587.9995
   CHINA                  535350829.9282        535350829.9282        535350829.9282        535350829.9282        535350829.9282        535350829.9282        535350829.9282        535350829.9282
@@ -184,4 +184,4 @@
 │ JAPAN     │ 526766837.1444 │
 │ INDONESIA │ 523176852.3189 │
 └───────────┴────────────────┘
-  [Breakdown] ComBit   L1=3.42 MiB  L2=2.67 MiB  L3=41.34 MiB  total=47.43 MiB
+  [Breakdown] DDC   L1=3.42 MiB  L2=2.67 MiB  L3=41.34 MiB  total=47.43 MiB

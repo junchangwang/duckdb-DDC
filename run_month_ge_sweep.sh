@@ -5,7 +5,7 @@
 # boundaries — Q3 picks up auto-built year-GE under cb_ge backend).
 #
 # Usage:
-#   ./run_month_ge_sweep.sh cb_ge          # ComBit + GE
+#   ./run_month_ge_sweep.sh cb_ge          # DDC + GE
 #   ./run_month_ge_sweep.sh cr             # CRoaring (gets month-GE via load_bitmap)
 #   ./run_month_ge_sweep.sh crr            # CRoaringRun
 #

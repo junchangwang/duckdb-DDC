@@ -8,17 +8,17 @@ PRAGMA load_bitmap('discount');
 PRAGMA load_bitmap('quantity');
 PRAGMA bm_tpch(6);
 [load_bitmap] shipdate_GE: scanned 59986052 rows in 899 ms
-[load_bitmap] shipdate_GE: built ComBitGE index (7 keys, 48.8275 MB) in 2616 ms
+[load_bitmap] shipdate_GE: built DDCGE index (7 keys, 48.8275 MB) in 2616 ms
 [load_bitmap] discount: scanned 59986052 rows in 580 ms
-[load_bitmap] discount: built ComBit index (11 keys, 89.912 MB) in 2547 ms
+[load_bitmap] discount: built DDC index (11 keys, 89.912 MB) in 2547 ms
 [load_bitmap] quantity: scanned 59986052 rows in 559 ms
-[load_bitmap] quantity: built ComBit index (50 keys, 257.199 MB) in 3390 ms
+[load_bitmap] quantity: built DDC index (50 keys, 257.199 MB) in 3390 ms
 
 ================================================================
   TPC-H Q6 (BitEngine pattern, GE shipdate + range disc/qty)
   Pre-loaded: bitmap_shipdate_GE + bitmap_discount + bitmap_quantity
 ================================================================
-  [Q6 ComBit] ship_ge=2.02  disc_or=6.307  qty_or=23.906  AND=5.329  rowids=7.096  total=46.339  rows=1139264
+  [Q6 DDC] ship_ge=2.02  disc_or=6.307  qty_or=23.906  AND=5.329  rowids=7.096  total=46.339  rows=1139264
 ┌─────────────────┐
 │     revenue     │
 │  decimal(38,4)  │

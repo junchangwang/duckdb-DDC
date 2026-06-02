@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ComBit thesis design-space figure (CUBIT Fig. 1 style, 3-D framing).
+"""DDC thesis design-space figure (CUBIT Fig. 1 style, 3-D framing).
 
 Renders ONE combined figure with 4 panels rendering the 3-D conceptual
 space (compression × op-perf × density-robustness):
@@ -15,8 +15,8 @@ space (compression × op-perf × density-robustness):
   (D) Pure-op OR latency vs density.  Flat curve = robust.
 
 Data sources (real benchmarks, no synthetic numbers):
-  /home/lichenhang/lee/thesis/check/lee/combit/results_full.csv
-      ComBit micro-benchmark: 5 backends × 15 cardinalities (densities
+  /home/lichenhang/lee/thesis/check/lee/ddc/results_full.csv
+      DDC micro-benchmark: 5 backends × 15 cardinalities (densities
       from 50% down to 0.01%) × 3 iterations + dedicated PureOps OR_op
       measurement.  We use OR_op (pure op timings) for fairness across
       backends (build cost excluded).
@@ -40,8 +40,8 @@ from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  (registers 3-d proj)
 # Paths
 # ----------------------------------------------------------------------
 REPO = Path("/home/lichenhang/lee/thesis/check/lee/duckdb-dev")
-COMBIT = Path("/home/lichenhang/lee/thesis/check/lee/combit")
-MICRO_CSV = COMBIT / "results_full.csv"
+DDC = Path("/home/lichenhang/lee/thesis/check/lee/ddc")
+MICRO_CSV = DDC / "results_full.csv"
 TPCH_CSV  = REPO / "bm_results.csv"
 OUT_PNG = REPO / "bm_design_space_3d.png"
 OUT_PDF = REPO / "bm_design_space_3d.pdf"
@@ -50,15 +50,15 @@ OUT_PDF = REPO / "bm_design_space_3d.pdf"
 # Backend canonicalisation
 # ----------------------------------------------------------------------
 MICRO_NAME = {
-    "ComBIT (New)":  "ComBit",
+    "DDC (New)":  "DDC",
     "WAH (FastBit)": "WAH",
     "CRoaring":      "CRoaring",
     "EWAH":          "EWAH",
     "Concise":       "Concise",
 }
 TPCH_TAG = {
-    "CB":     "ComBit",
-    "CB+BPE": "ComBit",
+    "CB":     "DDC",
+    "CB+BPE": "DDC",
     "WAH":    "WAH",
     "CR":     "CRoaring",
     "CR+BPE": "CRoaring",
@@ -66,16 +66,16 @@ TPCH_TAG = {
     "EW":     "EWAH",
     "CON":    "Concise",
 }
-BACKENDS = ["ComBit", "CRoaring", "WAH", "EWAH", "Concise"]
+BACKENDS = ["DDC", "CRoaring", "WAH", "EWAH", "Concise"]
 COLOR = {
-    "ComBit":   "#d62728",   # red  — our system
+    "DDC":   "#d62728",   # red  — our system
     "CRoaring": "#1f77b4",   # blue
     "WAH":      "#2ca02c",   # green
     "EWAH":     "#9467bd",   # purple
     "Concise":  "#ff7f0e",   # orange
 }
 MARKER = {
-    "ComBit": "o", "CRoaring": "s", "WAH": "^", "EWAH": "D", "Concise": "v",
+    "DDC": "o", "CRoaring": "s", "WAH": "^", "EWAH": "D", "Concise": "v",
 }
 
 # ----------------------------------------------------------------------
@@ -217,7 +217,7 @@ for bk in BACKENDS:
     # Backend label — placed offset from median to avoid overlap.
     axB.annotate(f"{bk}\n(op {s['op_span']:.1f}× spread)",
                  xy=(cx_med, cy_med),
-                 xytext=(0, -28 if bk in ("ComBit", "EWAH") else 22),
+                 xytext=(0, -28 if bk in ("DDC", "EWAH") else 22),
                  textcoords="offset points",
                  fontsize=9, color=c, fontweight="bold",
                  ha="center", va="center",
@@ -275,14 +275,14 @@ for bk in BACKENDS:
 axD.set_xscale("log"); axD.set_yscale("log")
 axD.set_xlabel("Bit density (set-fraction per bitmap)")
 axD.set_ylabel("Pure OR latency (ms)  (lower = better)")
-axD.set_title("(D) OR latency vs density  (ComBit is flattest)")
+axD.set_title("(D) OR latency vs density  (DDC is flattest)")
 axD.grid(True, which="both", linestyle=":", alpha=0.5)
 axD.legend(ncol=2, loc="lower left")
-# Annotation calling out ComBit's flatness.
+# Annotation calling out DDC's flatness.
 axD.annotate(
-    f"ComBit op-latency stays in {stats.loc['ComBit', 'op_min']:.2f}–"
-    f"{stats.loc['ComBit', 'op_max']:.2f} ms across\n5000× density range "
-    f"({stats.loc['ComBit', 'op_span']:.1f}× spread); "
+    f"DDC op-latency stays in {stats.loc['DDC', 'op_min']:.2f}–"
+    f"{stats.loc['DDC', 'op_max']:.2f} ms across\n5000× density range "
+    f"({stats.loc['DDC', 'op_span']:.1f}× spread); "
     f"WAH spans {stats.loc['WAH', 'op_span']:.0f}×, "
     f"Concise {stats.loc['Concise', 'op_span']:.0f}×.",
     xy=(0.40, 0.96), xycoords="axes fraction",
@@ -296,8 +296,8 @@ axD.annotate(
 # Super-title
 # ----------------------------------------------------------------------
 fig.suptitle(
-    "ComBit design space — compression × op-perf × density-robustness\n"
-    "real data: combit micro-benchmark (100M rows, 5 backends, 15 densities) + "
+    "DDC design space — compression × op-perf × density-robustness\n"
+    "real data: ddc micro-benchmark (100M rows, 5 backends, 15 densities) + "
     "TPC-H SF10 operating points",
     fontsize=12, fontweight="bold", y=0.985,
 )

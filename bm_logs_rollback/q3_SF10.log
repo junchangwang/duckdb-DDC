@@ -2,7 +2,7 @@
 # cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(3);
 
 ================================================================
-  TPC-H Q3 Benchmark — ComBit vs WAH vs CRoaring vs EWAH (SF10)
+  TPC-H Q3 Benchmark — DDC vs WAH vs CRoaring vs EWAH (SF10)
   Complement OR shipdate days 1..1169 -> NOT -> AND join_result -> Top-10
   TPC-H params: c_mktsegment='BUILDING', date=1995-03-15
   Iterations: 10 (first 2 = warm-up)
@@ -13,7 +13,7 @@
 
 [Load] Loading bitmaps (mode=ALL)...
   WAH load:      260.874 ms
-  ComBit load:   453.424 ms
+  DDC load:   453.424 ms
   CRoaring load: 114.584 ms
   CRR load:      146.821 ms
   EWAH load:     231.99 ms
@@ -123,7 +123,7 @@
 [Baseline] DuckDB native SQL Top-10  (single run: 296.77 ms)
 [OK] all active backends match DuckDB SQL ground truth (Top-10, revenue within 0.01).
 
-  Q3 Top-10 (revenue DESC, o_orderdate ASC, source=ComBit):
+  Q3 Top-10 (revenue DESC, o_orderdate ASC, source=DDC):
   l_orderkey           revenue  o_orderdate o_shippriority 
   4791171          440715.2185  1995-02-23  0              
   46678469         439855.3250  1995-01-27  0              
@@ -185,4 +185,4 @@
 ├────────────┴───────────────┴─────────────┴────────────────┤
 │ 10 rows                                         4 columns │
 └───────────────────────────────────────────────────────────┘
-  [Breakdown] ComBit   L1=27.78 MiB  L2=26.38 MiB  L3=130.73 MiB  total=184.88 MiB
+  [Breakdown] DDC   L1=27.78 MiB  L2=26.38 MiB  L3=130.73 MiB  total=184.88 MiB

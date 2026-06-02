@@ -5,7 +5,7 @@
   TPC-H Q14 Benchmark — 8 backends (SF10)
   OR shipdate days 1339..1368 (30 bitmaps), AND is_promo, then per-row revenue aggregation
   TPC-H params: l_shipdate [1995-09-01, 1995-10-01), p_type LIKE 'PROMO%'
-  Bitmap dirs: tpch_q14_combit tpch_q14_croaring tpch_q14_wah tpch_q14_ewah
+  Bitmap dirs: tpch_q14_ddc tpch_q14_croaring tpch_q14_wah tpch_q14_ewah
   Iterations: 10 (first 2 = warm-up)
 ================================================================
 
@@ -14,14 +14,14 @@
 
 [Load] Loading bitmaps (mode=ALL)...
   WAH load:      14.003 ms
-  ComBit load:   18.739 ms
+  DDC load:   18.739 ms
   CRoaring load: 12.023 ms
   CRR load:      12.968 ms
   EWAH load:     11.459 ms
   Bitset load:   146.4 ms (shared by BS / BSA)
   Concise load:  115.521 ms
   WAH      on disk: 7.38 MiB
-  ComBit   on disk: 6.43 MiB
+  DDC   on disk: 6.43 MiB
   CRoaring on disk: 7.16 MiB (shared by CR / CRR)
   EWAH     on disk: 7.15 MiB
 
@@ -128,7 +128,7 @@
 ================================================================
   Q14 Correctness Validation
 ================================================================
-  Q14 Result (ComBit):
+  Q14 Result (DDC):
     promo_revenue = 16.6476  %  (promo_rev=45330799274176 total_rev=272296385352695)
   Consistency: ALL MATCH
 

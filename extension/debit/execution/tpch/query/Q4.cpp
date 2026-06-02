@@ -1,31 +1,4 @@
-// TPC-H Q4 — Order Priority Checking Query (spec v3.0.1 §2.4.4)
-//
-// Verbatim port of teacher's BitEngine BMTPCH_Q4 — replaces the prior
-// non-compliant late_lineitem/0.bm (orders+lineitem aux) with a
-// runtime semi-join.
-//
-// Predicate:
-//   o_orderdate ∈ [1993-07-01, 1993-10-01)
-//   AND EXISTS (lineitem WHERE l_orderkey = o_orderkey
-//                          AND l_commitdate < l_receiptdate)
-//   GROUP BY o_orderpriority, count(*).
-//
-// Pipeline (matches teacher 1:1):
-//   Phase A: orders scan, filter o_orderdate ∈ [left, right) →
-//            orderkey_map: orderkey → priority.
-//   Phase B: OR all matching orderkey bitmaps from bitmap_orderkey
-//            → btv_res; get_rowids.  Single column (l_orderkey FK).
-//   Phase C: BMFetch lineitem(l_orderkey, l_commitdate, l_receiptdate)
-//            for those rows; for each row where commit < receipt,
-//            insert l_orderkey into orderkey_set.
-//   Phase D: count by priority = (orderkey ∈ set) ? priority_count++.
-//
-// Pre-loaded auxiliary structures:
-//   bitmap_orderkey  lineitem.l_orderkey  (FK / per-value, single column)
-//
-// TPC-H 1.5.7 §5: each auxiliary references one column.  The
-// l_commitdate < l_receiptdate predicate is evaluated AT QUERY TIME on
-// BMFetch'd column data — NOT a pre-built bitmap.
+
 
 #include "duckdb/execution/execution_context.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -38,8 +11,8 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
 
-#include "combit_adapter.h"
-#include "combit/include/combit.h"
+#include "ddc_adapter.h"
+#include "ddc/include/ddc.h"
 #include "fastbit/bitvector.h"
 #include "roaring.hh"
 #include "ewah.h"
@@ -73,15 +46,16 @@ static const int Q4_ITERATIONS = bm_bench::iter_count(5);
 static const int Q4_WARMUP     = bm_bench::warmup_count(1);
 static std::once_flag q4_once_flag_new;
 
-// orderdate cutoffs — 1993-07-01 (epoch day 8582) and 1993-10-01 (8674).
 static constexpr int64_t Q4_DATE_LO = 8582;
 static constexpr int64_t Q4_DATE_HI = 8674;
 
+// rowids per backend
 template <typename Btv>
 static void q4_get_rowids(const Btv& b, std::vector<row_t>* out);
 template <>
-void q4_get_rowids<ComBit>(const ComBit& b, std::vector<row_t>* out) {
+void q4_get_rowids<DDC>(const DDC& b, std::vector<row_t>* out) {
     out->clear();
+    // expand literals
     b.for_each_literal([&](uint32_t word_pos, uint8_t val) {
         size_t rbase = static_cast<size_t>(word_pos) * 8;
         const auto& e = bm_bench::byte_lut[val];
@@ -111,6 +85,7 @@ void q4_get_rowids<ConciseSet<false>>(const ConciseSet<false>& b, std::vector<ro
     for (auto it = b.begin(); it != b.end(); ++it) out->push_back(static_cast<row_t>(*it));
 }
 
+// Q4 entry
 void BMTableScan::BMTPCH_Q4(ExecutionContext &context, const PhysicalTableScan &op)
 {
     std::call_once(q4_once_flag_new, [&]() {
@@ -138,13 +113,13 @@ void BMTableScan::BMTPCH_Q4(ExecutionContext &context, const PhysicalTableScan &
         auto t0 = clk::now();
         auto& lineitem_tx = DuckTransaction::Get(context.client, lineitem_table.catalog);
 
-        // ===== Phase A: orders scan → orderkey → priority =====
+        // PhaseA: scan orders, date filter
         std::unordered_map<int64_t, std::string> orderkey_priority;
         orderkey_priority.reserve(600000);
         {
             auto& tx = DuckTransaction::Get(context.client, orders_table.catalog);
             TableScanState ss;
-            // o_orderkey, o_orderdate, o_orderpriority
+
             vector<StorageIndex> col_ids = {StorageIndex(0), StorageIndex(4), StorageIndex(5)};
             orders_table.GetStorage().InitializeScan(context.client, tx, ss, col_ids);
             vector<LogicalType> types;
@@ -165,28 +140,27 @@ void BMTableScan::BMTPCH_Q4(ExecutionContext &context, const PhysicalTableScan &
         }
         auto t_a = clk::now();
 
-        // ===== Phase B: OR matching orderkey bitmaps + get_rowids =====
-        // Plan A — each backend uses its natural multi-key OR primitive.
+        // PhaseB: orderkey OR -> rowids
         std::vector<row_t> ids;
         size_t num_rows = idx_okey->num_rows();
         std::vector<int64_t> keys;
         keys.reserve(orderkey_priority.size());
         for (auto& [k, _] : orderkey_priority) keys.push_back(k);
-        if (auto* cb = dynamic_cast<bm_index::IndexedComBit*>(idx_okey)) {
-            ComBit btv = cb->or_many(keys);  // ComBit: sca
+        if (auto* cb = dynamic_cast<bm_index::IndexedDDC*>(idx_okey)) {
+            DDC btv = cb->or_many(keys);
             q4_get_rowids(btv, &ids);
         } else if (auto* cr = dynamic_cast<bm_index::IndexedCRoaring*>(idx_okey)) {
-            // Both CR & CRR use Roaring fastunion (Roaring's k-way primitive).
+
             roaring::Roaring btv = cr->or_many(keys);
             q4_get_rowids(btv, &ids);
         } else if (auto* wah = dynamic_cast<bm_index::IndexedWAH*>(idx_okey)) {
-            ibis::bitvector btv = wah->or_many(keys);  // WAH: copy+decompress+|=
+            ibis::bitvector btv = wah->or_many(keys);
             q4_get_rowids(btv, &ids);
         } else if (auto* ew = dynamic_cast<bm_index::IndexedEWAH*>(idx_okey)) {
-            ewah::EWAHBoolArray<uint64_t> btv = ew->or_many(keys);  // EW: fast_logicalor
+            ewah::EWAHBoolArray<uint64_t> btv = ew->or_many(keys);
             q4_get_rowids(btv, &ids);
         } else if (auto* con = dynamic_cast<bm_index::IndexedConcise*>(idx_okey)) {
-            ConciseSet<false> btv = con->or_many(keys);  // CON: fast_logicalor
+            ConciseSet<false> btv = con->or_many(keys);
             q4_get_rowids(btv, &ids);
         } else {
             std::cerr << "[Q4] ERROR: unrecognised IBitmapIndex backend.\n";
@@ -194,11 +168,11 @@ void BMTableScan::BMTPCH_Q4(ExecutionContext &context, const PhysicalTableScan &
         }
         auto t_b = clk::now();
 
-        // ===== Phase C: BMFetch + per-row commit<receipt EXISTS check =====
+        // PhaseC: BMFetch lineitem, EXISTS
         std::unordered_set<int64_t> orderkey_late;
         orderkey_late.reserve(600000);
         if (!ids.empty()) {
-            // l_orderkey, l_commitdate, l_receiptdate
+
             vector<StorageIndex> col_ids = {StorageIndex(0), StorageIndex(11), StorageIndex(12)};
             vector<LogicalType> types;
             for (int c : {0, 11, 12}) types.push_back(lineitem_table.GetColumns().GetColumnTypes()[c]);
@@ -211,6 +185,7 @@ void BMTableScan::BMTPCH_Q4(ExecutionContext &context, const PhysicalTableScan &
                 Vector row_ids_vec(LogicalType::ROW_TYPE, row_ids_data);
                 idx_t fetch_count = 2048;
                 if (cursor + fetch_count > ids.size()) fetch_count = ids.size() - cursor;
+                // fetch by rowid
                 lineitem_table.GetStorage().BMFetch(lineitem_tx, chunk, col_ids, row_ids_vec,
                                                     fetch_count, column_fetch_state, num_idlist);
                 cursor += fetch_count;
@@ -224,7 +199,7 @@ void BMTableScan::BMTPCH_Q4(ExecutionContext &context, const PhysicalTableScan &
         }
         auto t_c = clk::now();
 
-        // ===== Phase D: count by priority =====
+        // PhaseD: count by priority
         std::map<std::string, int64_t> priority_count;
         for (int64_t okey : orderkey_late) {
             auto it = orderkey_priority.find(okey);
@@ -253,7 +228,7 @@ void BMTableScan::BMTPCH_Q4(ExecutionContext &context, const PhysicalTableScan &
         last_priority_count = priority_count;
     }
 
-    // ----- Validate vs DuckDB SQL -----
+    // verify vs SQL
     {
         Connection con(*context.client.db);
         auto r = con.Query(
@@ -304,13 +279,14 @@ void BMTableScan::BMTPCH_Q4(ExecutionContext &context, const PhysicalTableScan &
     std::cout << "  TOTAL                       : " << sT.median << " +/- " << sT.stddev << " ms\n";
     std::cout << "================================================================\n\n";
 
+    // emit CSV
     std::string sf = bm_bench::sf_label();
     std::ofstream csv("q4_results_" + sf + ".csv");
     if (csv) {
         csv << std::fixed << std::setprecision(4);
         csv << "sf,operation,"
             << "wah_median_ms,wah_stddev_ms,wah_min_ms,wah_max_ms,"
-            << "combit_median_ms,combit_stddev_ms,combit_min_ms,combit_max_ms,"
+            << "ddc_median_ms,ddc_stddev_ms,ddc_min_ms,ddc_max_ms,"
             << "croaring_median_ms,croaring_stddev_ms,croaring_min_ms,croaring_max_ms,"
             << "croaring_run_median_ms,croaring_run_stddev_ms,croaring_run_min_ms,croaring_run_max_ms,"
             << "ewah_median_ms,ewah_stddev_ms,ewah_min_ms,ewah_max_ms,"
@@ -326,7 +302,7 @@ void BMTableScan::BMTPCH_Q4(ExecutionContext &context, const PhysicalTableScan &
                 csv << v.median << "," << v.stddev << "," << v.min_val << "," << v.max_val << ",";
             };
             cell(bn == "WAH" ? s : z);
-            cell(bn == "ComBit" ? s : z);
+            cell(bn == "DDC" ? s : z);
             cell(bn == "CRoaring" ? s : z);
             cell(bn == "CRoaringRun" ? s : z);
             cell(bn == "EWAH" ? s : z);
@@ -342,7 +318,7 @@ void BMTableScan::BMTPCH_Q4(ExecutionContext &context, const PhysicalTableScan &
         std::cout << "  [CSV] q4_results_" << sf << ".csv\n";
     }
 
-    });  // end call_once
+    });
 }
 
-}  // namespace duckdb
+}

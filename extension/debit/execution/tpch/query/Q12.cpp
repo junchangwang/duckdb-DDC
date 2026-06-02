@@ -1,37 +1,4 @@
-// TPC-H Q12 — Shipping Modes and Order Priority (spec v3.0.1 §2.4.12)
-//
-//   SELECT l_shipmode,
-//          SUM(CASE WHEN o_orderpriority IN ('1-URGENT','2-HIGH')
-//                   THEN 1 ELSE 0 END) AS high_line_count,
-//          SUM(CASE WHEN o_orderpriority NOT IN ('1-URGENT','2-HIGH')
-//                   THEN 1 ELSE 0 END) AS low_line_count
-//   FROM   orders, lineitem
-//   WHERE  o_orderkey = l_orderkey
-//     AND  l_shipmode IN ('MAIL', 'SHIP')
-//     AND  l_commitdate < l_receiptdate
-//     AND  l_shipdate   < l_commitdate
-//     AND  l_receiptdate >= DATE '1994-01-01'
-//     AND  l_receiptdate <  DATE '1995-01-01'
-//   GROUP BY l_shipmode
-//   ORDER BY l_shipmode;
-//
-// TPC-H 1.5.7 compliance: bitmap_shipmode references l_shipmode (VARCHAR
-// — kept per teacher's BitEngine convention, same caveat as Q1/Q19);
-// bitmap_receiptdate references l_receiptdate (date, strict-compliant).
-// l_commitdate < l_receiptdate and l_shipdate < l_commitdate are
-// multi-column predicates and must be evaluated at query-time on the
-// BMFetch'd columns — they cannot be pre-derived without breaking the
-// single-column rule (the prior commit_lt_receipt / ship_lt_commit aux
-// structures violated 1.5.7 §5).
-//
-// Pipeline:
-//   Phase A: scan orders → orderkey -> orderpriority class map.
-//   Phase B: shipmode OR ('MAIL','SHIP') → shipmode_filter.
-//   Phase C: receiptdate range OR ([1994-01-01, 1995-01-01)) → date_filter.
-//   Phase D: shipmode_filter & date_filter → mask; get_rowids.
-//   Phase E: BMFetch lineitem(orderkey, commitdate, receiptdate, shipdate,
-//            shipmode); per-row check ship<commit<receipt; lookup
-//            orderkey priority class; accumulate (shipmode, class) counts.
+
 
 #include "duckdb/execution/execution_context.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -44,8 +11,8 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
 
-#include "combit_adapter.h"
-#include "combit/include/combit.h"
+#include "ddc_adapter.h"
+#include "ddc/include/ddc.h"
 #include "fastbit/bitvector.h"
 #include "roaring.hh"
 #include "ewah.h"
@@ -78,20 +45,17 @@ static const int Q12_ITERATIONS = bm_bench::iter_count(5);
 static const int Q12_WARMUP     = bm_bench::warmup_count(1);
 static std::once_flag q12_once_flag_new;
 
-// 1994-01-01 / 1995-01-01 epoch days (relative to 1970-01-01).
 static constexpr int64_t Q12_DATE_LO = 8766;
 static constexpr int64_t Q12_DATE_HI = 9131;
 
-// l_shipmode IN ('MAIL', 'SHIP').  bitmap_shipmode encodes first ASCII
-// byte (see scan_column / debit_extension.cpp).  M = 77, S = 83.  Both
-// are unique first letters in TPC-H's shipmode domain.
 static constexpr int64_t Q12_SHIPMODE_MAIL = 'M';
 static constexpr int64_t Q12_SHIPMODE_SHIP = 'S';
 
 template <typename Btv>
 static void q12_get_rowids(const Btv& b, std::vector<row_t>* out);
+// rowid extract
 template <>
-void q12_get_rowids<ComBit>(const ComBit& b, std::vector<row_t>* out) {
+void q12_get_rowids<DDC>(const DDC& b, std::vector<row_t>* out) {
     out->clear();
     b.for_each_literal([&](uint32_t word_pos, uint8_t val) {
         size_t rbase = static_cast<size_t>(word_pos) * 8;
@@ -122,14 +86,14 @@ void q12_get_rowids<ConciseSet<false>>(const ConciseSet<false>& b, std::vector<r
     for (auto it = b.begin(); it != b.end(); ++it) out->push_back(static_cast<row_t>(*it));
 }
 
-// orderkey -> orderpriority class (true = high {1-URGENT,2-HIGH}, false = low).
+// orders priority map
 static std::unordered_map<int64_t, bool> q12_load_orderkey_priority(
         ClientContext& ctx, TableCatalogEntry& orders_table) {
     std::unordered_map<int64_t, bool> m;
     m.reserve(15000000);
     auto& tx = DuckTransaction::Get(ctx, orders_table.catalog);
     TableScanState ss;
-    // o_orderkey, o_orderpriority
+
     vector<StorageIndex> col_ids = {StorageIndex(0), StorageIndex(5)};
     orders_table.GetStorage().InitializeScan(ctx, tx, ss, col_ids);
     vector<LogicalType> types = {
@@ -145,7 +109,7 @@ static std::unordered_map<int64_t, bool> q12_load_orderkey_priority(
         auto opri = FlatVector::GetData<string_t>(chunk.data[1]);
         for (idx_t i = 0; i < chunk.size(); i++) {
             auto sv = opri[i];
-            // First char is the priority digit ('1'..'5').  '1' / '2' = high.
+
             const char c = sv.GetSize() > 0 ? sv.GetData()[0] : '0';
             m[okey[i]] = (c == '1' || c == '2');
         }
@@ -153,6 +117,7 @@ static std::unordered_map<int64_t, bool> q12_load_orderkey_priority(
     return m;
 }
 
+// Q12 entry
 void BMTableScan::BMTPCH_Q12(ExecutionContext &context, const PhysicalTableScan &op)
 {
     std::call_once(q12_once_flag_new, [&]() {
@@ -167,8 +132,7 @@ void BMTableScan::BMTPCH_Q12(ExecutionContext &context, const PhysicalTableScan 
     std::cout << "================================================================" << std::endl;
 
     auto* idx_sm    = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipmode);
-    // Prefer year-GE on receiptdate when loaded (1-key OR for year 1994
-    // instead of ~365-day range OR).  Mirrors Q6's shipdate_GE pattern.
+
     auto* idx_rge   = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_receiptdate_GE);
     auto* idx_rdat0 = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_receiptdate);
     auto* idx_rdat  = idx_rge ? idx_rge : idx_rdat0;
@@ -177,8 +141,7 @@ void BMTableScan::BMTPCH_Q12(ExecutionContext &context, const PhysicalTableScan 
         return;
     }
     const bool use_year_ge = (idx_rge != nullptr);
-    // Teacher 2026-05-20: receiptdate also uses month-GE (k=84), same as
-    // shipdate.  Q12 filter is year 1994 → OR 12 month keys.
+
     static const std::vector<int64_t> Q12_MONTH_KEYS = {
         199401, 199402, 199403, 199404, 199405, 199406,
         199407, 199408, 199409, 199410, 199411, 199412
@@ -195,28 +158,23 @@ void BMTableScan::BMTPCH_Q12(ExecutionContext &context, const PhysicalTableScan 
         auto t0 = clk::now();
         auto& lineitem_tx = DuckTransaction::Get(context.client, lineitem_table.catalog);
 
-        // ===== Phase A: orders scan -> orderkey priority map =====
         auto orderkey_priority = q12_load_orderkey_priority(context.client, orders_table);
         auto t_a = clk::now();
 
-        // ===== Phase B: shipmode OR ('MAIL','SHIP') =====
-        // ===== Phase C: receiptdate range OR =====
-        // ===== Phase D: AND + get_rowids =====
         size_t num_rows = idx_sm->num_rows();
         std::vector<row_t> ids;
         std::vector<int64_t> sm_keys = {Q12_SHIPMODE_MAIL, Q12_SHIPMODE_SHIP};
 
-        // Plan A — each backend uses its natural multi-key OR primitive
-        // for shipmode (2 keys) AND for receiptdate (~365 days range).
         clk::time_point t_b, t_c, t_d;
-        const std::vector<int64_t>& year_keys = Q12_MONTH_KEYS;  // 12 month keys for 1994
-        if (auto* cb_sm = dynamic_cast<bm_index::IndexedComBit*>(idx_sm)) {
-            auto* cb_rdat_ge = dynamic_cast<bm_index::IndexedComBitGE*>(idx_rdat);
-            auto* cb_rdat    = dynamic_cast<bm_index::IndexedComBit*>(idx_rdat);
+        const std::vector<int64_t>& year_keys = Q12_MONTH_KEYS;
+        // backend dispatch
+        if (auto* cb_sm = dynamic_cast<bm_index::IndexedDDC*>(idx_sm)) {
+            auto* cb_rdat_ge = dynamic_cast<bm_index::IndexedDDCGE*>(idx_rdat);
+            auto* cb_rdat    = dynamic_cast<bm_index::IndexedDDC*>(idx_rdat);
             if (!cb_rdat_ge && !cb_rdat) { std::cerr << "[Q12] type mismatch.\n"; return; }
-            ComBit sm_filter = cb_sm->or_many(sm_keys);
+            DDC sm_filter = cb_sm->or_many(sm_keys);  // shipmode OR
             t_b = clk::now();
-            ComBit date_filter;
+            DDC date_filter;  // receiptdate OR
             if (cb_rdat_ge) {
                 date_filter = cb_rdat_ge->or_many(year_keys);
             } else {
@@ -225,7 +183,7 @@ void BMTableScan::BMTPCH_Q12(ExecutionContext &context, const PhysicalTableScan 
                 date_filter = cb_rdat->or_many(rdat_keys);
             }
             t_c = clk::now();
-            sm_filter &= date_filter;
+            sm_filter &= date_filter;  // AND kernel
             q12_get_rowids(sm_filter, &ids);
             t_d = clk::now();
         } else if (auto* cr_sm = dynamic_cast<bm_index::IndexedCRoaring*>(idx_sm)) {
@@ -282,11 +240,9 @@ void BMTableScan::BMTPCH_Q12(ExecutionContext &context, const PhysicalTableScan 
             return;
         }
 
-        // ===== Phase E: BMFetch lineitem + per-row predicate + group =====
-        // Need l_orderkey (0), l_shipdate (10), l_commitdate (11),
-        // l_receiptdate (12), l_shipmode (14).
         int64_t high_mail = 0, low_mail = 0, high_ship = 0, low_ship = 0;
         if (!ids.empty()) {
+            // BMFetch + aggregate
             vector<StorageIndex> col_ids = {
                 StorageIndex(0), StorageIndex(10), StorageIndex(11),
                 StorageIndex(12), StorageIndex(14)};
@@ -311,7 +267,7 @@ void BMTableScan::BMTPCH_Q12(ExecutionContext &context, const PhysicalTableScan 
                 auto cd   = FlatVector::GetData<int32_t>(chunk.data[2]);
                 auto rd   = FlatVector::GetData<int32_t>(chunk.data[3]);
                 auto sm   = FlatVector::GetData<string_t>(chunk.data[4]);
-                for (idx_t i = 0; i < chunk.size(); i++) {
+                for (idx_t i = 0; i < chunk.size(); i++) {  // residual filter + count
                     if (!(cd[i] < rd[i])) continue;
                     if (!(sd[i] < cd[i])) continue;
                     auto sv = sm[i];
@@ -355,6 +311,7 @@ void BMTableScan::BMTPCH_Q12(ExecutionContext &context, const PhysicalTableScan 
         last_high_ship = high_ship; last_low_ship = low_ship;
     }
 
+    // SQL ground truth check
     {
         Connection con(*context.client.db);
         auto r = con.Query(
@@ -410,13 +367,14 @@ void BMTableScan::BMTPCH_Q12(ExecutionContext &context, const PhysicalTableScan 
     std::cout << "  TOTAL                        : " << sT.median << " +/- " << sT.stddev << " ms\n";
     std::cout << "================================================================\n\n";
 
+    // CSV out
     std::string sf = bm_bench::sf_label();
     std::ofstream csv("q12_results_" + sf + ".csv");
     if (csv) {
         csv << std::fixed << std::setprecision(4);
         csv << "sf,operation,"
             << "wah_median_ms,wah_stddev_ms,wah_min_ms,wah_max_ms,"
-            << "combit_median_ms,combit_stddev_ms,combit_min_ms,combit_max_ms,"
+            << "ddc_median_ms,ddc_stddev_ms,ddc_min_ms,ddc_max_ms,"
             << "croaring_median_ms,croaring_stddev_ms,croaring_min_ms,croaring_max_ms,"
             << "croaring_run_median_ms,croaring_run_stddev_ms,croaring_run_min_ms,croaring_run_max_ms,"
             << "ewah_median_ms,ewah_stddev_ms,ewah_min_ms,ewah_max_ms,"
@@ -432,7 +390,7 @@ void BMTableScan::BMTPCH_Q12(ExecutionContext &context, const PhysicalTableScan 
                 csv << v.median << "," << v.stddev << "," << v.min_val << "," << v.max_val << ",";
             };
             cell(bn == "WAH" ? s : z);
-            cell(bn == "ComBit" ? s : z);
+            cell(bn == "DDC" ? s : z);
             cell(bn == "CRoaring" ? s : z);
             cell(bn == "CRoaringRun" ? s : z);
             cell(bn == "EWAH" ? s : z);
@@ -449,7 +407,7 @@ void BMTableScan::BMTPCH_Q12(ExecutionContext &context, const PhysicalTableScan 
         std::cout << "  [CSV] q12_results_" << sf << ".csv\n";
     }
 
-    });  // end call_once
+    });
 }
 
-}  // namespace duckdb
+}

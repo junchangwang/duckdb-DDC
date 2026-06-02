@@ -2,11 +2,11 @@
 # cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(5);
 
 ================================================================
-  TPC-H Q5 Benchmark — ComBit vs WAH vs CRoaring vs EWAH (SF10)
+  TPC-H Q5 Benchmark — DDC vs WAH vs CRoaring vs EWAH (SF10)
   OR orderdate days 731..1095 (365 bitmaps)
   Then AND each nation_join bitmap -> Aggregate revenue
   TPC-H params: r_name = 'ASIA', orderdate [1994-01-01, 1995-01-01)
-  Bitmap dirs: tpch_q5_combit tpch_q5_croaring tpch_q5_wah tpch_q5_ewah
+  Bitmap dirs: tpch_q5_ddc tpch_q5_croaring tpch_q5_wah tpch_q5_ewah
   Iterations: 10 (first 2 = warm-up)
 ================================================================
   Nations: INDIA(8) INDONESIA(9) JAPAN(12) CHINA(18) VIETNAM(21) 

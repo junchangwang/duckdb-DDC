@@ -1,21 +1,15 @@
-#include "combit.h"
+#include "ddc.h"
 
 #include <atomic>
 #include <cstdlib>
 #include <map>
 #include <stdexcept>
 
-// Global option: when true, operator results are compressed directly.
-bool combit_compress_results = false;
+bool ddc_compress_results = false;
 
-// Process-wide ComBit load accumulator.  ComBit::deserialize() adds
-// each loaded bitmap's size_breakdown to g_load_stats; on process exit
-// we print one summary line which bench_suite.py parses per Q.
-// L3/L4/total are L4-form sizes, so total = L1 + L2 + L3 + L4.
-// Set COMBIT_NO_BREAKDOWN=1 to silence.
 namespace {
 
-struct CombitLoadStats {
+struct DDCLoadStats {
     std::atomic<size_t> n     {0};
     std::atomic<size_t> l1    {0};
     std::atomic<size_t> l2    {0};
@@ -23,7 +17,7 @@ struct CombitLoadStats {
     std::atomic<size_t> l4    {0};
     std::atomic<size_t> total {0};
 
-    void add(const ComBit& cb) {
+    void add(const DDC& cb) {
         auto sb = cb.size_breakdown();
         size_t b1 = (sb.l1_literal_bits + 7) / 8;
         size_t b2 = (sb.l2_literal_bits + 7) / 8;
@@ -38,18 +32,18 @@ struct CombitLoadStats {
     }
 };
 
-CombitLoadStats g_load_stats;
+DDCLoadStats g_load_stats;
 
-__attribute__((destructor))
-void combit_print_load_breakdown() {
+__attribute__((destructor))  // atexit dump
+void ddc_print_load_breakdown() {
     if (g_load_stats.n.load() == 0) return;
-    const char* off = std::getenv("COMBIT_NO_BREAKDOWN");
+    const char* off = std::getenv("DDC_NO_BREAKDOWN");
     if (off && *off && off[0] != '0') return;
 
     const double inv_mib = 1.0 / (1024.0 * 1024.0);
-    // fprintf, not std::cout: iostream may already be torn down here.
+
     std::fprintf(stdout,
-        "  [Breakdown] ComBit   L1=%.2f MiB  L2=%.2f MiB  L3=%.2f MiB"
+        "  [Breakdown] DDC   L1=%.2f MiB  L2=%.2f MiB  L3=%.2f MiB"
         "  L4=%.2f MiB  total=%.2f MiB\n",
         g_load_stats.l1.load()    * inv_mib,
         g_load_stats.l2.load()    * inv_mib,
@@ -59,17 +53,9 @@ void combit_print_load_breakdown() {
     std::fflush(stdout);
 }
 
-} // namespace
+}
 
-// ====================================================================
-// ComBitBtv member function definitions (3-level: L3/L2/L1)
-// ====================================================================
-
-// ----------------------------------------------------------------
-// Constructor
-// ----------------------------------------------------------------
-
-ComBitBtv::ComBitBtv(bool l1_fill_ones, bool l2_fill_ones, State state)
+DDCBtv::DDCBtv(bool l1_fill_ones, bool l2_fill_ones, State state)
     : state_(state),
       l1_fill_ones_(l1_fill_ones), l2_fill_ones_(l2_fill_ones),
       bit_count_(0),
@@ -78,24 +64,20 @@ ComBitBtv::ComBitBtv(bool l1_fill_ones, bool l2_fill_ones, State state)
       l4_count_(0), l3_literal_count_(0),
       l1_literal_count_(0) {}
 
-ComBitBtv
-ComBitBtv::make_all_fill(size_t bit_count, size_t l2_count, bool l1_fill_ones) {
-    ComBitBtv s(l1_fill_ones);
+DDCBtv
+DDCBtv::make_all_fill(size_t bit_count, size_t l2_count, bool l1_fill_ones) {
+    DDCBtv s(l1_fill_ones);
     s.bit_count_ = bit_count;
     s.l2_count_  = l2_count;
     s.l3_count_  = (l2_count + 7) / 8;
     return s;
 }
 
-ComBitBtv
-ComBitBtv::make_decompressed_zero(size_t bit_count, size_t l2_count) {
-    // Canonical Decompressed all-zero (matches the layout produced by
-    // any binary-OR result before recompression): l1_literals_ holds
-    // l2_count zero bytes (one byte per word_size=8 logical bits),
-    // l2_fill_ones=true means "all literal" (every L1 byte is stored,
-    // no L2 fill bits), and L3/L4 layers are unused.
-    ComBitBtv s(/*l1_fill_ones=*/false,
-                /*l2_fill_ones=*/true,
+DDCBtv
+DDCBtv::make_decompressed_zero(size_t bit_count, size_t l2_count) {
+
+    DDCBtv s( false,
+                 true,
                 State::Decompressed);
     s.bit_count_ = bit_count;
     s.l2_count_  = l2_count;
@@ -106,22 +88,13 @@ ComBitBtv::make_decompressed_zero(size_t bit_count, size_t l2_count) {
     return s;
 }
 
-// ----------------------------------------------------------------
-// Private helpers
-// ----------------------------------------------------------------
+uint64_t DDCBtv::get_literal(size_t idx) const {
 
-uint64_t ComBitBtv::get_literal(size_t idx) const {
-    // One byte per word at ws=8; the returned uint64 is zero-extended.
     return l1_literals_[idx];
 }
 
-/// Rebuild the flat L3 byte array from L4 + l3_literals_.  In Decompressed
-/// state operators populate l3_bits_ directly as scratch, so we just
-/// return that buffer.  When l3_bits_ is empty for a Decompressed segment
-/// (production AVX-512 paths skip the alloc), return the canonical
-/// all-zero L3 of the correct size.
 std::vector<uint8_t>
-ComBitBtv::expand_l3() const {
+DDCBtv::expand_l3() const {  // L4 -> L3
     if (state_ != State::Compressed) {
         size_t expected_bytes = (l3_count_ + 7) / 8;
         if (l3_bits_.size() == expected_bytes)
@@ -144,9 +117,8 @@ ComBitBtv::expand_l3() const {
     return l3;
 }
 
-/// Rebuild the flat L2 byte array from L3 + l2_literals_.
 std::vector<uint8_t>
-ComBitBtv::expand_l2() const {
+DDCBtv::expand_l2() const {  // L3 -> L2
     size_t l2_byte_count = (l2_count_ + 7) / 8;
     uint8_t l2_fill_val = l2_fill_ones_ ? 0xFF : 0x00;
     std::vector<uint8_t> l2(l2_byte_count, l2_fill_val);
@@ -163,12 +135,8 @@ ComBitBtv::expand_l2() const {
     return l2;
 }
 
-// ----------------------------------------------------------------
-// is_last_word_literal — check L2 bit for the last word
-// ----------------------------------------------------------------
-
 bool
-ComBitBtv::is_last_word_literal() const {
+DDCBtv::is_last_word_literal() const {
     size_t last_word = l2_count_ - 1;
     size_t l2_byte_idx = last_word / 8;
     size_t l3_byte_pos = l2_byte_idx / 8;
@@ -190,16 +158,11 @@ ComBitBtv::is_last_word_literal() const {
     return (l2_byte >> (last_word % 8)) & 1;
 }
 
-// ----------------------------------------------------------------
-// Finalize a compressed operator result
-// ----------------------------------------------------------------
-
 void
-ComBitBtv::compact_l2_l3(size_t actual_l1_count) {
+DDCBtv::compact_l2_l3(size_t actual_l1_count) {
     l1_literals_.resize(actual_l1_count);
     l1_literal_count_ = actual_l1_count;
 
-    // Always build L3 compression on L2.
     size_t l2_byte_count = (l2_count_ + 7) / 8;
     size_t l2_nonzero = 0;
     size_t l2_non_ff = 0;
@@ -208,8 +171,7 @@ ComBitBtv::compact_l2_l3(size_t actual_l1_count) {
         if (l2_flat_[i] != 0xFF) l2_non_ff++;
     }
 
-    // Choose the L2 fill value that minimizes stored literals.
-    bool best_l2_fill_lit = (l2_non_ff < l2_nonzero);
+    bool best_l2_fill_lit = (l2_non_ff < l2_nonzero);  // pick fill polarity
     uint8_t l2_fill_val = best_l2_fill_lit ? 0xFF : 0x00;
 
     size_t l3_byte_count = (l2_byte_count + 7) / 8;
@@ -227,18 +189,13 @@ ComBitBtv::compact_l2_l3(size_t actual_l1_count) {
     l2_literal_count_ = l2_literals_.size();
     l2_flat_.clear();
 
-    // Build L4 compression on L3, drop l3_bits_.
     compress_l3_to_l4();
 
     state_ = State::Compressed;
 }
 
-// ----------------------------------------------------------------
-// L4 compression on the populated l3_bits_
-// ----------------------------------------------------------------
-
 void
-ComBitBtv::compress_l3_to_l4() {
+DDCBtv::compress_l3_to_l4() {  // top level
     size_t l3_byte_count = l3_bits_.size();
     size_t l3_nonzero = 0;
     size_t l3_non_ff  = 0;
@@ -247,7 +204,6 @@ ComBitBtv::compress_l3_to_l4() {
         if (l3_bits_[i] != 0xFF) l3_non_ff++;
     }
 
-    // Choose the L3 fill value that minimizes stored literals.
     bool best_l3_fill_lit = (l3_non_ff < l3_nonzero);
     uint8_t l3_fill_val = best_l3_fill_lit ? 0xFF : 0x00;
 
@@ -265,35 +221,22 @@ ComBitBtv::compress_l3_to_l4() {
     }
     l3_literal_count_ = l3_literals_.size();
 
-    // Drop l3_bits_; expand_l3() rebuilds it on demand.
     l3_bits_.clear();
     l3_bits_.shrink_to_fit();
     l3_literals_.shrink_to_fit();
 }
 
-// ----------------------------------------------------------------
-// Compression
-// ----------------------------------------------------------------
-
-// Sparse fast path: build a ComBitBtv directly from a sorted list of set
-// positions, avoiding the O(seg_bits) scan that compress() does.  For
-// per-value index workloads (1-4 set bits per segment) this is ~70× faster.
-//
-// Builds the same structural result as compress(positions_to_vector_bool):
-//   * l1_literals_   = one byte per word that has set bits (MSB-first packing)
-//   * l2_flat        = bit set per word_idx that is literal
-//   * Then builds L3 + L4 via the same density-driven fill choice as compress().
-ComBitBtv
-ComBitBtv::compress_sparse_segment(const std::vector<uint16_t>& sorted_positions,
+DDCBtv  // sparse compress
+DDCBtv::compress_sparse_segment(const std::vector<uint16_t>& sorted_positions,
                                    size_t seg_bits, bool l1_fill_ones) {
     if (l1_fill_ones) {
-        // Dense-fill case is rare in our usage; fall back to compress().
+
         std::vector<bool> bits(seg_bits, true);
         for (uint16_t p : sorted_positions) bits[p] = false;
         return compress(bits, true);
     }
 
-    ComBitBtv result(/*l1_fill_ones=*/false);
+    DDCBtv result( false);
     result.bit_count_ = seg_bits;
     size_t num_words = (seg_bits + 7) / 8;
     if (num_words == 0) return result;
@@ -302,25 +245,22 @@ ComBitBtv::compress_sparse_segment(const std::vector<uint16_t>& sorted_positions
     size_t l2_byte_count = (num_words + 7) / 8;
     std::vector<uint8_t> l2_flat(l2_byte_count, 0);
 
-    // Group consecutive sorted positions in the same word.  Each loop
-    // iteration consumes one word's worth of positions.
     size_t i = 0;
-    while (i < sorted_positions.size()) {
+    while (i < sorted_positions.size()) {  // pack positions per word
         size_t word_idx = sorted_positions[i] / 8;
         uint8_t word = 0;
         while (i < sorted_positions.size() &&
                (size_t(sorted_positions[i] / 8)) == word_idx) {
             uint16_t bit_in_byte = sorted_positions[i] % 8;
-            word |= uint8_t(1) << (7 - bit_in_byte);  // MSB-first (matches compress())
+            word |= uint8_t(1) << (7 - bit_in_byte);
             i++;
         }
-        // word != 0 since at least one position contributed; store as literal
+
         l2_flat[word_idx / 8] |= uint8_t(1) << (word_idx % 8);
         result.l1_literals_.push_back(word);
     }
     result.l1_literal_count_ = result.l1_literals_.size();
 
-    // L3 from L2: same density-driven fill choice as compress().
     size_t l2_nonzero = 0, l2_non_ff = 0;
     for (size_t k = 0; k < l2_byte_count; k++) {
         if (l2_flat[k] != 0x00) l2_nonzero++;
@@ -341,7 +281,6 @@ ComBitBtv::compress_sparse_segment(const std::vector<uint16_t>& sorted_positions
     }
     result.l2_literal_count_ = result.l2_literals_.size();
 
-    // L4 from L3 (existing helper).
     result.compress_l3_to_l4();
 
     result.l1_literals_.shrink_to_fit();
@@ -349,9 +288,9 @@ ComBitBtv::compress_sparse_segment(const std::vector<uint16_t>& sorted_positions
     return result;
 }
 
-ComBitBtv
-ComBitBtv::compress(const std::vector<bool>& bits, bool l1_fill_ones) {
-    ComBitBtv result(l1_fill_ones);
+DDCBtv  // dense compress
+DDCBtv::compress(const std::vector<bool>& bits, bool l1_fill_ones) {
+    DDCBtv result(l1_fill_ones);
     result.bit_count_ = bits.size();
 
     size_t num_words = (bits.size() + 7) / 8;
@@ -359,18 +298,13 @@ ComBitBtv::compress(const std::vector<bool>& bits, bool l1_fill_ones) {
 
     result.l2_count_ = num_words;
 
-    // Step 1: Build flat L2 (one bit per word, packed into bytes)
-    // and collect L1 literals as packed byte stream.
     size_t l2_byte_count = (num_words + 7) / 8;
     std::vector<uint8_t> l2_flat(l2_byte_count, 0);
 
     const uint8_t fill_byte = l1_fill_ones ? 0xFF : 0x00;
 
-    // No reserve here: for sparse data, num_words/4 over-allocates by 40×
-    // (only set words become literals).  push_back's geometric growth costs
-    // ~log(literals) reallocs; cheaper than reserving for the worst case.
-    for (size_t i = 0; i < num_words; i++) {
-        // Read 8 bits (MSB-first within word) directly into a byte.
+    for (size_t i = 0; i < num_words; i++) {  // pack bits into L1 words
+
         uint8_t word = 0;
         size_t start = i * 8;
         for (size_t b = 0; b < 8 && start + b < bits.size(); b++) {
@@ -384,7 +318,6 @@ ComBitBtv::compress(const std::vector<bool>& bits, bool l1_fill_ones) {
     }
     result.l1_literal_count_ = result.l1_literals_.size();
 
-    // Step 2: Build L3 compression on L2.
     size_t l2_nonzero = 0;
     size_t l2_non_ff  = 0;
     for (size_t i = 0; i < l2_byte_count; i++) {
@@ -409,29 +342,20 @@ ComBitBtv::compress(const std::vector<bool>& bits, bool l1_fill_ones) {
     }
     result.l2_literal_count_ = result.l2_literals_.size();
 
-    // Step 3: Build L4 compression on L3, drop l3_bits_.
     result.compress_l3_to_l4();
 
-    // Trim trailing capacity so 1000s of small per-day bitmaps don't
-    // pollute the heap with unused buffer slack (matters for OR_many
-    // walks that traverse many segments back-to-back).
     result.l1_literals_.shrink_to_fit();
     result.l2_literals_.shrink_to_fit();
 
     return result;
 }
 
-// ----------------------------------------------------------------
-// Decompression
-// ----------------------------------------------------------------
-
 std::vector<bool>
-ComBitBtv::decompress() const {
+DDCBtv::decompress() const {  // expand to bits
     assert(state_ != State::Uncompressed);
     std::vector<bool> result;
     result.reserve(bit_count_);
 
-    // Reconstruct flat L2.
     auto l2 = expand_l2();
 
     size_t lit_idx = 0;
@@ -452,12 +376,8 @@ ComBitBtv::decompress() const {
     return result;
 }
 
-// ----------------------------------------------------------------
-// Convenience constructors
-// ----------------------------------------------------------------
-
-ComBitBtv
-ComBitBtv::from_string(const std::string& bitstring, bool l1_fill_ones) {
+DDCBtv
+DDCBtv::from_string(const std::string& bitstring, bool l1_fill_ones) {
     std::vector<bool> bits;
     bits.reserve(bitstring.size());
     for (char c : bitstring) {
@@ -468,7 +388,7 @@ ComBitBtv::from_string(const std::string& bitstring, bool l1_fill_ones) {
 }
 
 std::string
-ComBitBtv::to_string() const {
+DDCBtv::to_string() const {
     auto bits = decompress();
     std::string s;
     s.reserve(bits.size() + bits.size() / 8);
@@ -479,29 +399,19 @@ ComBitBtv::to_string() const {
     return s;
 }
 
-// operator~ and negate_inplace live in not.cpp.
-
-// ----------------------------------------------------------------
-// Queries
-// ----------------------------------------------------------------
-
 size_t
-ComBitBtv::popcount() const {
+DDCBtv::popcount() const {
     if (l2_count_ == 0) return 0;
     assert(state_ != State::Uncompressed);
 
-    // Fill contribution: each fill word has 8 bits of the fill value.
     size_t fill_count = l2_count_ - l1_literal_count_;
     size_t count = l1_fill_ones_ ? fill_count * 8 : 0;
 
-    // Literal contribution: VPOPCNTDQ on packed l1_literals_ byte stream.
-    // popcount over bytes is invariant of word boundaries, so this works
-    // for any ws.
     const uint8_t* data = l1_literals_.data();
-    size_t n = l1_literals_.size();          // total bytes
+    size_t n = l1_literals_.size();
     size_t i = 0;
 
-#ifdef __AVX512VPOPCNTDQ__
+#ifdef __AVX512VPOPCNTDQ__  // SIMD popcount
     __m512i acc = _mm512_setzero_si512();
     for (; i + 64 <= n; i += 64) {
         __m512i chunk = _mm512_loadu_si512(data + i);
@@ -510,7 +420,7 @@ ComBitBtv::popcount() const {
     count += _mm512_reduce_add_epi64(acc);
 #endif
 
-    for (; i + 8 <= n; i += 8) {
+    for (; i + 8 <= n; i += 8) {  // scalar tail
         uint64_t w;
         memcpy(&w, data + i, 8);
         count += __builtin_popcountll(w);
@@ -518,9 +428,6 @@ ComBitBtv::popcount() const {
     for (; i < n; i++)
         count += __builtin_popcount(data[i]);
 
-    // Adjust for the last partial word when bit_count_ is not a multiple
-    // of 8.  Literal padding bits are 0 by convention; only fill words
-    // with fill_ones=true overcounted (8 instead of bit_count_ % 8).
     if (bit_count_ % 8 != 0) {
         size_t extra_bits = 8 - (bit_count_ % 8);
         if (l1_fill_ones_ && !is_last_word_literal())
@@ -531,7 +438,7 @@ ComBitBtv::popcount() const {
 }
 
 std::vector<size_t>
-ComBitBtv::set_bit_positions() const {
+DDCBtv::set_bit_positions() const {
     auto bits = decompress();
     std::vector<size_t> pos;
     for (size_t i = 0; i < bits.size(); i++) {
@@ -540,12 +447,8 @@ ComBitBtv::set_bit_positions() const {
     return pos;
 }
 
-// ----------------------------------------------------------------
-// Size / statistics
-// ----------------------------------------------------------------
-
-ComBitBtv::SizeBreakdown
-ComBitBtv::size_breakdown() const {
+DDCBtv::SizeBreakdown
+DDCBtv::size_breakdown() const {
     SizeBreakdown sb{};
     sb.l3_bits         = l3_count_;
     sb.l4_bits         = l4_count_;
@@ -558,27 +461,19 @@ ComBitBtv::size_breakdown() const {
 }
 
 double
-ComBitBtv::compression_ratio() const {
+DDCBtv::compression_ratio() const {
     size_t cb = compressed_size_bits();
     return cb > 0 ? static_cast<double>(bit_count_) / cb : 0.0;
 }
 
-// ----------------------------------------------------------------
-// num_fills
-// ----------------------------------------------------------------
-
 size_t
-ComBitBtv::num_fills() const {
+DDCBtv::num_fills() const {
     return l2_count_ - l1_literal_count_;
 }
 
-// ----------------------------------------------------------------
-// Debug printing
-// ----------------------------------------------------------------
-
 void
-ComBitBtv::print(std::ostream& os) const {
-    os << "ComBitBtv compressed bitvector (4-level):\n";
+DDCBtv::print(std::ostream& os) const {
+    os << "DDCBtv compressed bitvector (4-level):\n";
     os << "  Original size: " << bit_count_ << " bits\n";
     os << "  Word size:     8 bits\n";
     os << "  L2 count: " << l2_count_ << " (words)\n";
@@ -599,18 +494,10 @@ ComBitBtv::print(std::ostream& os) const {
        << compression_ratio() << "x\n";
 }
 
-// ====================================================================
-// ComBit (segmented) member function definitions
-// ====================================================================
-
-// ----------------------------------------------------------------
-// Compression
-// ----------------------------------------------------------------
-
-ComBit
-ComBit::compress(const std::vector<bool>& bits, bool l1_fill_ones,
+DDC
+DDC::compress(const std::vector<bool>& bits, bool l1_fill_ones,
                  size_t segment_bits) {
-    ComBit result;
+    DDC result;
     result.bit_count_ = bits.size();
     result.segment_bits_ = segment_bits;
 
@@ -620,26 +507,24 @@ ComBit::compress(const std::vector<bool>& bits, bool l1_fill_ones,
         std::vector<bool> seg_bits(bits.begin() + static_cast<ptrdiff_t>(offset),
                                    bits.begin() + static_cast<ptrdiff_t>(offset + seg_len));
         result.segments_.emplace_back(
-            ComBitBtv::compress(seg_bits, l1_fill_ones));
+            DDCBtv::compress(seg_bits, l1_fill_ones));
         offset += seg_len;
     }
 
     return result;
 }
 
-ComBit
-ComBit::from_sparse_positions(const std::vector<uint32_t>& positions,
+DDC  // build from positions
+DDC::from_sparse_positions(const std::vector<uint32_t>& positions,
                               size_t num_rows,
                               size_t segment_bits) {
-    ComBit result;
+    DDC result;
     result.bit_count_ = num_rows;
     result.segment_bits_ = segment_bits;
     const size_t num_segs = (num_rows + segment_bits - 1) / segment_bits;
 
-    // Bucket positions by segment index.  Use a vector<vector> for hot-path
-    // O(positions) bucketing; non-empty buckets get compressed individually.
     std::vector<std::vector<uint32_t>> seg_positions(num_segs);
-    for (uint32_t p : positions) {
+    for (uint32_t p : positions) {  // bucket by segment
         seg_positions[p / segment_bits].push_back(p % segment_bits);
     }
 
@@ -647,39 +532,24 @@ ComBit::from_sparse_positions(const std::vector<uint32_t>& positions,
     for (size_t s = 0; s < num_segs; s++) {
         size_t seg_len = std::min(segment_bits, num_rows - s * segment_bits);
         if (seg_positions[s].empty()) {
-            // Empty segment — produce Decompressed-zero (canonical
-            // l1_literals_ all-zero of size l2_count) instead of
-            // Compressed all-fill.  This makes from_sparse_positions({})
-            // a ready-to-scatter seed: SparseComBit's ultra-sparse
-            // apply_or_to / or_many can poke positions directly into
-            // l1_literals_ without paying a per-segment lazy
-            // Compressed→Decompressed upgrade.  Memory cost: l2_count
-            // (≈ segment_bits/8) zero bytes per empty segment, ~7.5 MB
-            // total for a 60M-row seed at seg_bits=4096 — paid once
-            // per OR accumulator; recovered many times over by avoiding
-            // 216-byte ComBitBtv hierarchy per touched key.
+
             const size_t l2_count = (seg_len + 7) / 8;
             result.segments_.push_back(
-                ComBitBtv::make_decompressed_zero(seg_len, l2_count));
+                DDCBtv::make_decompressed_zero(seg_len, l2_count));
         } else {
-            // Non-empty: build a vector<bool> JUST for this segment and
-            // compress.  Cost: O(seg_len) per non-empty segment.
+
             std::vector<bool> seg_bits(seg_len, false);
             for (uint32_t p : seg_positions[s]) seg_bits[p] = true;
             result.segments_.emplace_back(
-                ComBitBtv::compress(seg_bits, /*l1_fill_ones=*/false));
+                DDCBtv::compress(seg_bits,  false));
         }
     }
 
     return result;
 }
 
-// ----------------------------------------------------------------
-// Decompression
-// ----------------------------------------------------------------
-
 std::vector<bool>
-ComBit::decompress() const {
+DDC::decompress() const {
     std::vector<bool> result;
     result.reserve(bit_count_);
 
@@ -691,12 +561,8 @@ ComBit::decompress() const {
     return result;
 }
 
-// ----------------------------------------------------------------
-// Convenience constructors
-// ----------------------------------------------------------------
-
-ComBit
-ComBit::from_string(const std::string& bitstring, bool l1_fill_ones,
+DDC
+DDC::from_string(const std::string& bitstring, bool l1_fill_ones,
                     size_t segment_bits) {
     std::vector<bool> bits;
     bits.reserve(bitstring.size());
@@ -708,7 +574,7 @@ ComBit::from_string(const std::string& bitstring, bool l1_fill_ones,
 }
 
 std::string
-ComBit::to_string() const {
+DDC::to_string() const {
     auto bits = decompress();
     std::string s;
     s.reserve(bits.size());
@@ -717,14 +583,8 @@ ComBit::to_string() const {
     return s;
 }
 
-// ComBit operator~ and negate_inplace live in not.cpp.
-
-// ----------------------------------------------------------------
-// Queries
-// ----------------------------------------------------------------
-
 size_t
-ComBit::popcount() const {
+DDC::popcount() const {
     size_t count = 0;
     for (const auto& seg : segments_)
         count += seg.popcount();
@@ -732,7 +592,7 @@ ComBit::popcount() const {
 }
 
 std::vector<size_t>
-ComBit::set_bit_positions() const {
+DDC::set_bit_positions() const {
     auto bits = decompress();
     std::vector<size_t> pos;
     for (size_t i = 0; i < bits.size(); i++)
@@ -740,12 +600,8 @@ ComBit::set_bit_positions() const {
     return pos;
 }
 
-// ----------------------------------------------------------------
-// Size / statistics
-// ----------------------------------------------------------------
-
-ComBit::SizeBreakdown
-ComBit::size_breakdown() const {
+DDC::SizeBreakdown
+DDC::size_breakdown() const {
     SizeBreakdown sb{0, 0, 0, 0, 0, 0};
     for (const auto& seg : segments_) {
         auto ssb = seg.size_breakdown();
@@ -760,18 +616,14 @@ ComBit::size_breakdown() const {
 }
 
 double
-ComBit::compression_ratio() const {
+DDC::compression_ratio() const {
     size_t cb = compressed_size_bits();
     return cb > 0 ? static_cast<double>(bit_count_) / cb : 0.0;
 }
 
-// ----------------------------------------------------------------
-// Debug printing
-// ----------------------------------------------------------------
-
 void
-ComBit::print(std::ostream& os) const {
-    os << "ComBit segmented bitvector:\n";
+DDC::print(std::ostream& os) const {
+    os << "DDC segmented bitvector:\n";
     os << "  Original size: " << bit_count_ << " bits\n";
     os << "  Segment size:  " << segment_bits_ << " bits\n";
     os << "  Num segments:  " << segments_.size() << "\n";
@@ -779,7 +631,7 @@ ComBit::print(std::ostream& os) const {
     for (size_t i = 0; i < segments_.size(); i++) {
         const auto& s = segments_[i];
         os << "  Segment " << i << ": "
-           << "ComBitBtv"
+           << "DDCBtv"
            << " l1_fill_ones=" << s.l1_fill_ones()
            << " bits=" << s.bit_count()
            << " fills=" << s.num_fills()
@@ -797,17 +649,11 @@ ComBit::print(std::ostream& os) const {
        << compression_ratio() << "x\n";
 }
 
-// ====================================================================
-// Serialization / Deserialization
-// ====================================================================
-
-// Helper: write POD value to stream
 template<typename T>
 static void write_val(std::ostream& os, T val) {
     os.write(reinterpret_cast<const char*>(&val), sizeof(val));
 }
 
-// Helper: read POD value from stream
 template<typename T>
 static T read_val(std::istream& is) {
     T val;
@@ -815,20 +661,12 @@ static T read_val(std::istream& is) {
     return val;
 }
 
-// ----------------------------------------------------------------
-// ComBitBtv::serialize / deserialize
-// ----------------------------------------------------------------
+static constexpr uint8_t DDC_FMT_V1 = 8;
+static constexpr uint8_t DDC_FMT_V2 = 9;
 
-// On-disk format tags.  V1 (=8) is the legacy 3-level layout from
-// before the L4 work.  V2 (=9) is the current 4-level layout: L4 leading
-// + L3 literal stream replaces the dense l3_bits_ buffer.
-// deserialize() reads either; serialize() always writes V2.
-static constexpr uint8_t COMBIT_FMT_V1 = 8;
-static constexpr uint8_t COMBIT_FMT_V2 = 9;
-
-void ComBitBtv::serialize(std::ostream& os) const {
+void DDCBtv::serialize(std::ostream& os) const {
     assert(state_ == State::Compressed);
-    write_val<uint8_t>(os, COMBIT_FMT_V2);
+    write_val<uint8_t>(os, DDC_FMT_V2);
     write_val<uint8_t>(os, l1_fill_ones_ ? 1 : 0);
     write_val<uint8_t>(os, l2_fill_ones_ ? 1 : 0);
     write_val<uint8_t>(os, l3_fill_ones_ ? 1 : 0);
@@ -855,18 +693,18 @@ void ComBitBtv::serialize(std::ostream& os) const {
         os.write(reinterpret_cast<const char*>(l1_literals_.data()), l1_literal_count_);
 }
 
-ComBitBtv ComBitBtv::deserialize(std::istream& is) {
+DDCBtv DDCBtv::deserialize(std::istream& is) {
     uint8_t fmt = read_val<uint8_t>(is);
-    if (fmt != COMBIT_FMT_V1 && fmt != COMBIT_FMT_V2)
-        throw std::runtime_error("ComBitBtv::deserialize: unknown format tag " +
+    if (fmt != DDC_FMT_V1 && fmt != DDC_FMT_V2)
+        throw std::runtime_error("DDCBtv::deserialize: unknown format tag " +
                                  std::to_string(fmt));
     uint8_t fo = read_val<uint8_t>(is);
     uint8_t fl = read_val<uint8_t>(is);
 
-    ComBitBtv btv(fo != 0, fl != 0);
+    DDCBtv btv(fo != 0, fl != 0);
 
-    if (fmt == COMBIT_FMT_V2) {
-        // 4-level layout: L4 leading + L3 literal stream.
+    if (fmt == DDC_FMT_V2) {
+
         uint8_t fl3 = read_val<uint8_t>(is);
         btv.l3_fill_ones_ = (fl3 != 0);
         btv.bit_count_ = read_val<uint64_t>(is);
@@ -884,7 +722,7 @@ ComBitBtv ComBitBtv::deserialize(std::istream& is) {
         if (btv.l3_literal_count_ > 0)
             is.read(reinterpret_cast<char*>(btv.l3_literals_.data()), btv.l3_literal_count_);
     } else {
-        // V1: read the dense L3 buffer, then run L4 compression on it.
+
         btv.bit_count_ = read_val<uint64_t>(is);
         btv.l2_count_  = read_val<uint64_t>(is);
         btv.l3_count_  = read_val<uint64_t>(is);
@@ -904,17 +742,13 @@ ComBitBtv ComBitBtv::deserialize(std::istream& is) {
     if (btv.l1_literal_count_ > 0)
         is.read(reinterpret_cast<char*>(btv.l1_literals_.data()), btv.l1_literal_count_);
 
-    if (fmt == COMBIT_FMT_V1)
-        btv.compress_l3_to_l4();   // upgrades V1 → V2 in memory
+    if (fmt == DDC_FMT_V1)
+        btv.compress_l3_to_l4();
 
     return btv;
 }
 
-// ----------------------------------------------------------------
-// ComBit::serialize / deserialize
-// ----------------------------------------------------------------
-
-void ComBit::serialize(std::ostream& os) const {
+void DDC::serialize(std::ostream& os) const {
     write_val<uint64_t>(os, bit_count_);
     write_val<uint64_t>(os, segment_bits_);
     write_val<uint64_t>(os, segments_.size());
@@ -923,39 +757,23 @@ void ComBit::serialize(std::ostream& os) const {
         seg.serialize(os);
 }
 
-ComBit ComBit::deserialize(std::istream& is) {
-    ComBit cb;
+DDC DDC::deserialize(std::istream& is) {
+    DDC cb;
     cb.bit_count_ = read_val<uint64_t>(is);
     cb.segment_bits_ = read_val<uint64_t>(is);
     uint64_t num_segs = read_val<uint64_t>(is);
     cb.segments_.reserve(num_segs);
 
     for (uint64_t i = 0; i < num_segs; i++)
-        cb.segments_.push_back(ComBitBtv::deserialize(is));
+        cb.segments_.push_back(DDCBtv::deserialize(is));
 
     g_load_stats.add(cb);
     return cb;
 }
 
-// =============================================================================
-// V3 packed serialize / deserialize — minimum-overhead opt-in format used
-// for the segment-size ablation study.  Per-segment header drops from
-// 68 byte (V2) to 17 byte by removing derivable count fields and using
-// uint32_t length prefixes.  Production serialize()/deserialize() continues
-// to use V2.
-//
-// Wire format:
-//   Per-bitmap header (25 byte): magic 0xCB + bit_count + segment_bits + num_segs
-//   Per-segment header (17 byte non-last, 21 byte last):
-//     1 byte  flags (l1_fill | l2_fill | l3_fill | is_last_seg)
-//     4 byte  bit_count_ ONLY when is_last_seg
-//     4 byte each: l4_bytes, l3_lit_count, l2_lit_count, l1_lit_count
-//   then four data streams (L4 raw, L3 lit, L2 lit, L1 lit).
-// =============================================================================
+static constexpr uint8_t DDC_FMT_V3_MAGIC = 0xCB;
 
-static constexpr uint8_t COMBIT_FMT_V3_MAGIC = 0xCB;
-
-void ComBitBtv::serialize_packed(std::ostream& os, bool is_last_seg) const {
+void DDCBtv::serialize_packed(std::ostream& os, bool is_last_seg) const {
     assert(state_ == State::Compressed);
 
     uint8_t flags = 0;
@@ -984,14 +802,14 @@ void ComBitBtv::serialize_packed(std::ostream& os, bool is_last_seg) const {
         os.write(reinterpret_cast<const char*>(l1_literals_.data()), l1_literal_count_);
 }
 
-ComBitBtv ComBitBtv::deserialize_packed(std::istream& is, size_t segment_bits) {
+DDCBtv DDCBtv::deserialize_packed(std::istream& is, size_t segment_bits) {
     uint8_t flags = read_val<uint8_t>(is);
     bool l1_fo  = (flags & 0x01) != 0;
     bool l2_fo  = (flags & 0x02) != 0;
     bool l3_fo  = (flags & 0x04) != 0;
     bool islast = (flags & 0x08) != 0;
 
-    ComBitBtv btv(l1_fo, l2_fo);
+    DDCBtv btv(l1_fo, l2_fo);
     btv.l3_fill_ones_ = l3_fo;
 
     btv.bit_count_ = islast ? read_val<uint32_t>(is) : segment_bits;
@@ -1019,49 +837,33 @@ ComBitBtv ComBitBtv::deserialize_packed(std::istream& is, size_t segment_bits) {
     return btv;
 }
 
-void ComBit::serialize_packed(std::ostream& os) const {
-    write_val<uint8_t>(os, COMBIT_FMT_V3_MAGIC);
+void DDC::serialize_packed(std::ostream& os) const {
+    write_val<uint8_t>(os, DDC_FMT_V3_MAGIC);
     write_val<uint64_t>(os, bit_count_);
     write_val<uint64_t>(os, segment_bits_);
     write_val<uint64_t>(os, segments_.size());
     for (size_t i = 0; i < segments_.size(); i++)
-        segments_[i].serialize_packed(os, /*is_last_seg=*/(i + 1 == segments_.size()));
+        segments_[i].serialize_packed(os,  (i + 1 == segments_.size()));
 }
 
-ComBit ComBit::deserialize_packed(std::istream& is) {
+DDC DDC::deserialize_packed(std::istream& is) {
     uint8_t magic = read_val<uint8_t>(is);
-    if (magic != COMBIT_FMT_V3_MAGIC)
-        throw std::runtime_error("ComBit::deserialize_packed: bad magic "
+    if (magic != DDC_FMT_V3_MAGIC)
+        throw std::runtime_error("DDC::deserialize_packed: bad magic "
                                  + std::to_string(magic));
-    ComBit cb;
+    DDC cb;
     cb.bit_count_    = read_val<uint64_t>(is);
     cb.segment_bits_ = read_val<uint64_t>(is);
     uint64_t num_segs = read_val<uint64_t>(is);
     cb.segments_.reserve(num_segs);
     for (uint64_t i = 0; i < num_segs; i++)
-        cb.segments_.push_back(ComBitBtv::deserialize_packed(is, cb.segment_bits_));
+        cb.segments_.push_back(DDCBtv::deserialize_packed(is, cb.segment_bits_));
     return cb;
 }
 
-// =============================================================================
-// V4 packed serialize — header-optimized opt-in format.  Per-segment header
-// is 1-13 byte (vs V3's 17 byte): all-fill segs use 1 byte (just flags +
-// has_layer bits), L4 raw length derived from segment_bits.
-//
-// Wire format:
-//   Per-bitmap: magic 0xC4 + bit_count + segment_bits + num_segs
-//   Per-segment:
-//     1 byte flags (4 fill + last + 3 has_layer bits)
-//     [4 byte bit_count_]    if is_last_seg
-//     [4 byte l3_lit_count_] if has_l3_lit
-//     [4 byte l2_lit_count_] if has_l2_lit
-//     [4 byte l1_lit_count_] if has_l1_lit
-//   then L4 raw (always, length derived) + L3/L2/L1 lit (if has_*)
-// =============================================================================
+static constexpr uint8_t DDC_FMT_V4_MAGIC = 0xC4;
 
-static constexpr uint8_t COMBIT_FMT_V4_MAGIC = 0xC4;
-
-void ComBitBtv::serialize_v4(std::ostream& os, bool is_last_seg) const {
+void DDCBtv::serialize_v4(std::ostream& os, bool is_last_seg) const {  // compact, omit empty levels
     assert(state_ == State::Compressed);
 
     uint8_t flags = 0;
@@ -1095,7 +897,7 @@ void ComBitBtv::serialize_v4(std::ostream& os, bool is_last_seg) const {
         os.write(reinterpret_cast<const char*>(l1_literals_.data()), l1_literal_count_);
 }
 
-ComBitBtv ComBitBtv::deserialize_v4(std::istream& is, size_t segment_bits) {
+DDCBtv DDCBtv::deserialize_v4(std::istream& is, size_t segment_bits) {
     uint8_t flags = read_val<uint8_t>(is);
     bool l1_fo       = (flags & 0x01) != 0;
     bool l2_fo       = (flags & 0x02) != 0;
@@ -1105,7 +907,7 @@ ComBitBtv ComBitBtv::deserialize_v4(std::istream& is, size_t segment_bits) {
     bool has_l2_lit  = (flags & 0x20) != 0;
     bool has_l3_lit  = (flags & 0x40) != 0;
 
-    ComBitBtv btv(l1_fo, l2_fo);
+    DDCBtv btv(l1_fo, l2_fo);
     btv.l3_fill_ones_ = l3_fo;
 
     btv.bit_count_ = islast ? read_val<uint32_t>(is) : segment_bits;
@@ -1133,47 +935,41 @@ ComBitBtv ComBitBtv::deserialize_v4(std::istream& is, size_t segment_bits) {
     return btv;
 }
 
-void ComBit::serialize_v4(std::ostream& os) const {
-    write_val<uint8_t>(os, COMBIT_FMT_V4_MAGIC);
+void DDC::serialize_v4(std::ostream& os) const {
+    write_val<uint8_t>(os, DDC_FMT_V4_MAGIC);
     write_val<uint64_t>(os, bit_count_);
     write_val<uint64_t>(os, segment_bits_);
     write_val<uint64_t>(os, segments_.size());
     for (size_t i = 0; i < segments_.size(); i++)
-        segments_[i].serialize_v4(os, /*is_last_seg=*/(i + 1 == segments_.size()));
+        segments_[i].serialize_v4(os,  (i + 1 == segments_.size()));
 }
 
-ComBit ComBit::deserialize_v4(std::istream& is) {
+DDC DDC::deserialize_v4(std::istream& is) {
     uint8_t magic = read_val<uint8_t>(is);
-    if (magic != COMBIT_FMT_V4_MAGIC)
-        throw std::runtime_error("ComBit::deserialize_v4: bad magic "
+    if (magic != DDC_FMT_V4_MAGIC)
+        throw std::runtime_error("DDC::deserialize_v4: bad magic "
                                  + std::to_string(magic));
-    ComBit cb;
+    DDC cb;
     cb.bit_count_    = read_val<uint64_t>(is);
     cb.segment_bits_ = read_val<uint64_t>(is);
     uint64_t num_segs = read_val<uint64_t>(is);
     cb.segments_.reserve(num_segs);
     for (uint64_t i = 0; i < num_segs; i++)
-        cb.segments_.push_back(ComBitBtv::deserialize_v4(is, cb.segment_bits_));
+        cb.segments_.push_back(DDCBtv::deserialize_v4(is, cb.segment_bits_));
     return cb;
 }
 
-// =============================================================================
-// SparseComBit — sparse-storage variant for per-value indexing workloads.
-// =============================================================================
-
-SparseComBit
-SparseComBit::from_positions(const std::vector<uint32_t>& positions,
+SparseDDC
+SparseDDC::from_positions(const std::vector<uint32_t>& positions,
                              size_t num_rows,
                              size_t segment_bits) {
-    SparseComBit s;
+    SparseDDC s;
     s.bit_count_    = num_rows;
     s.segment_bits_ = segment_bits;
     s.num_set_bits_ = positions.size();
 
     if (positions.empty()) return s;
 
-    // Bucket positions by segment.  std::map keeps seg_indices_ ascending
-    // (operators rely on this).
     std::map<uint32_t, std::vector<uint32_t>> by_seg;
     for (uint32_t p : positions) {
         by_seg[static_cast<uint32_t>(p / segment_bits)]
@@ -1182,68 +978,55 @@ SparseComBit::from_positions(const std::vector<uint32_t>& positions,
 
     s.seg_indices_.reserve(by_seg.size());
     s.seg_data_.reserve(by_seg.size());
-    std::vector<uint16_t> sorted_pos;  // reuse across segments
+    std::vector<uint16_t> sorted_pos;
     for (auto& [seg_idx, local_pos] : by_seg) {
         size_t seg_off = static_cast<size_t>(seg_idx) * segment_bits;
         size_t seg_len = std::min(segment_bits, num_rows - seg_off);
-        // Sort positions within the segment (uint16_t — segment_bits ≤ 64K
-        // means within-segment offsets fit in 16 bits for the typical setup;
-        // for larger segment_bits, we cap below).
+
         sorted_pos.clear();
         sorted_pos.reserve(local_pos.size());
         for (uint32_t p : local_pos) sorted_pos.push_back(static_cast<uint16_t>(p));
         std::sort(sorted_pos.begin(), sorted_pos.end());
         s.seg_indices_.push_back(seg_idx);
         s.seg_data_.emplace_back(
-            ComBitBtv::compress_sparse_segment(sorted_pos, seg_len,
-                                               /*l1_fill_ones=*/false));
+            DDCBtv::compress_sparse_segment(sorted_pos, seg_len,
+                                                false));
     }
     return s;
 }
 
-void
-SparseComBit::apply_or_to(ComBit& dst) const {
+void  // per-segment OR merge
+SparseDDC::apply_or_to(DDC& dst) const {
     assert(dst.bit_count() == bit_count_);
     assert(dst.segment_bits() == segment_bits_);
     auto& dst_segs = dst.segments();
     for (size_t i = 0; i < seg_indices_.size(); i++) {
         uint32_t idx = seg_indices_[i];
-        const ComBitBtv& src = seg_data_[i];
-        if (src.is_all_zero()) continue;             // 0 | dst = dst
-        ComBitBtv& d = dst_segs[idx];
+        const DDCBtv& src = seg_data_[i];
+        if (src.is_all_zero()) continue;
+        DDCBtv& d = dst_segs[idx];
         if (d.is_all_zero()) {
-            // Teacher's pattern equivalent: when caller seeded dst as
-            // Decompressed-zero (`from_sparse_positions({})` then call
-            // `apply_or_to` for each key), we want d to STAY
-            // Decompressed across the whole pairwise chain.  The old
-            // shortcut `d = src` adopted src's Compressed state, which
-            // forced every subsequent OR through the Compressed |
-            // Compressed path (allocates a fresh ComBitBtv each call).
-            // Doing `d |= src` in-place when d is Decompressed-zero
-            // keeps d Decompressed and lets the rest of the chain run
-            // through the in-place |= path with no allocation per call.
-            if (d.state() == ComBitBtv::State::Decompressed) {
+
+            if (d.state() == DDCBtv::State::Decompressed) {
                 d |= src;
             } else {
                 d = src;
             }
             continue;
         }
-        if (d.is_all_ones()) continue;               // 1 | anything = 1
-        if (src.is_all_ones()) {                     // src is fill_ones
-            d = ComBitBtv::make_all_fill(src.bit_count(), src.l2_count(), true);
+        if (d.is_all_ones()) continue;  // fast-path fills
+        if (src.is_all_ones()) {
+            d = DDCBtv::make_all_fill(src.bit_count(), src.l2_count(), true);
             continue;
         }
-        // Both have data — fall back to ComBitBtv binary | (handles
-        // Compressed/Decompressed combinations via cross-state shims).
-        if (d.state() == ComBitBtv::State::Compressed &&
-            src.state() == ComBitBtv::State::Compressed) {
+
+        if (d.state() == DDCBtv::State::Compressed &&
+            src.state() == DDCBtv::State::Compressed) {
             d = d | src;
         } else {
-            // At least one is Decompressed — use in-place |= which accepts
-            // Decompressed *this and any RHS.  Need to ensure d is Decompressed.
-            if (d.state() != ComBitBtv::State::Decompressed) {
-                ComBitBtv tmp = d;
+
+            if (d.state() != DDCBtv::State::Decompressed) {
+                DDCBtv tmp = d;
                 tmp |= src;
                 d = std::move(tmp);
             } else {
@@ -1254,27 +1037,24 @@ SparseComBit::apply_or_to(ComBit& dst) const {
 }
 
 size_t
-SparseComBit::storage_bytes() const {
+SparseDDC::storage_bytes() const {
     size_t total = sizeof(*this);
     total += seg_indices_.capacity() * sizeof(uint32_t);
-    total += seg_data_.capacity()    * sizeof(ComBitBtv);
+    total += seg_data_.capacity()    * sizeof(DDCBtv);
     for (const auto& s : seg_data_) {
         total += s.size_breakdown().total_bits / 8;
     }
     return total;
 }
 
-ComBit
-SparseComBit::or_many(size_t count, const SparseComBit** sparses,
+DDC  // fused multi-way OR
+SparseDDC::or_many(size_t count, const SparseDDC** sparses,
                       size_t num_rows, size_t segment_bits) {
-    ComBit dst = ComBit::from_sparse_positions({}, num_rows, segment_bits);
+    DDC dst = DDC::from_sparse_positions({}, num_rows, segment_bits);
     if (count == 0) return dst;
 
-    // Bucket every input segment by its output segment index, then OR
-    // per-output-segment in one pass — avoids pairwise ComBitBtv |=
-    // overhead in multi-OR phases.
     size_t num_segs = (num_rows + segment_bits - 1) / segment_bits;
-    std::vector<std::vector<const ComBitBtv*>> by_seg(num_segs);
+    std::vector<std::vector<const DDCBtv*>> by_seg(num_segs);
     size_t total_segs = 0;
     for (size_t s = 0; s < count; s++) total_segs += sparses[s]->seg_indices_.size();
     if (total_segs == 0) return dst;
@@ -1291,25 +1071,25 @@ SparseComBit::or_many(size_t count, const SparseComBit** sparses,
     }
 
     auto& dst_segs = dst.segments();
-    for (uint32_t seg = 0; seg < num_segs; seg++) {
+    for (uint32_t seg = 0; seg < num_segs; seg++) {  // OR all sources per segment
         auto& srcs = by_seg[seg];
         if (srcs.empty()) continue;
-        ComBitBtv& d = dst_segs[seg];
-        for (const ComBitBtv* src_ptr : srcs) {
-            const ComBitBtv& src = *src_ptr;
+        DDCBtv& d = dst_segs[seg];
+        for (const DDCBtv* src_ptr : srcs) {
+            const DDCBtv& src = *src_ptr;
             if (src.is_all_zero()) continue;
             if (d.is_all_zero())   { d = src; continue; }
             if (d.is_all_ones())   break;
             if (src.is_all_ones()) {
-                d = ComBitBtv::make_all_fill(src.bit_count(), src.l2_count(), true);
+                d = DDCBtv::make_all_fill(src.bit_count(), src.l2_count(), true);
                 break;
             }
-            if (d.state() == ComBitBtv::State::Compressed
-                && src.state() == ComBitBtv::State::Compressed) {
+            if (d.state() == DDCBtv::State::Compressed
+                && src.state() == DDCBtv::State::Compressed) {
                 d = d | src;
             } else {
-                if (d.state() != ComBitBtv::State::Decompressed) {
-                    ComBitBtv tmp = d;
+                if (d.state() != DDCBtv::State::Decompressed) {
+                    DDCBtv tmp = d;
                     tmp |= src;
                     d = std::move(tmp);
                 } else {

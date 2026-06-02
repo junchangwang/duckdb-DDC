@@ -2,10 +2,10 @@
 # cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(1);
 
 ================================================================
-  TPC-H Q1 Benchmark — ComBit vs WAH vs CRoaring vs EWAH (SF10)
+  TPC-H Q1 Benchmark — DDC vs WAH vs CRoaring vs EWAH (SF10)
   Complement approach: OR days 2437..max → NOT
   TPC-H params: l_shipdate <= DATE '1998-12-01' - INTERVAL '90' DAY (= 1998-09-02)
-  Bitmap dirs: tpch_q1_wah tpch_q1_combit tpch_q1_croaring tpch_q1_ewah
+  Bitmap dirs: tpch_q1_wah tpch_q1_ddc tpch_q1_croaring tpch_q1_ewah
   Iterations: 10 (first 2 = warm-up)
 ================================================================
 
@@ -15,14 +15,14 @@
 [Load] Loading bitmaps (mode=ALL)...
   Shipdate: cutoff=2436 max=2526 complement OR: 90 bitmaps (days 2437..2526)
   WAH load:      49.357 ms
-  ComBit load:   65.036 ms
+  DDC load:   65.036 ms
   CRoaring load: 41.437 ms
   CRR load:      40.781 ms
   EWAH load:     28.898 ms
   Bitset load:   719.494 ms (shared by BS / BSA)
   Concise load:  1162.68 ms (incl. universe build)
   WAH      on disk: 482.24 MiB
-  ComBit   on disk: 539.93 MiB
+  DDC   on disk: 539.93 MiB
   CRoaring on disk: 167.86 MiB (shared by CR / CRR)
   EWAH     on disk: 914.50 MiB
   Bitset in mem:    679.34 MiB (rebuilt from CRoaring at load)
@@ -133,7 +133,7 @@
 ================================================================
   Row counts: WAH=59142609 CB=59142609 CR=59142609 CRR=59142609 EW=59142609 BS=59142609 BSA=59142609 CON=59142609
 
-  Q1 Results (from ComBit):
+  Q1 Results (from DDC):
   rf ls  sum_qty       sum_base_price  sum_disc_price     sum_charge        avg_qty  avg_price  avg_disc  count
   A  F  377518399.00  566065727797.25   537759104278.07     559276670892.12     25.50   38237.15      0.05  14804077
   N  F    9851614.00  14767438399.17    14028805792.21      14590490998.37     25.52   38257.81      0.05  385998
@@ -147,7 +147,7 @@
 ================================================================
   Q1 RESULTS (8 measured iterations, median ± stddev)
 ================================================================
-                       WAH (ms)              ComBit (ms)         CRoaring (ms)      CRoar+Run (ms)       EWAH (ms)          CB vs WAH   CR vs WAH  CRR vs WAH   EW vs WAH
+                       WAH (ms)              DDC (ms)         CRoaring (ms)      CRoar+Run (ms)       EWAH (ms)          CB vs WAH   CR vs WAH  CRR vs WAH   EW vs WAH
   --------------------------------------------------------------------------------------------------------------------------------
   OR_ship             3.73 ±   0.12        11.69 ±   0.23        32.25 ±   0.03         7.49 ±   0.14        74.28 ±   0.80      0.32x      0.12x      0.50x      0.05x
   NOT                 0.30 ±   0.01         1.10 ±   0.01         1.66 ±   0.02         1.31 ±   0.03         1.74 ±   0.01      0.28x      0.18x      0.23x      0.17x
@@ -156,7 +156,7 @@
   TOTAL             724.57 ±   1.93       450.87 ±   2.77       532.94 ±   0.59       507.97 ±   0.79       498.44 ±   7.02      1.61x      1.36x      1.43x      1.45x
 
   WAH rows:        59142609
-  ComBit rows:     59142609
+  DDC rows:     59142609
   CRoaring rows:   59142609
   CRoar+Run rows:  59142609
   EWAH rows:       59142609
@@ -189,4 +189,4 @@
 │ N            │ O            │  743124873.00 │ 1114302286901.88 │ 1058580922144.9638 │ 1100937000170.591854 │ 25.498075870689316 │  38233.90292348181 │ 0.05000081182113131 │    29144351 │
 │ R            │ F            │  377732830.00 │  566431054976.00 │  538110922664.7677 │  559634780885.086257 │  25.50838478968014 │ 38251.219273559764 │ 0.04999679231408742 │    14808183 │
 └──────────────┴──────────────┴───────────────┴──────────────────┴────────────────────┴──────────────────────┴────────────────────┴────────────────────┴─────────────────────┴─────────────┘
-  [Breakdown] ComBit   L1=29.51 MiB  L2=4.26 MiB  L3=10.61 MiB  total=44.38 MiB
+  [Breakdown] DDC   L1=29.51 MiB  L2=4.26 MiB  L3=10.61 MiB  total=44.38 MiB

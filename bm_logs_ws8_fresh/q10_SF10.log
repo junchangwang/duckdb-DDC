@@ -2,12 +2,12 @@
 # cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(10);
 
 ================================================================
-  TPC-H Q10 Benchmark — ComBit vs WAH vs CRoaring vs EWAH (SF10)
+  TPC-H Q10 Benchmark — DDC vs WAH vs CRoaring vs EWAH (SF10)
   OR orderdate days 639..730 (92 bitmaps)
   Then AND returnflag='R' (index 2) -> aggregate revenue per c_custkey -> Top-20
   TPC-H params: o_orderdate [1993-10-01, 1994-01-01), l_returnflag = 'R'
   Bitmap dirs:
-    orderdate: tpch_q5_combit  returnflag: tpch_q1_combit
+    orderdate: tpch_q5_ddc  returnflag: tpch_q1_ddc
     orderdate: tpch_q5_croaring  returnflag: tpch_q1_croaring
     orderdate: tpch_q5_wah  returnflag: tpch_q1_wah
     orderdate: tpch_q5_ewah  returnflag: tpch_q1_ewah
@@ -21,14 +21,14 @@
 
 [Load] Loading bitmaps (mode=ALL)...
   WAH load:      12.887 ms
-  ComBit load:   43.895 ms
+  DDC load:   43.895 ms
   CRoaring load: 19.024 ms
   CRR load:      31.689 ms
   EWAH load:     9.86 ms
   Bitset load:   372.82 ms (shared by BS / BSA)
   Concise load:  161.827 ms
   WAH      on disk: 605.12 MiB (q5+q1)
-  ComBit   on disk: 952.21 MiB (q5+q1)
+  DDC   on disk: 952.21 MiB (q5+q1)
   CRoaring on disk: 300.05 MiB (q5+q1, shared by CR / CRR)
   EWAH     on disk: 1153.46 MiB (q5+q1)
   Bitset in mem:    665.04 MiB (rebuilt from CRoaring at load)
@@ -137,7 +137,7 @@
 [Baseline] DuckDB native SQL Top-20  (single run: 1906.02 ms)
 [OK] all active backends match DuckDB SQL ground truth (Top-20, revenue within 0.01).
 
-  Q10 Top-20 (revenue = SUM(l_extendedprice * (1 - l_discount)), sorted DESC, source=ComBit):
+  Q10 Top-20 (revenue = SUM(l_extendedprice * (1 - l_discount)), sorted DESC, source=DDC):
   c_custkey c_name                         revenue     c_acctbal  n_name          c_address                                 c_phone            c_comment
   1237537   Customer#001237537         884989.6657     7840.1700  RUSSIA          mdkU4LpZECCtt20RHa76sA6b4WC               32-367-120-4327    yly regular accounts boost. requests need to nag evenly
   1116802   Customer#001116802         830214.1117      772.1700  JORDAN          iBka7YijCCLApX1f 8 sKp 5ldP               23-199-655-3770    y carefully regular deposits. packages nod ironic packages
@@ -217,4 +217,4 @@
 ├───────────┴────────────────────┴───────────────┴───────────────┴───────────────┴───────────────────────────────────────┴─────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
 │ 20 rows                                                                                                                                                                                                                                              8 columns │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-  [Breakdown] ComBit   L1=6.07 MiB  L2=1.36 MiB  L3=10.39 MiB  total=17.82 MiB
+  [Breakdown] DDC   L1=6.07 MiB  L2=1.36 MiB  L3=10.39 MiB  total=17.82 MiB

@@ -13,9 +13,9 @@
   Sizeof(void*): 8 (64-bit)
 
 ================================================================
-  TPC-H Q6 Benchmark — ComBit vs WAH vs CRoaring vs EWAH (SF10, in DuckDB)
+  TPC-H Q6 Benchmark — DDC vs WAH vs CRoaring vs EWAH (SF10, in DuckDB)
   Equality encoding on ALL columns (publication-grade)
-  Bitmap dirs: tpch_q6_wah tpch_q6_combit tpch_q6_croaring tpch_q6_ewah
+  Bitmap dirs: tpch_q6_wah tpch_q6_ddc tpch_q6_croaring tpch_q6_ewah
   Iterations: 10 (first 2 = warm-up)
   OR discount: 3 bitmaps
   OR quantity: 23 bitmaps
@@ -25,14 +25,14 @@
 
 [Load] Loading bitmaps (mode=ALL)...
   WAH load:         323.0 ms (391 files)
-  ComBit load:      4176.1 ms (391 files)
+  DDC load:      4176.1 ms (391 files)
   CRoaring load:    93.2 ms (391 files)
   CRoar+Run load:   122.7 ms (391 files)
   EWAH load:        186.4 ms (391 files)
   Bitset load:      1462.4 ms (391 files, shared by BS / BSA)
   Concise load:     976.0 ms (391 files)
   WAH      on disk: 789.93 MiB
-  ComBit   on disk: 654.01 MiB
+  DDC   on disk: 654.01 MiB
   CRoaring on disk: 325.55 MiB (shared by CR / CRR)
   EWAH     on disk: 1288.04 MiB
   Bitset in mem:    2796.02 MiB (rebuilt from CRoaring at load)
@@ -41,7 +41,7 @@
 ================================================================
   COMPRESSION RATIO (Q6-relevant bitmaps only)
 ================================================================
-                 Count    Raw(MB)   ComBit(MB)  WAH(MB)  CRoar(MB)  EWAH(MB)  CB ratio  WAH ratio  CR ratio  EW ratio
+                 Count    Raw(MB)   DDC(MB)  WAH(MB)  CRoar(MB)  EWAH(MB)  CB ratio  WAH ratio  CR ratio  EW ratio
   ---------------------------------------------------------------------------------------------------------------
   Discount          3      21.45       14.58    22.08     21.48     21.45      0.68      1.03      1.00      1.00
   Quantity         23     164.47       43.05   121.25     52.79    152.08      0.26      0.74      0.32      0.92
@@ -156,7 +156,7 @@
 ================================================================
   RESULTS (8 measured iterations, median ± stddev)
 ================================================================
-                       WAH (ms)              ComBit (ms)         CRoaring (ms)      CRoar+Run (ms)       EWAH (ms)          CB vs WAH   CR vs WAH  CRR vs WAH   EW vs WAH
+                       WAH (ms)              DDC (ms)         CRoaring (ms)      CRoar+Run (ms)       EWAH (ms)          CB vs WAH   CR vs WAH  CRR vs WAH   EW vs WAH
   --------------------------------------------------------------------------------------------------------------------------------
   OR discount        12.11 ±   0.39         1.96 ±   0.01         2.41 ±   0.04         2.31 ±   0.04         5.62 ±   0.16      6.18x      5.03x      5.25x      2.16x
   OR quantity        91.73 ±   0.22         9.02 ±   0.05        33.64 ±   0.18        15.30 ±   0.21       213.23 ±   1.79     10.17x      2.73x      6.00x      0.43x
@@ -167,7 +167,7 @@
   TOTAL            2518.28 ±   3.12       130.60 ±   0.50       257.52 ±   0.77        65.62 ±   0.71      1124.24 ±   4.47     19.28x      9.78x     38.37x      2.24x
 
   WAH rows:        1139264
-  ComBit rows:     1139264
+  DDC rows:     1139264
   CRoaring rows:   1139264
   CRoar+Run rows:  1139264
   EWAH rows:       1139264
@@ -200,4 +200,4 @@
 ├─────────────────┤
 │ 1230113636.0101 │
 └─────────────────┘
-  [Breakdown] ComBit   L1=53.22 MiB  L2=25.90 MiB  L3=23.12 MiB  total=102.25 MiB
+  [Breakdown] DDC   L1=53.22 MiB  L2=25.90 MiB  L3=23.12 MiB  total=102.25 MiB

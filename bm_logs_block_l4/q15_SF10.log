@@ -5,7 +5,7 @@
   TPC-H Q15 Benchmark — 8 backends (SF10)
   OR shipdate days 1461..1551 (91 bitmaps), then per-row revenue aggregation grouped by l_suppkey
   TPC-H params: l_shipdate [1996-01-01, 1996-04-01)
-  Bitmap dirs: tpch_q15_combit tpch_q15_croaring tpch_q15_wah tpch_q15_ewah
+  Bitmap dirs: tpch_q15_ddc tpch_q15_croaring tpch_q15_wah tpch_q15_ewah
   Iterations: 10 (first 2 = warm-up)
 ================================================================
 
@@ -14,14 +14,14 @@
 
 [Load] Loading shipdate bitmaps (mode=ALL)...
   WAH load:      22.191 ms
-  ComBit load:   78.084 ms
+  DDC load:   78.084 ms
   CRoaring load: 9.139 ms
   CRR load:      12.036 ms
   EWAH load:     20.66 ms
   Bitset load:   317.282 ms (shared by BS / BSA)
   Concise load:  38.187 ms
   WAH      on disk: 0.00 MiB
-  ComBit   on disk: 0.00 MiB
+  DDC   on disk: 0.00 MiB
   CRoaring on disk: 0.00 MiB (shared by CR / CRR)
   EWAH     on disk: 0.00 MiB
 
@@ -128,7 +128,7 @@
 ================================================================
   Q15 Correctness Validation
 ================================================================
-  Q15 Result (ComBit):
+  Q15 Result (DDC):
     max total_revenue = 2194132.82   (fp=21941328166)   ties=1
     suppkey(s): 69998
   Consistency: ALL MATCH

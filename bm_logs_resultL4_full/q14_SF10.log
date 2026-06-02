@@ -6,7 +6,7 @@
 PRAGMA load_bitmap('shipdate');
 PRAGMA bm_tpch(14);
 [load_bitmap] shipdate: scanned 59986052 rows in 728 ms
-[load_bitmap] shipdate: built ComBit index (2526 keys, 6586.7 MB) in 23898 ms
+[load_bitmap] shipdate: built DDC index (2526 keys, 6586.7 MB) in 23898 ms
 
 ================================================================
   TPC-H Q14 (BitEngine pattern, runtime part-join)
@@ -14,24 +14,24 @@ PRAGMA bm_tpch(14);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  ComBit:  PhaseA(shipdate_OR)=32.746  PhaseB(part_scan)=90.38  PhaseC(BMFetch+agg)=434.555  Total=557.683  rows=749223  promo_pct=16.647595
+  DDC:  PhaseA(shipdate_OR)=32.746  PhaseB(part_scan)=90.38  PhaseC(BMFetch+agg)=434.555  Total=557.683  rows=749223  promo_pct=16.647595
 
 --- Iteration 2/5 ---
-  ComBit:  PhaseA(shipdate_OR)=31.818000  PhaseB(part_scan)=83.480000  PhaseC(BMFetch+agg)=89.328000  Total=204.626000  rows=749223  promo_pct=16.647595
+  DDC:  PhaseA(shipdate_OR)=31.818000  PhaseB(part_scan)=83.480000  PhaseC(BMFetch+agg)=89.328000  Total=204.626000  rows=749223  promo_pct=16.647595
 
 --- Iteration 3/5 ---
-  ComBit:  PhaseA(shipdate_OR)=31.448000  PhaseB(part_scan)=83.396000  PhaseC(BMFetch+agg)=89.585000  Total=204.430000  rows=749223  promo_pct=16.647595
+  DDC:  PhaseA(shipdate_OR)=31.448000  PhaseB(part_scan)=83.396000  PhaseC(BMFetch+agg)=89.585000  Total=204.430000  rows=749223  promo_pct=16.647595
 
 --- Iteration 4/5 ---
-  ComBit:  PhaseA(shipdate_OR)=31.202000  PhaseB(part_scan)=83.353000  PhaseC(BMFetch+agg)=90.839000  Total=205.394000  rows=749223  promo_pct=16.647595
+  DDC:  PhaseA(shipdate_OR)=31.202000  PhaseB(part_scan)=83.353000  PhaseC(BMFetch+agg)=90.839000  Total=205.394000  rows=749223  promo_pct=16.647595
 
 --- Iteration 5/5 ---
-  ComBit:  PhaseA(shipdate_OR)=31.695000  PhaseB(part_scan)=83.401000  PhaseC(BMFetch+agg)=90.457000  Total=205.554000  rows=749223  promo_pct=16.647595
+  DDC:  PhaseA(shipdate_OR)=31.695000  PhaseB(part_scan)=83.401000  PhaseC(BMFetch+agg)=90.457000  Total=205.554000  rows=749223  promo_pct=16.647595
 
-[OK] ComBit matches DuckDB SQL (promo_revenue = 16.647595).
+[OK] DDC matches DuckDB SQL (promo_revenue = 16.647595).
 
 ================================================================
-  Q14 RESULTS — ComBit (4 measured iter, median +/- stddev)
+  Q14 RESULTS — DDC (4 measured iter, median +/- stddev)
 ================================================================
   PhaseA (shipdate range OR): 31.571500 +/- 0.236651 ms
   PhaseB (part scan PROMO)  : 83.398500 +/- 0.045828 ms

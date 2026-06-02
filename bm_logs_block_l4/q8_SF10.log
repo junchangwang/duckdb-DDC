@@ -2,11 +2,11 @@
 # cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(8);
 
 ================================================================
-  TPC-H Q8 Benchmark — ComBit vs WAH vs CRoaring vs EWAH (SF10)
+  TPC-H Q8 Benchmark — DDC vs WAH vs CRoaring vs EWAH (SF10)
   OR orderdate days 1096..1826 (731 bitmaps)
   AND join_result, then per-year split (1995, 1996), aggregate revenue
   TPC-H params: r_name='AMERICA', p_type='ECONOMY ANODIZED STEEL', BRAZIL nation numerator
-  Bitmap dirs: tpch_q8_combit tpch_q8_croaring tpch_q8_wah tpch_q8_ewah
+  Bitmap dirs: tpch_q8_ddc tpch_q8_croaring tpch_q8_wah tpch_q8_ewah
   Iterations: 10 (first 2 = warm-up)
 ================================================================
 
@@ -15,14 +15,14 @@
 
 [Load] Loading bitmaps (mode=ALL)...
   WAH load:      77.94 ms
-  ComBit load:   1698.88 ms (incl. year/brazil decompress+flatten)
+  DDC load:   1698.88 ms (incl. year/brazil decompress+flatten)
   CRoaring load: 79.315 ms
   CRR load:      98.455 ms
   EWAH load:     57.475 ms
   Bitset load:   2653.94 ms (shared by BS / BSA)
   Concise load:  572.829 ms
   WAH      on disk: 57.41 MiB
-  ComBit   on disk: 135.17 MiB
+  DDC   on disk: 135.17 MiB
   CRoaring on disk: 42.86 MiB (shared by CR / CRR)
   EWAH     on disk: 93.17 MiB
 
@@ -131,7 +131,7 @@
 ================================================================
   Row counts: WAH=24254 CB=24254 CR=24254 CRR=24254 EW=24254 BS=24254 BSA=24254 CON=24254
 
-  Q8 Results (mkt_share = sum(BRAZIL volume) / sum(volume), per year, ComBit values):
+  Q8 Results (mkt_share = sum(BRAZIL volume) / sum(volume), per year, DDC values):
   year  mkt_share
   1995   0.038820
   1996   0.039490
@@ -176,4 +176,4 @@
 │   1995 │  0.0388201425143322 │
 │   1996 │ 0.03948968749183992 │
 └────────┴─────────────────────┘
-  [Breakdown] ComBit   L1=13.18 MiB  L2=7.10 MiB  L3=79.40 MiB  L4=0.16 MiB  total=99.84 MiB
+  [Breakdown] DDC   L1=13.18 MiB  L2=7.10 MiB  L3=79.40 MiB  L4=0.16 MiB  total=99.84 MiB

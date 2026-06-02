@@ -14,8 +14,7 @@ namespace bmtpch {
 
 struct DBGenWrapper {
 
-	//! Gets the specified TPC-H Query number as a string
-	static std::string GetQuery(int query);
+	static std::string GetQuery(int query); // TPC-H query text
 };
 
-} // namespace bmtpch
+}

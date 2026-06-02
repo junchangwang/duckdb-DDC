@@ -38,7 +38,7 @@ LOG_CR = REPO / "bm_logs_month_ge_cr"
 QUERIES = [1, 3, 4, 5, 6, 8, 10, 12, 14, 15, 17, 19]
 
 NEW_BACKENDS: List[Tuple[str, str, List[str]]] = [
-    ("CB+GE", "ComBit + GE (month/year)", ["ultra", "L1", "L2", "L3", "L4", "header"]),
+    ("CB+GE", "DDC + GE (month/year)", ["ultra", "L1", "L2", "L3", "L4", "header"]),
     ("CR+GE", "CRoaring + GE (month/year)", ["array", "bitset", "run", "header"]),
 ]
 NEW_BACKEND_NAMES = [bn for bn, _, _ in NEW_BACKENDS]
@@ -62,9 +62,9 @@ RE_FAIL = re.compile(r"^\[FAIL\][^\n]*", re.MULTILINE)
 RE_ROWS = re.compile(r"rows[=:]\s*(\d+)")
 
 # Per-iter line: "  <Backend>:  PhaseA(...)=X PhaseB(...)=Y ... Total=Z ..."
-# or "  [Q6 ComBit] ship_ge=X OR_discount=Y ... total=Z rows=..."
+# or "  [Q6 DDC] ship_ge=X OR_discount=Y ... total=Z rows=..."
 RE_ITER_LINE = re.compile(
-    r"^\s+(?:\[Q\d+\s+)?(?:ComBit(?:GE)?|CRoaring(?:Run)?|WAH|EWAH|Concise|"
+    r"^\s+(?:\[Q\d+\s+)?(?:DDC(?:GE)?|CRoaring(?:Run)?|WAH|EWAH|Concise|"
     r"CB(?:_GE|_BPE)?|CR(?:R|_BPE)?|EW|CON):?\s",
 )
 RE_KV_NUMERIC = re.compile(r"([A-Za-z_][\w()+\s/]*?)=([\d.]+(?:[eE][+\-]?\d+)?)")
@@ -82,7 +82,7 @@ def _looks_like_iter_line(line: str) -> bool:
     s = line.strip()
     return ("=" in s) and any(
         s.split(":")[0].strip() == k or s.startswith(f"[{k}")
-        for k in ("ComBit", "ComBitGE", "CRoaring", "CRoaringRun", "WAH", "EWAH",
+        for k in ("DDC", "DDCGE", "CRoaring", "CRoaringRun", "WAH", "EWAH",
                   "Concise", "CB", "CR", "CRR", "EW", "BS", "BSA", "CON", "[Q6")
     )
 

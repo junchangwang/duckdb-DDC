@@ -2,25 +2,25 @@
 # cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(12);
 
 ================================================================
-  TPC-H Q12 Benchmark — ComBit vs WAH vs CRoaring vs EWAH (SF10)
+  TPC-H Q12 Benchmark — DDC vs WAH vs CRoaring vs EWAH (SF10)
   OR receiptdate days 731..1095 (365 bitmaps)
   AND commit_lt_receipt, ship_lt_commit, then per-shipmode AND + 2x popcount_and
   TPC-H params: shipmodes={MAIL, SHIP}, receiptdate [1994-01-01, 1995-01-01)
-  Bitmap dirs: tpch_q12_combit tpch_q12_croaring tpch_q12_wah tpch_q12_ewah
+  Bitmap dirs: tpch_q12_ddc tpch_q12_croaring tpch_q12_wah tpch_q12_ewah
   Iterations: 10 (first 2 = warm-up)
 ================================================================
 [Build priority] high=24010385 low=35975667 in 2143 ms
 
 [Load] Loading bitmaps (mode=ALL)...
   WAH load:      487.442 ms
-  ComBit load:   1302.71 ms
+  DDC load:   1302.71 ms
   CRoaring load: 313.68 ms
   CRR load:      341.086 ms
   EWAH load:     346.201 ms
   Bitset load:   1629.44 ms (shared by BS / BSA)
   Concise load:  1163.07 ms
   WAH      on disk: 97.15 MiB
-  ComBit   on disk: 100.81 MiB
+  DDC   on disk: 100.81 MiB
   CRoaring on disk: 48.56 MiB (shared by CR / CRR)
   EWAH     on disk: 162.00 MiB
 
@@ -128,7 +128,7 @@
   Q12 Correctness Validation
 ================================================================
 
-  Q12 Results (ComBit values):
+  Q12 Results (DDC values):
   l_shipmode  high_line_count  low_line_count
   MAIL                 62071           93045
   SHIP                 62426           93261
@@ -171,4 +171,4 @@
 │ MAIL       │           62071 │          93045 │
 │ SHIP       │           62426 │          93261 │
 └────────────┴─────────────────┴────────────────┘
-  [Breakdown] ComBit   L1=32.98 MiB  L2=10.16 MiB  L3=7.84 MiB  L4=5.15 MiB  total=56.13 MiB
+  [Breakdown] DDC   L1=32.98 MiB  L2=10.16 MiB  L3=7.84 MiB  L4=5.15 MiB  total=56.13 MiB

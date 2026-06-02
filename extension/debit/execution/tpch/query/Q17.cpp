@@ -1,21 +1,4 @@
-// TPC-H Q17 — Small-Quantity-Order Revenue Query (spec v3.0.1 §2.4.17)
-//
-// Verbatim port of teacher's BitEngine BMTPCH_Q17 — replaces the
-// previous non-compliant `is_q17_part` (lineitem×part) bitmap with
-// a runtime semi-join: scan part once for matching brand/container
-// and OR per-partkey bitmaps from the single-column bitmap_partkey
-// auxiliary structure (TPC-H 1.5.7 compliant).
-//
-// Pipeline:
-//   Phase A: part scan, predicate `p_brand='Brand#23' AND
-//            p_container='MED BOX'` → for each match, apply_or_to(
-//            bitmap_partkey, p_partkey).  Single base table (part) +
-//            single-column auxiliary (bitmap_partkey on l_partkey FK).
-//   Phase B: get_rowids; BMFetch lineitem(l_partkey, l_quantity,
-//            l_extendedprice).  Build pk → (sum_qty, count); compute
-//            avg_qty(p) = 0.2 * sum_qty(p) / count(p).
-//   Phase C: re-scan cached BMFetch results; sum_extprice if
-//            l_quantity < avg_qty[partkey].  Output sum/100/7.0.
+
 
 #include "duckdb/execution/execution_context.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -28,8 +11,8 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
 
-#include "combit_adapter.h"
-#include "combit/include/combit.h"
+#include "ddc_adapter.h"
+#include "ddc/include/ddc.h"
 #include "fastbit/bitvector.h"
 #include "roaring.hh"
 #include "ewah.h"
@@ -64,7 +47,8 @@ static std::once_flag q17_once_flag_new;
 template <typename Btv>
 static void q17_get_rowids(const Btv& b, std::vector<row_t>* out);
 template <>
-void q17_get_rowids<ComBit>(const ComBit& b, std::vector<row_t>* out) {
+void q17_get_rowids<DDC>(const DDC& b, std::vector<row_t>* out) {
+    // DDC -> rowids
     out->clear();
     b.for_each_literal([&](uint32_t word_pos, uint8_t val) {
         size_t rbase = static_cast<size_t>(word_pos) * 8;
@@ -95,6 +79,7 @@ void q17_get_rowids<ConciseSet<false>>(const ConciseSet<false>& b, std::vector<r
     for (auto it = b.begin(); it != b.end(); ++it) out->push_back(static_cast<row_t>(*it));
 }
 
+// Q17 entry
 void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan &op)
 {
     std::call_once(q17_once_flag_new, [&]() {
@@ -122,20 +107,16 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
         auto t0 = clk::now();
         auto& lineitem_tx = DuckTransaction::Get(context.client, lineitem_table.catalog);
 
-        auto* cb_pk  = dynamic_cast<bm_index::IndexedComBit*>(idx_pk);
+        auto* cb_pk  = dynamic_cast<bm_index::IndexedDDC*>(idx_pk);
         auto* cr_pk  = dynamic_cast<bm_index::IndexedCRoaring*>(idx_pk);
         auto* wah_pk = dynamic_cast<bm_index::IndexedWAH*>(idx_pk);
         auto* ew_pk  = dynamic_cast<bm_index::IndexedEWAH*>(idx_pk);
         auto* con_pk = dynamic_cast<bm_index::IndexedConcise*>(idx_pk);
 
-        // ===== Phase A: part scan -> matched partkeys, then ONE batched OR =====
-        // Was: per-row apply_or_to inside the part scan loop.  For WAH/EW/CON
-        // each call walks the full per-key bitvector; 200 calls × 2.4ms =
-        // ~470ms.  Collect partkeys, then call or_many once — drops WAH
-        // PhaseA from 470ms to ~50ms via tree-merge.
         std::vector<int64_t> matched_pks;
         matched_pks.reserve(2000);
         {
+            // scan part, filter brand/container
             auto& tx = DuckTransaction::Get(context.client, part_table.catalog);
             TableScanState ss;
             vector<StorageIndex> col_ids = {StorageIndex(0), StorageIndex(3), StorageIndex(6)};
@@ -166,25 +147,24 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
         }
 
         std::vector<row_t> ids;
-        // Plan A — each backend uses its natural multi-key OR primitive.
-        if (cb_pk) {  // ComBit: sca
+
+        // partkey OR -> rowids (per backend)
+        if (cb_pk) {
             auto bv = cb_pk->or_many(matched_pks); q17_get_rowids(bv, &ids);
         } else if (cr_pk) {
-            // Both CR & CRR use Roaring fastunion (k-way primitive).
+
             roaring::Roaring bv = cr_pk->or_many(matched_pks);
             q17_get_rowids(bv, &ids);
-        } else if (wah_pk) {  // WAH: copy+decompress+|=
+        } else if (wah_pk) {
             auto bv = wah_pk->or_many(matched_pks); q17_get_rowids(bv, &ids);
-        } else if (ew_pk) {  // EW: fast_logicalor
+        } else if (ew_pk) {
             auto bv = ew_pk->or_many(matched_pks); q17_get_rowids(bv, &ids);
-        } else if (con_pk) {  // CON: fast_logicalor
+        } else if (con_pk) {
             auto bv = con_pk->or_many(matched_pks); q17_get_rowids(bv, &ids);
         }
         else { std::cerr << "[Q17] ERROR: unrecognised backend.\n"; return; }
         auto t_a = clk::now();
 
-        // ===== Phase B: BMFetch + per-partkey avg =====
-        // Cache (pk, qty, price) so Phase C doesn't refetch.
         std::vector<int64_t> col_pk, col_qty, col_pr;
         col_pk.reserve(ids.size());
         col_qty.reserve(ids.size());
@@ -192,6 +172,7 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
         std::unordered_map<int64_t, std::pair<int64_t, int32_t>> pk_qty;
 
         if (!ids.empty()) {
+            // BMFetch lineitem cols
             vector<StorageIndex> col_ids = {StorageIndex(1), StorageIndex(4), StorageIndex(5)};
             vector<LogicalType> types = {
                 lineitem_table.GetColumns().GetColumnTypes()[1],
@@ -214,6 +195,7 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
                 auto qt = FlatVector::GetData<int64_t>(chunk.data[1]);
                 auto pr = FlatVector::GetData<int64_t>(chunk.data[2]);
                 for (idx_t i = 0; i < chunk.size(); i++) {
+                    // accumulate per-pk qty/count
                     auto& slot = pk_qty[pk[i]];
                     slot.first  += qt[i];
                     slot.second += 1;
@@ -223,12 +205,13 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
                 }
             }
         }
+        // 0.2 * avg(qty) per pk
         std::unordered_map<int64_t, double> pk_avg_qty;
         for (auto& [k, v] : pk_qty)
             pk_avg_qty[k] = 0.2 * double(v.first) / double(v.second);
         auto t_b = clk::now();
 
-        // ===== Phase C: filter rows where qty < avg_qty =====
+        // filter qty<avg, sum price
         int64_t sum_extprice = 0;
         for (size_t i = 0; i < col_pk.size(); i++) {
             auto it = pk_avg_qty.find(col_pk[i]);
@@ -242,7 +225,6 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
         double tC  = q17_ms(t_b, t_c);
         double tot = q17_ms(t0, t_c);
 
-        // raw is l_extendedprice × 100; / 100 → $ value; / 7.0 spec.
         double avg_yearly = double(sum_extprice) / 100.0 / 7.0;
 
         std::cout << "  " << idx_pk->backend_name()
@@ -260,6 +242,7 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
     }
 
     {
+        // verify vs SQL
         Connection con(*context.client.db);
         auto r = con.Query(
             "SELECT sum(l_extendedprice) / 7.0 AS avg_yearly "
@@ -297,13 +280,14 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
     std::cout << "  TOTAL                              : " << sT.median << " +/- " << sT.stddev << " ms\n";
     std::cout << "================================================================\n\n";
 
+    // emit CSV
     std::string sf = bm_bench::sf_label();
     std::ofstream csv("q17_results_" + sf + ".csv");
     if (csv) {
         csv << std::fixed << std::setprecision(4);
         csv << "sf,operation,"
             << "wah_median_ms,wah_stddev_ms,wah_min_ms,wah_max_ms,"
-            << "combit_median_ms,combit_stddev_ms,combit_min_ms,combit_max_ms,"
+            << "ddc_median_ms,ddc_stddev_ms,ddc_min_ms,ddc_max_ms,"
             << "croaring_median_ms,croaring_stddev_ms,croaring_min_ms,croaring_max_ms,"
             << "croaring_run_median_ms,croaring_run_stddev_ms,croaring_run_min_ms,croaring_run_max_ms,"
             << "ewah_median_ms,ewah_stddev_ms,ewah_min_ms,ewah_max_ms,"
@@ -319,7 +303,7 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
                 csv << v.median << "," << v.stddev << "," << v.min_val << "," << v.max_val << ",";
             };
             cell(bn == "WAH" ? s : z);
-            cell(bn == "ComBit" ? s : z);
+            cell(bn == "DDC" ? s : z);
             cell(bn == "CRoaring" ? s : z);
             cell(bn == "CRoaringRun" ? s : z);
             cell(bn == "EWAH" ? s : z);
@@ -334,7 +318,7 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
         std::cout << "  [CSV] q17_results_" << sf << ".csv\n";
     }
 
-    });  // end call_once
+    });
 }
 
-}  // namespace duckdb
+}

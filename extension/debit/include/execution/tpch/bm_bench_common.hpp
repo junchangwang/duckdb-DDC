@@ -1,6 +1,5 @@
-// Shared helpers for the TPC-H bitmap benchmarks
-// (Q1 / Q3 / Q4 / Q5 / Q6 / Q8 / Q10 / Q12).
-// Header-only: no separate .cpp, no CMake changes needed.
+
+
 #pragma once
 
 #include <algorithm>
@@ -17,8 +16,6 @@
 
 namespace duckdb {
 namespace bm_bench {
-
-// --- Scale factor ---
 
 inline std::string sf_suffix() {
     const char* e = std::getenv("TPCH_SF");
@@ -37,11 +34,6 @@ inline int sf_value() {
     return (e && *e) ? std::atoi(e) : 10;
 }
 
-// --- Bitmap directory resolution ---
-//
-// If DEBIT_BITMAP_DIR is exported, prepend it to each relative name so the
-// benchmark works regardless of cwd.  If unset, return the name as-is,
-// which preserves the legacy cwd-relative behaviour.
 inline std::string resolve_bitmap_dir(const std::string& rel) {
     const char* base = std::getenv("DEBIT_BITMAP_DIR");
     if (!base || !*base) return rel;
@@ -50,24 +42,9 @@ inline std::string resolve_bitmap_dir(const std::string& rel) {
     return p.string();
 }
 
-// --- Backend selection ---
-//
-// Unified DEBIT_BM selector.  Falls back to the legacy per-query variable
-// (Q1_BM / Q5_BM / Q6_BM) so existing scripts keep working.
-// ALL  = run every backend
-// WAH  = WAH (FastBit / ibis::bitvector)
-// CB     = ComBit
-// CB_BPE = ComBit + BPE prefix-encoded range column (β scheme)
-// CR     = CRoaring (no run-length opt)
-// CR_BPE = CRoaring + BPE prefix-encoded range column (β scheme, fairness)
-// CRR    = CRoaring + runOptimize / fastunion
-// EW     = EWAH
-// BS     = uncompressed bitset, scalar (no algorithm + no SIMD baseline)
-// BSA    = uncompressed bitset, AVX-512 (no algorithm + SIMD baseline)
-// CON    = Concise (Colantonio & Di Pietro)
-// CB_GE  = ComBit + GE auto-loading (shipdate also builds shipdate_GE for hybrid)
 enum class Backend { ALL, WAH, CB, CB_BPE, CR, CR_BPE, CRR, EW, BS, BSA, CON, CB_GE };
 
+// parse backend env
 inline Backend parse_backend(const char* legacy_env) {
     const char* env = std::getenv("DEBIT_BM");
     if (!env || !*env) env = std::getenv(legacy_env);
@@ -78,10 +55,10 @@ inline Backend parse_backend(const char* legacy_env) {
 
     if (s.empty() || s == "all")                                    return Backend::ALL;
     if (s == "wah")                                                 return Backend::WAH;
-    if (s == "cb_bpe" || s == "combit_bpe")                         return Backend::CB_BPE;
-    if (s == "cb_ge"  || s == "combit_ge")                          return Backend::CB_GE;
+    if (s == "cb_bpe" || s == "ddc_bpe")                         return Backend::CB_BPE;
+    if (s == "cb_ge"  || s == "ddc_ge")                          return Backend::CB_GE;
     if (s == "cr_bpe" || s == "croaring_bpe")                       return Backend::CR_BPE;
-    if (s == "cb"  || s == "combit")                                return Backend::CB;
+    if (s == "cb"  || s == "ddc")                                return Backend::CB;
     if (s == "cr"  || s == "croaring")                              return Backend::CR;
     if (s == "crr" || s == "croaring_run" || s == "croaring+run")   return Backend::CRR;
     if (s == "ew"  || s == "ewah")                                  return Backend::EW;
@@ -98,9 +75,9 @@ inline const char* backend_label(Backend b) {
     switch (b) {
         case Backend::ALL: return "ALL";
         case Backend::WAH: return "WAH";
-        case Backend::CB:  return "ComBit";
-        case Backend::CB_BPE: return "ComBit+BPE";
-        case Backend::CB_GE:  return "ComBit+GE";
+        case Backend::CB:  return "DDC";
+        case Backend::CB_BPE: return "DDC+BPE";
+        case Backend::CB_GE:  return "DDC+GE";
         case Backend::CR:  return "CRoaring";
         case Backend::CR_BPE: return "CRoaring+BPE";
         case Backend::CRR: return "CRoaring+Run";
@@ -111,8 +88,6 @@ inline const char* backend_label(Backend b) {
     }
     return "?";
 }
-
-// --- Iterations / warmup ---
 
 inline int iter_count(int fallback) {
     const char* e = std::getenv("DEBIT_ITER");
@@ -126,11 +101,7 @@ inline int warmup_count(int fallback) {
     return fallback;
 }
 
-// --- Directory size in bytes ---
-//
-// Returns the sum of regular-file sizes under `dir`, or 0 if the path
-// does not exist (or is unreadable).  Safe to call for every backend
-// during load: errors are silently treated as "missing".
+// recursive dir size
 inline uint64_t dir_size_bytes(const std::string& dir) {
     std::error_code ec;
     std::filesystem::path p(dir);
@@ -149,11 +120,6 @@ inline uint64_t dir_size_bytes(const std::string& dir) {
 
 inline double mib(uint64_t bytes) { return static_cast<double>(bytes) / (1024.0 * 1024.0); }
 
-// --- SF=1 duplicate-load warning ---
-//
-// The SF1 database checked into the repo is known to contain duplicate
-// rows (it was loaded twice during setup).  Emit a loud warning so
-// benchmark output is never silently taken as authoritative.
 inline void warn_if_sf1() {
     const char* e = std::getenv("TPCH_SF");
     if (e && std::string(e) == "1") {
@@ -164,12 +130,10 @@ inline void warn_if_sf1() {
     }
 }
 
-// --- Byte LUT: byte value → list of set-bit positions (0..7).
-// Shared across queries that walk for_each_literal output (Q1/Q3/Q5/Q10/Q14...).
-
 struct ByteLUT { uint8_t count; uint8_t pos[8]; };
 
 inline ByteLUT byte_lut[256];
+// set-bit positions LUT
 inline const bool byte_lut_init = []() {
     for (int v = 0; v < 256; v++) {
         uint8_t c = 0;
@@ -180,10 +144,9 @@ inline const bool byte_lut_init = []() {
     return true;
 }();
 
-// --- Stats helper (median / stddev / min / max) ---
-
 struct Stats { double median = 0, stddev = 0, min_val = 0, max_val = 0; };
 
+// median/stddev
 inline Stats compute_stats(std::vector<double> v) {
     Stats s;
     if (v.empty()) return s;
@@ -199,5 +162,5 @@ inline Stats compute_stats(std::vector<double> v) {
     return s;
 }
 
-} // namespace bm_bench
-} // namespace duckdb
+}
+}

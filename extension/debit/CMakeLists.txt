@@ -7,7 +7,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/wah_backend/src)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/dbgen/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/combit/include)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ddc/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/croaring)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ewah)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/Concise)
@@ -19,12 +19,12 @@ add_compile_options(-mavx512f -mavx512bw -mavx512vbmi2 -march=native)
 
 set(FILES 
     ${CMAKE_CURRENT_SOURCE_DIR}/debit_extension.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/combit_adapter.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/combit/src/combit.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/combit/src/and.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/combit/src/or.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/combit/src/xor.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/combit/src/not.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ddc_adapter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ddc/src/ddc.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ddc/src/and.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ddc/src/or.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ddc/src/xor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ddc/src/not.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/croaring/roaring.c
     ${CMAKE_CURRENT_SOURCE_DIR}/wah_backend/src/utils/util.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/wah_backend/src/fastbit/bitvector.cpp

@@ -4,7 +4,7 @@
 # Other Qs that load shipdate (Q1/Q14/Q15) pay the +26 MB but don't use it.
 set -u
 
-LOG_DIR=bm_logs_combit_ge
+LOG_DIR=bm_logs_ddc_ge
 mkdir -p "$LOG_DIR"
 
 declare -A LOADS=(
@@ -27,7 +27,7 @@ WARM=${DEBIT_WARMUP:-1}
 ORDER="1 3 4 5 6 8 10 12 14 15 17 19"
 
 echo "============================================================"
-echo " ComBit+GE TPC-H sweep  (DEBIT_BM=cb_ge, iter=$ITER, warmup=$WARM)"
+echo " DDC+GE TPC-H sweep  (DEBIT_BM=cb_ge, iter=$ITER, warmup=$WARM)"
 echo " duckdb: $(stat -c '%y' build/release/duckdb)"
 echo " log dir: $LOG_DIR"
 echo "============================================================"

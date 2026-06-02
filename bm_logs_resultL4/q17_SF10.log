@@ -5,7 +5,7 @@
   TPC-H Q17 Benchmark — 8 backends (SF10)
   Single-bitmap two-pass aggregation over is_q17_part.
   TPC-H params: p_brand='Brand#23', p_container='MED BOX'
-  Bitmap dirs: tpch_q17_combit tpch_q17_croaring tpch_q17_wah tpch_q17_ewah
+  Bitmap dirs: tpch_q17_ddc tpch_q17_croaring tpch_q17_wah tpch_q17_ewah
   Iterations: 10 (first 2 = warm-up)
 ================================================================
 
@@ -15,14 +15,14 @@
 
 [Load] Loading is_q17_part bitmaps (mode=ALL)...
   WAH load:      103.714 ms
-  ComBit load:   239.467 ms
+  DDC load:   239.467 ms
   CRoaring load: 0.485 ms
   CRR load:      0.526 ms
   EWAH load:     0.804 ms
   Bitset load:   3.501 ms (shared by BS / BSA)
   Concise load:  0.637 ms
   WAH      on disk: 0.00 MiB
-  ComBit   on disk: 0.00 MiB
+  DDC   on disk: 0.00 MiB
   CRoaring on disk: 0.00 MiB (shared by CR / CRR)
   EWAH     on disk: 0.00 MiB
 
@@ -129,7 +129,7 @@
 ================================================================
   Q17 Correctness Validation
 ================================================================
-  Q17 Result (ComBit):
+  Q17 Result (DDC):
     avg_yearly = 3295493.51   (sum_ep×100 = 2306845459)
   Consistency: ALL MATCH
 

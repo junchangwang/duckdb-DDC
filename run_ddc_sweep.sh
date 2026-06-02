@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Run all TPC-H Qs with the freshly-synced ComBit core.
-# DEBIT_BM=cb selects ComBit. Each Q is a separate duckdb invocation
+# Run all TPC-H Qs with the freshly-synced DDC core.
+# DEBIT_BM=cb selects DDC. Each Q is a separate duckdb invocation
 # (so once_flag for that Q fires fresh).
 set -u
 
-LOG_DIR=bm_logs_combit_sync
+LOG_DIR=bm_logs_ddc_sync
 mkdir -p "$LOG_DIR"
 
 # col-load specs per Q
@@ -28,7 +28,7 @@ WARM=${DEBIT_WARMUP:-1}
 ORDER="1 3 4 5 6 8 10 12 14 15 17 19"
 
 echo "============================================================"
-echo " ComBit TPC-H sweep  (DEBIT_BM=cb, iter=$ITER, warmup=$WARM)"
+echo " DDC TPC-H sweep  (DEBIT_BM=cb, iter=$ITER, warmup=$WARM)"
 echo " duckdb binary: $(stat -c '%y' build/release/duckdb)"
 echo " log dir: $LOG_DIR"
 echo "============================================================"

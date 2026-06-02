@@ -7,9 +7,9 @@ PRAGMA load_bitmap('shipmode');
 PRAGMA load_bitmap('receiptdate');
 PRAGMA bm_tpch(12);
 [load_bitmap] shipmode: scanned 59986052 rows in 960 ms
-[load_bitmap] shipmode: built ComBit index (6 keys, 58.1262 MB) in 2792 ms
+[load_bitmap] shipmode: built DDC index (6 keys, 58.1262 MB) in 2792 ms
 [load_bitmap] receiptdate: scanned 59986052 rows in 667 ms
-[load_bitmap] receiptdate: built ComBit index (2555 keys, 6593.22 MB) in 23957 ms
+[load_bitmap] receiptdate: built DDC index (2555 keys, 6593.22 MB) in 23957 ms
 
 ================================================================
   TPC-H Q12 (BitEngine pattern, runtime semi-joins)
@@ -17,24 +17,24 @@ PRAGMA bm_tpch(12);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  ComBit:  PhaseA(orders)=776.624  PhaseB(shipmode_OR)=8.872  PhaseC(rdate_OR)=508.502  PhaseD(AND+rids)=41.55  PhaseE(BMFetch+agg)=578.934  Total=1914.48  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+  DDC:  PhaseA(orders)=776.624  PhaseB(shipmode_OR)=8.872  PhaseC(rdate_OR)=508.502  PhaseD(AND+rids)=41.55  PhaseE(BMFetch+agg)=578.934  Total=1914.48  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
 
 --- Iteration 2/5 ---
-  ComBit:  PhaseA(orders)=606.628  PhaseB(shipmode_OR)=4.974  PhaseC(rdate_OR)=508.369  PhaseD(AND+rids)=40.855  PhaseE(BMFetch+agg)=417.113  Total=1577.94  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+  DDC:  PhaseA(orders)=606.628  PhaseB(shipmode_OR)=4.974  PhaseC(rdate_OR)=508.369  PhaseD(AND+rids)=40.855  PhaseE(BMFetch+agg)=417.113  Total=1577.94  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
 
 --- Iteration 3/5 ---
-  ComBit:  PhaseA(orders)=607.391  PhaseB(shipmode_OR)=5.003  PhaseC(rdate_OR)=506.178  PhaseD(AND+rids)=41.067  PhaseE(BMFetch+agg)=416.799  Total=1576.44  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+  DDC:  PhaseA(orders)=607.391  PhaseB(shipmode_OR)=5.003  PhaseC(rdate_OR)=506.178  PhaseD(AND+rids)=41.067  PhaseE(BMFetch+agg)=416.799  Total=1576.44  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
 
 --- Iteration 4/5 ---
-  ComBit:  PhaseA(orders)=608.093  PhaseB(shipmode_OR)=5.032  PhaseC(rdate_OR)=509.703  PhaseD(AND+rids)=41.252  PhaseE(BMFetch+agg)=419.18  Total=1583.26  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+  DDC:  PhaseA(orders)=608.093  PhaseB(shipmode_OR)=5.032  PhaseC(rdate_OR)=509.703  PhaseD(AND+rids)=41.252  PhaseE(BMFetch+agg)=419.18  Total=1583.26  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
 
 --- Iteration 5/5 ---
-  ComBit:  PhaseA(orders)=607.338  PhaseB(shipmode_OR)=4.956  PhaseC(rdate_OR)=509.219  PhaseD(AND+rids)=41.198  PhaseE(BMFetch+agg)=416.503  Total=1579.22  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
+  DDC:  PhaseA(orders)=607.338  PhaseB(shipmode_OR)=4.956  PhaseC(rdate_OR)=509.219  PhaseD(AND+rids)=41.198  PhaseE(BMFetch+agg)=416.503  Total=1579.22  rows=2600101  MAIL=62071/93045  SHIP=62426/93261
 
-[OK] ComBit matches DuckDB SQL ground truth (MAIL 62071/93045, SHIP 62426/93261).
+[OK] DDC matches DuckDB SQL ground truth (MAIL 62071/93045, SHIP 62426/93261).
 
 ================================================================
-  Q12 RESULTS — ComBit (4 measured iter, median +/- stddev)
+  Q12 RESULTS — DDC (4 measured iter, median +/- stddev)
 ================================================================
   PhaseA (orders scan)         : 607.364 +/- 0.518298 ms
   PhaseB (shipmode OR)         : 4.9885 +/- 0.028891 ms

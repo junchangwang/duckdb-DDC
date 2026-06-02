@@ -7,9 +7,9 @@ PRAGMA load_bitmap('shipmode');
 PRAGMA load_bitmap('shipinstruct');
 PRAGMA bm_tpch(19);
 [load_bitmap] shipmode: scanned 59986052 rows in 978 ms
-[load_bitmap] shipmode: built ComBit index (6 keys, 58.1262 MB) in 2810 ms
+[load_bitmap] shipmode: built DDC index (6 keys, 58.1262 MB) in 2810 ms
 [load_bitmap] shipinstruct: scanned 59986052 rows in 1940 ms
-[load_bitmap] shipinstruct: built ComBit index (4 keys, 42.5374 MB) in 2591 ms
+[load_bitmap] shipinstruct: built DDC index (4 keys, 42.5374 MB) in 2591 ms
 
 ================================================================
   TPC-H Q19 (BitEngine pattern, runtime 3-OR part-join)
@@ -17,24 +17,24 @@ PRAGMA bm_tpch(19);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  ComBit:  PhaseA(shipmode AND ship_instr)=32.755  PhaseB(part_scan)=36.203  PhaseC(BMFetch+agg)=601.078  Total=670.037  rows=2141904  revenue=30104438.0911
+  DDC:  PhaseA(shipmode AND ship_instr)=32.755  PhaseB(part_scan)=36.203  PhaseC(BMFetch+agg)=601.078  Total=670.037  rows=2141904  revenue=30104438.0911
 
 --- Iteration 2/5 ---
-  ComBit:  PhaseA(shipmode AND ship_instr)=26.0910  PhaseB(part_scan)=28.1330  PhaseC(BMFetch+agg)=160.8780  Total=215.1030  rows=2141904  revenue=30104438.0911
+  DDC:  PhaseA(shipmode AND ship_instr)=26.0910  PhaseB(part_scan)=28.1330  PhaseC(BMFetch+agg)=160.8780  Total=215.1030  rows=2141904  revenue=30104438.0911
 
 --- Iteration 3/5 ---
-  ComBit:  PhaseA(shipmode AND ship_instr)=25.1690  PhaseB(part_scan)=28.0940  PhaseC(BMFetch+agg)=161.5470  Total=214.8100  rows=2141904  revenue=30104438.0911
+  DDC:  PhaseA(shipmode AND ship_instr)=25.1690  PhaseB(part_scan)=28.0940  PhaseC(BMFetch+agg)=161.5470  Total=214.8100  rows=2141904  revenue=30104438.0911
 
 --- Iteration 4/5 ---
-  ComBit:  PhaseA(shipmode AND ship_instr)=24.9390  PhaseB(part_scan)=28.1140  PhaseC(BMFetch+agg)=162.8610  Total=215.9150  rows=2141904  revenue=30104438.0911
+  DDC:  PhaseA(shipmode AND ship_instr)=24.9390  PhaseB(part_scan)=28.1140  PhaseC(BMFetch+agg)=162.8610  Total=215.9150  rows=2141904  revenue=30104438.0911
 
 --- Iteration 5/5 ---
-  ComBit:  PhaseA(shipmode AND ship_instr)=25.1630  PhaseB(part_scan)=28.1150  PhaseC(BMFetch+agg)=162.8290  Total=216.1080  rows=2141904  revenue=30104438.0911
+  DDC:  PhaseA(shipmode AND ship_instr)=25.1630  PhaseB(part_scan)=28.1150  PhaseC(BMFetch+agg)=162.8290  Total=216.1080  rows=2141904  revenue=30104438.0911
 
-[OK] ComBit matches DuckDB SQL (revenue = 30104438.0911).
+[OK] DDC matches DuckDB SQL (revenue = 30104438.0911).
 
 ================================================================
-  Q19 RESULTS — ComBit (4 measured iter, median +/- stddev)
+  Q19 RESULTS — DDC (4 measured iter, median +/- stddev)
 ================================================================
   PhaseA (shipmode AND shipinstruct): 25.1660 +/- 0.4431 ms
   PhaseB (part scan + group map)    : 28.1145 +/- 0.0138 ms

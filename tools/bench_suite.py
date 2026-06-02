@@ -50,8 +50,8 @@ BACKENDS: List[str] = ["WAH", "CB", "CB+BPE", "CR", "CR+BPE", "CRR", "EW", "BS",
 
 BACKEND_FULL: Dict[str, str] = {
     "WAH":    "WAH (FastBit)",
-    "CB":     "ComBit",
-    "CB+BPE": "ComBit + BPE (β scheme)",
+    "CB":     "DDC",
+    "CB+BPE": "DDC + BPE (β scheme)",
     "CR":     "CRoaring",
     "CR+BPE": "CRoaring + BPE (β scheme, fairness)",
     "CRR":    "CRoaring+Run",
@@ -66,8 +66,8 @@ BACKEND_FULL: Dict[str, str] = {
 # use 2/3-letter tags; Q15/Q17/Q19 put the tag in a `backend` column).
 CSV_PREFIX_TO_BACKEND: Dict[str, str] = {
     "wah":           "WAH",
-    "combit":        "CB",
-    "combit_bpe":    "CB+BPE",
+    "ddc":        "CB",
+    "ddc_bpe":    "CB+BPE",
     "cb":            "CB",
     "croaring":      "CR",
     "croaring_bpe":  "CR+BPE",
@@ -86,7 +86,7 @@ CSV_PREFIX_TO_BACKEND: Dict[str, str] = {
 
 # Storage / footprint lines.  All print `<Name> (on disk|in mem): X.YZ MiB`.
 RE_FOOTPRINT = re.compile(
-    r"^\s*(WAH|ComBit|CRoaring|EWAH|Bitset|Concise)\s+"
+    r"^\s*(WAH|DDC|CRoaring|EWAH|Bitset|Concise)\s+"
     r"(on disk|in mem)\s*:\s*([\d.]+)\s*MiB",
     re.MULTILINE,
 )
@@ -94,7 +94,7 @@ RE_FOOTPRINT = re.compile(
 # Row-count lines printed per backend, in either of two styles the 12 Q
 # files use.  The long-form style (Q1, Q5, Q6) spells every backend out:
 #   `  WAH rows:        59142609`
-#   `  ComBit rows:     59142609`
+#   `  DDC rows:     59142609`
 #   `  CRoar+Run rows:  59142609`
 #   `  Bitset+AVX512 rows:  59142609`
 # The compact style (Q3, Q8, Q10) uses short tags and frequently packs
@@ -105,14 +105,14 @@ RE_FOOTPRINT = re.compile(
 # instead emit an `[OK] all active backends match DuckDB SQL ground truth`
 # pass message which is captured separately below.
 RE_ROWS = re.compile(
-    r"\b(WAH|ComBit|CRoaringRun|CRoaring|CRoar\+Run|EWAH|Bitset\+AVX512|Bitset|Concise|"
+    r"\b(WAH|DDC|CRoaringRun|CRoaring|CRoar\+Run|EWAH|Bitset\+AVX512|Bitset|Concise|"
     r"CB|CR|CRR|EW|BS|BSA|CON)\s+rows\s*:\s*(\d+)"
 )
 
 ROW_LABEL_TO_BACKEND: Dict[str, str] = {
     # Long-form
     "WAH":            "WAH",
-    "ComBit":         "CB",
+    "DDC":         "CB",
     "CRoaring":       "CR",
     "CRoaringRun":    "CRR",
     "CRoar+Run":      "CRR",
@@ -157,7 +157,7 @@ RE_OK_PASS = re.compile(
 
 # Per-backend in-memory breakdown lines.  Format (one per backend, MiB):
 #   `  [Breakdown] WAH      literal=40.08 MiB  fill=3.12 MiB  header=0.17 MiB  total=43.38 MiB`
-#   `  [Breakdown] ComBit   L1=29.51 MiB  L2=4.26 MiB  L3=10.61 MiB  total=44.38 MiB`
+#   `  [Breakdown] DDC   L1=29.51 MiB  L2=4.26 MiB  L3=10.61 MiB  total=44.38 MiB`
 #   `  [Breakdown] CRoaring array=1.61 MiB  bitset=35.78 MiB  run=0.00 MiB  total=37.39 MiB`
 #   `  [Breakdown] CR+Run   array=1.61 MiB  bitset=35.76 MiB  run=0.02 MiB  total=37.38 MiB`
 #   `  [Breakdown] EWAH     literal=42.05 MiB  fill=6.23 MiB  total=48.28 MiB`
@@ -172,7 +172,7 @@ RE_BREAKDOWN_KV = re.compile(r"(\w+)=([0-9.]+)\s*MiB")
 
 # New BMTPCH pattern (PRAGMA load_bitmap) prints one line per (column,
 # backend) build:
-#   `[load_bitmap] orderkey: built ComBit index (15000000 keys, 4448.84 MB) in 12947 ms`
+#   `[load_bitmap] orderkey: built DDC index (15000000 keys, 4448.84 MB) in 12947 ms`
 #   `[load_bitmap] shipdate: built CRoaringRun index (2526 keys, 138.443 MB) in 1403 ms`
 # Size is decimal MB (storage_bytes / 1e6), already consistent with the
 # spreadsheet's MB convention — no MiB conversion needed.
@@ -181,9 +181,9 @@ RE_LOAD_BITMAP_BUILT = re.compile(
 )
 # IBitmapIndex::backend_name() printed strings -> canonical backend tag.
 LOAD_BITMAP_NAME_TO_BACKEND: Dict[str, str] = {
-    "ComBit":      "CB",
-    "ComBitGE":    "CB",
-    "ComBitBPE":   "CB",
+    "DDC":      "CB",
+    "DDCGE":    "CB",
+    "DDCBPE":   "CB",
     "CRoaring":    "CR",
     "CRoaringRun": "CRR",
     "CRoaringBPE": "CR",   # BPE label is shared between run-opt on/off
@@ -201,7 +201,7 @@ BREAKDOWN_TAG: Dict[str, Tuple[str, List[str]]] = {
     # category names come first; legacy `[Breakdown]` categories
     # (still emitted by Q15's BMTPCH single-bitmap path) come after.
     "WAH":      ("WAH",     ["wah", "literal", "fill", "header"]),
-    "ComBit":   ("CB",      ["ultra", "L1", "L2", "L3", "L4", "header"]),
+    "DDC":   ("CB",      ["ultra", "L1", "L2", "L3", "L4", "header"]),
     "CB+BPE":   ("CB+BPE",  ["ultra", "L1", "L2", "L3", "L4", "header"]),
     "CRoaring": ("CR",      ["array", "bitset", "run", "header"]),
     "CR+BPE":   ("CR+BPE",  ["array", "bitset", "run", "header"]),
@@ -221,21 +221,21 @@ BREAKDOWN_TAG_ORDER_BY_BACKEND: Dict[str, List[str]] = {
 
 # Backend-specific iteration lines emitted by Q3/Q4/Q5/Q8/Q10/Q12/Q14/Q17
 # during the loop.  Two shapes appear:
-#   `  ComBit:    PhaseA=... rows=302114`   (long name with `:`)
+#   `  DDC:    PhaseA=... rows=302114`   (long name with `:`)
 #   `  CB:        OR=... rows=302114`       (short tag with `:`)
-#   `  [Q6 ComBit] ship_ge=... rows=1139264` (Q6's bracketed form)
+#   `  [Q6 DDC] ship_ge=... rows=1139264` (Q6's bracketed form)
 # Only keep the last match per backend so the final measured iteration
 # (not warm-up) wins.
 RE_INLINE_ROWS = re.compile(
     r"(?:^\s*|\[Q\d+\s+)"
-    r"(WAH|ComBit|CRoaring|CRoaringRun|CRoar\+Run|EWAH|Bitset\+AVX512|Bitset|Concise|"
+    r"(WAH|DDC|CRoaring|CRoaringRun|CRoar\+Run|EWAH|Bitset\+AVX512|Bitset|Concise|"
     r"CB|CR|CRR|EW|BS|BSA|CON)"
     r"(?:\s*:|\s*\]).*?rows=(\d+)",
     re.MULTILINE
 )
 RE_INLINE_ROWS_NAME_TO_BACKEND: Dict[str, str] = {
     "WAH":            "WAH",
-    "ComBit":         "CB",
+    "DDC":         "CB",
     "CRoaring":       "CR",
     "CRoaringRun":    "CRR",
     "CRoar+Run":      "CRR",
@@ -278,12 +278,12 @@ def _dir_size_follow_symlinks(path: Path) -> int:
 
 
 # Per-backend on-disk directory naming convention used by every Q:
-#   tpch_q{N}_{wah,combit,croaring,ewah}
+#   tpch_q{N}_{wah,ddc,croaring,ewah}
 # `None` means the backend has no on-disk footprint (BS/BSA/CON rebuild
 # from CRoaring at load and live entirely in RAM).
 BACKEND_DIR_SUFFIX: Dict[str, Optional[str]] = {
     "WAH": "wah",
-    "CB":  "combit",
+    "CB":  "ddc",
     "CR":  "croaring",
     "CRR": "croaring",   # shares CR's dir
     "EW":  "ewah",
@@ -437,7 +437,7 @@ def parse_stdout_log(log_text: str, *, q: Optional[int] = None,
         if name == "WAH":
             result["footprint_mb"]["WAH"] = mb
             result["footprint_kind"]["WAH"] = "disk"
-        elif name == "ComBit":
+        elif name == "DDC":
             result["footprint_mb"]["CB"] = mb
             result["footprint_kind"]["CB"] = "disk"
         elif name == "CRoaring":
@@ -498,10 +498,10 @@ def parse_stdout_log(log_text: str, *, q: Optional[int] = None,
         if b is not None and result["rows"][b] is None:
             result["rows"][b] = n
 
-    # Inline per-iteration rows (`  ComBit:  PhaseA=... rows=NNN`,
-    # `  CB:  OR=... rows=NNN`, `[Q6 ComBit] rows=NNN`) emitted by every
+    # Inline per-iteration rows (`  DDC:  PhaseA=... rows=NNN`,
+    # `  CB:  OR=... rows=NNN`, `[Q6 DDC] rows=NNN`) emitted by every
     # PRAGMA-load-bitmap Q (Q3/Q4/Q5/Q6/Q8/Q10/Q12/Q14/Q17/Q19).  Map both
-    # long ("ComBit") and short ("CB") names to the canonical backend tag.
+    # long ("DDC") and short ("CB") names to the canonical backend tag.
     # Last-write-wins so the final measured iteration's value sticks.
     for m in RE_INLINE_ROWS.finditer(log_text):
         label, n = m.group(1), int(m.group(2))
@@ -586,7 +586,7 @@ def parse_stdout_log(log_text: str, *, q: Optional[int] = None,
     # backend) build.  Multi-backend logs interleave per-backend sections
     # ("# === Backend X (DEBIT_BM=x) ===" headers), so we have to segment
     # the log by section and attribute each load_bitmap line to the active
-    # backend — otherwise cb's and cb_bpe's "shipdate built ComBit (240MB)"
+    # backend — otherwise cb's and cb_bpe's "shipdate built DDC (240MB)"
     # both land in the CB bucket and double-count.
     RE_SECTION_HEADER = re.compile(r"^# === Backend (\S+) \(DEBIT_BM=\S+\) ===\s*$", re.MULTILINE)
     section_starts = list(RE_SECTION_HEADER.finditer(log_text))
@@ -629,7 +629,7 @@ def parse_stdout_log(log_text: str, *, q: Optional[int] = None,
         bmtpch_seen.add(backend)
 
     # Per-layer breakdown lines (new format printed by load_bitmap):
-    #   [load_bitmap_breakdown] shipdate ComBit: L1=120 MB L2=45 MB L3=12 MB L4=3 MB
+    #   [load_bitmap_breakdown] shipdate DDC: L1=120 MB L2=45 MB L3=12 MB L4=3 MB
     #   [load_bitmap_breakdown] shipdate CRoaring: array=80 MB bitset=50 MB run=8 MB
     # Aggregate across columns within the section's backend.  This is what
     # lets the Memory Detail (MB) sheet show real layer split per Q for
@@ -797,8 +797,8 @@ PATTERN_BACKENDS_PER_Q: Dict[int, List[Tuple[str, str]]] = {
 # Maps the active backend short tag to its CSV column prefix in the
 # Schema-A CSV (matches CSV_PREFIX_TO_BACKEND inverted).
 PATTERN_BACKEND_CSV_PREFIX: Dict[str, str] = {
-    "CB":     "combit",
-    "CB+BPE": "combit_bpe",
+    "CB":     "ddc",
+    "CB+BPE": "ddc_bpe",
     "CR":     "croaring",
     "CR+BPE": "croaring_bpe",
     "CRR":    "croaring_run",
@@ -817,14 +817,14 @@ def _merge_pattern_csvs(repo_root: Path, q: int, sf_label: str,
 
     For CB+BPE / CR+BPE the cpp emits to the *non*-BPE prefix (the cpp
     has no notion of `cb_bpe` — DEBIT_BM=cb_bpe just routes to the same
-    ComBit emit path); we rename `combit_*` → `combit_bpe_*` (and likewise
+    DDC emit path); we rename `ddc_*` → `ddc_bpe_*` (and likewise
     for croaring) when copying into the merged output.
     """
     if not per_backend_csvs:
         return
     # Backends whose source CSV still uses the non-BPE prefix.
     SOURCE_PREFIX_OVERRIDE = {
-        "CB+BPE": "combit",        # source column → renamed to combit_bpe_*
+        "CB+BPE": "ddc",        # source column → renamed to ddc_bpe_*
         "CR+BPE": "croaring",
     }
     # Collect rows keyed on operation, taking the active-backend cells from
@@ -1083,7 +1083,7 @@ def build_excel(records: List[Dict], meta: Dict[str, Dict],
     _section("Memory breakdown categories (MB)")
     breakdown_doc = [
         ("WAH",      "literal: literal-word bytes  •  fill: fill-word bytes  •  header: per-bitmap C++ object overhead"),
-        ("ComBit",   "L1: literal-word bytes (level 1)  •  L2: literal bytes (level 2 after L3 compression)  •  L3: L3-literal bytes (L3 bytes that disagree with the L4 fill)  •  L4: leading bitstring over L3 (1 bit per L3 byte; replaces the dense L3-bits buffer)"),
+        ("DDC",   "L1: literal-word bytes (level 1)  •  L2: literal bytes (level 2 after L3 compression)  •  L3: L3-literal bytes (L3 bytes that disagree with the L4 fill)  •  L4: leading bitstring over L3 (1 bit per L3 byte; replaces the dense L3-bits buffer)"),
         ("CRoaring", "array: array-container bytes  •  bitset: bitset-container bytes  •  run: run-container bytes"),
         ("CR+Run",   "Same categories as CRoaring; runOptimize() applied — so 'run' is non-zero whenever it pays off"),
         ("EWAH",     "literal: literal-word bytes  •  fill: RLW header words encoding fills"),
@@ -1227,7 +1227,7 @@ def build_excel(records: List[Dict], meta: Dict[str, Dict],
 
     _section("Algorithm matrix (per backend k-way OR strategy)")
     algo_matrix = [
-        ("CB",  "Pairwise SparseComBit::apply_or_to (no native k-way merge; sparse segment storage already amortises common cases)."),
+        ("CB",  "Pairwise SparseDDC::apply_or_to (no native k-way merge; sparse segment storage already amortises common cases)."),
         ("CR",  "Pairwise |= (CRoaring's standard mode — comparison baseline)."),
         ("CRR", "fastunion (priority-queue k-way merge over run-optimised bitmaps; CRoaring's advertised path)."),
         ("WAH", "Pairwise |= (FastBit has no public k-way merge API)."),

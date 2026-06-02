@@ -8,33 +8,33 @@ PRAGMA load_bitmap('linestatus');
 PRAGMA load_bitmap('returnflag');
 PRAGMA bm_tpch(1);
 [load_bitmap] shipdate: scanned 59986052 rows in 726 ms
-[load_bitmap] shipdate: built ComBit index (2526 keys, 6586.7 MB) in 23980 ms
+[load_bitmap] shipdate: built DDC index (2526 keys, 6586.7 MB) in 23980 ms
 [load_bitmap] linestatus: scanned 59986052 rows in 886 ms
-[load_bitmap] linestatus: built ComBit index (2 keys, 20.6326 MB) in 2376 ms
+[load_bitmap] linestatus: built DDC index (2 keys, 20.6326 MB) in 2376 ms
 [load_bitmap] returnflag: scanned 59986052 rows in 865 ms
-[load_bitmap] returnflag: built ComBit index (3 keys, 29.7766 MB) in 2426 ms
+[load_bitmap] returnflag: built DDC index (3 keys, 29.7766 MB) in 2426 ms
 
 ================================================================
-  TPC-H Q1 (BitEngine normal-path: complement OR + bit-stream + seq scan) — ComBit (SF10)
+  TPC-H Q1 (BitEngine normal-path: complement OR + bit-stream + seq scan) — DDC (SF10)
   Pre-loaded: bitmap_shipdate + bitmap_linestatus + bitmap_returnflag
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  ComBit:  PhaseA=71.139  PhaseB=79.813  PhaseC=962.987  Total=1113.94
+  DDC:  PhaseA=71.139  PhaseB=79.813  PhaseC=962.987  Total=1113.94
 
 --- Iteration 2/5 ---
-  ComBit:  PhaseA=71.049  PhaseB=80.116  PhaseC=759.821  Total=910.986
+  DDC:  PhaseA=71.049  PhaseB=80.116  PhaseC=759.821  Total=910.986
 
 --- Iteration 3/5 ---
-  ComBit:  PhaseA=70.701  PhaseB=80.347  PhaseC=759.649  Total=910.698
+  DDC:  PhaseA=70.701  PhaseB=80.347  PhaseC=759.649  Total=910.698
 
 --- Iteration 4/5 ---
-  ComBit:  PhaseA=71.425  PhaseB=78.649  PhaseC=759.749  Total=909.824
+  DDC:  PhaseA=71.425  PhaseB=78.649  PhaseC=759.749  Total=909.824
 
 --- Iteration 5/5 ---
-  ComBit:  PhaseA=70.885  PhaseB=80.851  PhaseC=760.501  Total=912.238
+  DDC:  PhaseA=70.885  PhaseB=80.851  PhaseC=760.501  Total=912.238
 
-[OK] ComBit matches DuckDB SQL ground truth (4 (rf,ls) groups).
+[OK] DDC matches DuckDB SQL ground truth (4 (rf,ls) groups).
 
   Q1 group results (rf,ls): qty / base_price / disc_price / charge / discount / count
   (A,F): 377518399.00  566065727797.25  537759104278.07  559276670892.12  740301.18  14804077
@@ -43,7 +43,7 @@ PRAGMA bm_tpch(1);
   (R,F): 377732830.00  566431054976.00  538110922664.77  559634780885.09  740361.65  14808183
 
 ================================================================
-  Q1 RESULTS — ComBit only (4 measured iter, median +/- stddev)
+  Q1 RESULTS — DDC only (4 measured iter, median +/- stddev)
 ================================================================
   PhaseA (shipdate ~OR + flip): 70.97 +/- 0.27 ms
   PhaseB (per-group AND→bs)   : 80.23 +/- 0.82 ms

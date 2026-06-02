@@ -1,40 +1,4 @@
-// TPC-H Q1 — Pricing Summary Report
-// Verbatim port of teacher's BitEngine BMTPCH_Q1 "normal path" branch
-// (Q1.cpp lines 683-836 on origin/BitEngine).
-//
-// Pipeline (1:1 mirror of teacher):
-//
-//   Phase A — shipdate complement OR + flip:
-//             shipdate_gt = OR over rabit_shipdate->Btvs[i] for i > right_days
-//             shipdate_filter = NOT shipdate_gt    (= shipdate <= cutoff)
-//             Only ~90 bitmaps are OR'd (not 2437 full range), so the
-//             multi-OR cost stays small even for backends without a
-//             k-way merge (e.g. ComBit's pairwise SparseComBit).
-//
-//   Phase B — per-(rf, ls) group bitmap:
-//             group_filter = linestatus[ls] AND returnflag[rf] AND shipdate_filter
-//             (5 valid groups: A/F, N/F, N/O, R/F, A/O — A/O is empty
-//              under the cutoff so usually 4 populate.)
-//             Each group_filter is converted to a packed MSB-first
-//             byte-stream of length (num_rows + 7) / 8.  Mirrors
-//             teacher's `reduce_leadingbits` / `reduce_leadingbits_seg`.
-//
-//   Phase C — sequential lineitem scan + bit-stream filter + inline agg:
-//             One pass over lineitem (l_quantity, l_extendedprice,
-//             l_discount, l_tax).  For each result chunk, walk each
-//             group's byte-stream 8 rows at a time; for each set bit
-//             accumulate q1_data per teacher's Q1_AGG_ROW formula.
-//
-// Why this pattern (vs the previous BMFetch path):
-//   Q1's predicate selects ~99% of lineitem (only the last 90 days are
-//   filtered out).  BMFetching ~59M rows row-by-row defeats sequential
-//   prefetching.  Teacher's path streams the whole 60M-row lineitem
-//   table once with 5 cheap bit-tests per row.
-//
-// Pre-loaded auxiliary structures (PRAGMA load_bitmap, NOT in latency):
-//   - bitmap_shipdate    (per-day IndexedX over l_shipdate)
-//   - bitmap_linestatus  (per-char IndexedX over l_linestatus, key=ASCII)
-//   - bitmap_returnflag  (per-char IndexedX over l_returnflag, key=ASCII)
+
 
 #include "duckdb/execution/execution_context.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -49,8 +13,8 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
 
-#include "combit_adapter.h"
-#include "combit/include/combit.h"
+#include "ddc_adapter.h"
+#include "ddc/include/ddc.h"
 #include "fastbit/bitvector.h"
 #include "roaring.hh"
 #include "ewah.h"
@@ -96,12 +60,8 @@ static const int Q1_WARMUP     = bm_bench::warmup_count(1);
 
 static std::once_flag q1_once_flag_new;
 
-// 1998-09-02 — TPC-H Q1 cutoff day (epoch days since 1970-01-01).
-// Same value as teacher's `right_days = 10471`.
 static constexpr int64_t Q1_SHIPDATE_CUTOFF = 10471;
-// Pure month-GE path (teacher 2026-05-19): cutoff rounded to month boundary
-// 1998-08-31, so `shipdate > cutoff` = OR over 4 months 199809..199812.
-// SQL ground-truth comparison is adjusted accordingly when this path is used.
+
 static constexpr int64_t Q1_GE_AFTER_MONTHS[4] = {199809, 199810, 199811, 199812};
 
 struct Q1GroupAns {
@@ -113,8 +73,7 @@ struct Q1GroupAns {
     int64_t count_order    = 0;
 };
 
-// Per-row aggregator (scalar — used for the byte-stream tail when num_rows
-// is not a multiple of 8, and as the #else fallback for non-AVX512 builds).
+// agg one row
 #define Q1_AGG_ROW(g, r, qty, price, disc, tax) do { \
     (g).sum_qty        += (qty)[(r)];                 \
     (g).sum_discount   += (disc)[(r)];                \
@@ -125,12 +84,6 @@ struct Q1GroupAns {
     (g).count_order++;                                \
 } while (0)
 
-// =========================================================================
-// q1_reverse_table — bit-reverse a MSB-first packed byte to LSB-first so
-// it can drive AVX512 _mm512_maskz_compress_epi64 (whose mask is LSB-first).
-// Mirrors teacher's `reverse_table` in BMTPCH_Q1.  Initialised at process
-// start via the make_q1_reverse_table() helper below.
-// =========================================================================
 static std::array<uint8_t, 256> make_q1_reverse_table() {
     std::array<uint8_t, 256> t{};
     for (int i = 0; i < 256; i++) {
@@ -143,25 +96,11 @@ static std::array<uint8_t, 256> make_q1_reverse_table() {
 }
 static const std::array<uint8_t, 256> q1_reverse_table = make_q1_reverse_table();
 
-// =========================================================================
-// q1_agg_8rows — SIMD-vectorised inline aggregation of 8 contiguous rows.
-//
-// `bits_msb` is the MSB-first packed-byte from the group's byte-stream:
-// bit (0x80 >> i) corresponds to row (base + i).  We bit-reverse it to
-// LSB-first and feed AVX512 maskz_compress to compress the selected
-// lanes, then reduce-add.  This is a port of teacher's BitEngine
-// `q1_exe_aggregation` (Q1.cpp lines 168-220 on origin/BitEngine).
-//
-// All five running sums (sum_qty, sum_discount, sum_base_price,
-// sum_disc_price, sum_charge) and count_order are folded into one
-// pass over the 8-row window.  Falls back to a scalar loop when AVX512
-// is unavailable (compile-time guarded).
-// =========================================================================
 static inline void q1_agg_8rows(
     const int64_t* qty, const int64_t* price, const int64_t* disc, const int64_t* tax,
     size_t base, uint8_t bits_msb, Q1GroupAns& ans)
 {
-#if defined(__AVX512F__)
+#if defined(__AVX512F__)  // SIMD agg 8 rows
     if (!bits_msb) return;
 
     const uint8_t mask = q1_reverse_table[bits_msb];
@@ -172,29 +111,24 @@ static inline void q1_agg_8rows(
     __m512i tax_v   = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(tax + base));
     __m512i c100    = _mm512_set1_epi64(100);
 
-    // sum_qty += sum of selected qty lanes
     ans.sum_qty += _mm512_reduce_add_epi64(_mm512_maskz_compress_epi64(mask, qty_v));
 
-    // sum_discount += sum of selected disc lanes
     ans.sum_discount += _mm512_reduce_add_epi64(_mm512_maskz_compress_epi64(mask, disc_v));
 
-    // sum_base_price += sum of selected price lanes
     __m512i cprice = _mm512_maskz_compress_epi64(mask, price_v);
     ans.sum_base_price += _mm512_reduce_add_epi64(cprice);
 
-    // sum_disc_price += sum of price * (100 - disc) for selected lanes
     __m512i cdisc_inv = _mm512_maskz_compress_epi64(mask, _mm512_sub_epi64(c100, disc_v));
     __m512i dp_v = _mm512_mullo_epi64(cprice, cdisc_inv);
     ans.sum_disc_price += _mm512_reduce_add_epi64(dp_v);
 
-    // sum_charge += sum of price * (100 - disc) * (100 + tax) for selected lanes
     __m512i ctax_p100 = _mm512_maskz_compress_epi64(mask, _mm512_add_epi64(c100, tax_v));
     __m512i ch_v = _mm512_mullo_epi64(dp_v, ctax_p100);
     ans.sum_charge += _mm512_reduce_add_epi64(ch_v);
 
     ans.count_order += __builtin_popcount(static_cast<unsigned>(bits_msb));
 #else
-    // Scalar fallback — preserves MSB-first ordering.
+    // scalar fallback
     for (int i = 0; i < 8; i++) {
         if (bits_msb & (0x80 >> i))
             Q1_AGG_ROW(ans, base + i, qty, price, disc, tax);
@@ -202,15 +136,11 @@ static inline void q1_agg_8rows(
 #endif
 }
 
-// =========================================================================
-// Per-backend "decompress to MSB-first packed byte-stream of length
-// (num_rows + 7) / 8".  Counterpart of teacher's reduce_leadingbits.
-// =========================================================================
-static void q1_to_byte_stream(const ComBit& b, std::vector<uint8_t>& bs,
+// decompress -> byte stream
+static void q1_to_byte_stream(const DDC& b, std::vector<uint8_t>& bs,
                               size_t num_rows) {
     bs.assign((num_rows + 7) / 8, 0);
-    // ComBit's L1 literals are already packed MSB-first per byte
-    // (see ComBitBtv::compress: `word |= 1 << (7 - bit_in_byte)`).
+
     b.for_each_literal([&](uint32_t word_pos, uint8_t val) {
         if (word_pos < bs.size()) bs[word_pos] = val;
     });
@@ -254,30 +184,24 @@ static void q1_to_byte_stream(const ConciseSet<false>& b, std::vector<uint8_t>& 
     }
 }
 
-// In-place byte-stream complement of `bs` (NOT op).  Masks any padding
-// bits past `num_rows` to 0 so they don't spuriously match in the scan.
+// complement (<=)
 static void q1_byte_stream_not(std::vector<uint8_t>& bs, size_t num_rows) {
     for (auto& b : bs) b = ~b;
-    size_t tail = num_rows & 7;       // valid bits in last byte (MSB-first)
+    size_t tail = num_rows & 7;
     if (tail != 0) {
-        // Keep top `tail` bits, zero the bottom (8 - tail) bits.
+
         uint8_t mask = static_cast<uint8_t>(0xFFu << (8 - tail));
         bs.back() &= mask;
     }
 }
 
-// In-place byte-stream AND: dst[i] &= src[i].
+// AND kernel
 static void q1_byte_stream_and(std::vector<uint8_t>& dst,
                                const std::vector<uint8_t>& src) {
     size_t n = dst.size();
     for (size_t i = 0; i < n; i++) dst[i] &= src[i];
 }
 
-// =========================================================================
-// q1_run_aggregate — sequential lineitem scan + per-row bit test against
-// each group's byte-stream filter + inline aggregate.  Mirrors teacher's
-// inner loop (Q1.cpp lines 760-833).
-// =========================================================================
 static void q1_run_aggregate(
     ClientContext& ctx,
     TableCatalogEntry& lineitem_table,
@@ -287,10 +211,10 @@ static void q1_run_aggregate(
 {
     TableScanState scan_state;
     vector<StorageIndex> col_ids = {
-        StorageIndex(4),  // l_quantity
-        StorageIndex(5),  // l_extendedprice
-        StorageIndex(6),  // l_discount
-        StorageIndex(7),  // l_tax
+        StorageIndex(4),
+        StorageIndex(5),
+        StorageIndex(6),
+        StorageIndex(7),
     };
     lineitem_table.GetStorage().InitializeScan(ctx, tx, scan_state, col_ids);
     vector<LogicalType> types = {
@@ -300,9 +224,8 @@ static void q1_run_aggregate(
         lineitem_table.GetColumns().GetColumnTypes()[7],
     };
 
-    // Cache (key, byte-stream-pointer, ans-pointer) for the inner loop.
     struct Slot {
-        const uint8_t* bs_base;   // pointer to start of group's byte stream
+        const uint8_t* bs_base;
         Q1GroupAns*    ans_ptr;
     };
     std::vector<Slot> slots;
@@ -312,7 +235,7 @@ static void q1_run_aggregate(
     }
 
     size_t row_offset = 0;
-    while (true) {
+    while (true) {  // seq scan
         DataChunk chunk; chunk.Initialize(ctx, types);
         lineitem_table.GetStorage().Scan(tx, chunk, scan_state);
         if (chunk.size() == 0) break;
@@ -322,15 +245,8 @@ static void q1_run_aggregate(
         auto tax   = FlatVector::GetData<int64_t>(chunk.data[3]);
         idx_t n = chunk.size();
 
-        // Walk 8 rows at a time using byte-aligned access into the
-        // group's byte-stream.  row_offset is always a multiple of 8
-        // for all but possibly the very last chunk (TPC-H lineitem
-        // chunks are 2048 = 256 bytes worth of bits).  Per-byte we
-        // dispatch to the AVX512 lane-compressed kernel (q1_agg_8rows)
-        // — this folds all 5 running sums + count_order into one
-        // _mm512_maskz_compress + _mm512_reduce_add per accumulator.
         idx_t base = 0;
-        while (base + 7 < n) {
+        while (base + 7 < n) {  // 8-row blocks
             size_t bs_off = (row_offset + base) / 8;
             for (auto& slot : slots) {
                 uint8_t bits = slot.bs_base[bs_off];
@@ -338,8 +254,8 @@ static void q1_run_aggregate(
             }
             base += 8;
         }
-        // Tail handling for partial trailing bits.
-        if (base < n) {
+
+        if (base < n) {  // scalar tail
             for (auto& slot : slots) {
                 for (idx_t r = base; r < n; r++) {
                     size_t pos = row_offset + r;
@@ -353,9 +269,7 @@ static void q1_run_aggregate(
     }
 }
 
-// =========================================================================
-// BMTPCH_Q1 — main entry
-// =========================================================================
+// Q1 entry
 void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &op)
 {
     std::call_once(q1_once_flag_new, [&]() {
@@ -370,8 +284,6 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
     std::cout << "  Pre-loaded: bitmap_shipdate + bitmap_linestatus + bitmap_returnflag" << std::endl;
     std::cout << "================================================================" << std::endl;
 
-    // Teacher 2026-05-19: prefer month-GE if loaded (4-key complement OR
-    // vs 90-key per-day OR; cutoff rounded to 1998-08-31).
     auto* idx_ge_m = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_GE_month);
     auto* idx_ship = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate);
     auto* idx_ls   = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_linestatus);
@@ -382,9 +294,7 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
         return;
     }
     const bool use_month_ge = (idx_ge_m != nullptr);
-    // ls/rf backend tag (ComBit/CRoaring/...) is what's used for dispatch;
-    // shipdate-GE class differs only for ComBit (ComBitGE vs ComBit).  Accept
-    // that mismatch when use_month_ge is true.
+
     if (!use_month_ge) {
         if (std::string(idx_ship->backend_name()) != idx_ls->backend_name() ||
             std::string(idx_ship->backend_name()) != idx_rf->backend_name()) {
@@ -413,44 +323,39 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
         auto t0 = clk::now();
         auto& lineitem_tx = DuckTransaction::Get(context.client, lineitem_table.catalog);
 
-        std::vector<uint8_t> shipdate_filter_bs;     // shipdate <= cutoff (after NOT)
+        std::vector<uint8_t> shipdate_filter_bs;
         double phaseA = 0;
 
-        // -----------------------------------------------------------------
-        // Per-backend: build shipdate_filter_bs + per-(rf, ls) group_bs.
-        // The dispatch chain mirrors Q5/Q6 (dynamic_cast on idx_ship).
-        // -----------------------------------------------------------------
-        if (auto* cbge_ship = dynamic_cast<bm_index::IndexedComBitGE*>(idx_use)) {
-            // Month-GE path (teacher's plan): 4-key complement OR.
-            auto* cb_ls_x = dynamic_cast<bm_index::IndexedComBit*>(idx_ls);
-            auto* cb_rf_x = dynamic_cast<bm_index::IndexedComBit*>(idx_rf);
+        // backend dispatch
+        if (auto* cbge_ship = dynamic_cast<bm_index::IndexedDDCGE*>(idx_use)) {  // DDC month-GE
+            auto* cb_ls_x = dynamic_cast<bm_index::IndexedDDC*>(idx_ls);
+            auto* cb_rf_x = dynamic_cast<bm_index::IndexedDDC*>(idx_rf);
             if (!cb_ls_x || !cb_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
 
-            auto t_a0 = clk::now();
+            auto t_a0 = clk::now();  // phase A: shipdate OR + flip
             std::vector<int64_t> month_keys(Q1_GE_AFTER_MONTHS, Q1_GE_AFTER_MONTHS + 4);
-            ComBit shipdate_gt = cbge_ship->or_many(month_keys);
+            DDC shipdate_gt = cbge_ship->or_many(month_keys);
             q1_to_byte_stream(shipdate_gt, shipdate_filter_bs, num_rows);
             q1_byte_stream_not(shipdate_filter_bs, num_rows);
             auto t_a1 = clk::now();
             phaseA = q1_ms(t_a0, t_a1);
 
-            // Phase B: per (rf, ls): ls AND rf → bitmap, byte-stream, AND filter.
             std::map<char, std::vector<uint8_t>> ls_bs, rf_bs;
             for (int li = 0; li < LS_COUNT; li++) {
-                ComBit b = ComBit::from_sparse_positions({}, num_rows, cbge_ship->segment_bits());
+                DDC b = DDC::from_sparse_positions({}, num_rows, cbge_ship->segment_bits());
                 cb_ls_x->apply_or_to(b, static_cast<int64_t>(LS_CHARS[li]));
                 std::vector<uint8_t> tmp;
                 q1_to_byte_stream(b, tmp, num_rows);
                 ls_bs[LS_CHARS[li]] = std::move(tmp);
             }
             for (int ri = 0; ri < RF_COUNT; ri++) {
-                ComBit b = ComBit::from_sparse_positions({}, num_rows, cbge_ship->segment_bits());
+                DDC b = DDC::from_sparse_positions({}, num_rows, cbge_ship->segment_bits());
                 cb_rf_x->apply_or_to(b, static_cast<int64_t>(RF_CHARS[ri]));
                 std::vector<uint8_t> tmp;
                 q1_to_byte_stream(b, tmp, num_rows);
                 rf_bs[RF_CHARS[ri]] = std::move(tmp);
             }
-            for (int ri = 0; ri < RF_COUNT; ri++) {
+            for (int ri = 0; ri < RF_COUNT; ri++) {  // per-group AND
                 for (int li = 0; li < LS_COUNT; li++) {
                     char rf = RF_CHARS[ri], ls = LS_CHARS[li];
                     std::vector<uint8_t> bs = ls_bs[ls];
@@ -460,33 +365,29 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
                 }
             }
         }
-        else if (auto* cb_ship = dynamic_cast<bm_index::IndexedComBit*>(idx_use)) {
-            auto* cb_ls_x = dynamic_cast<bm_index::IndexedComBit*>(idx_ls);
-            auto* cb_rf_x = dynamic_cast<bm_index::IndexedComBit*>(idx_rf);
+        else if (auto* cb_ship = dynamic_cast<bm_index::IndexedDDC*>(idx_use)) {  // DDC per-key
+            auto* cb_ls_x = dynamic_cast<bm_index::IndexedDDC*>(idx_ls);
+            auto* cb_rf_x = dynamic_cast<bm_index::IndexedDDC*>(idx_rf);
             if (!cb_ls_x || !cb_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
 
             auto t_a0 = clk::now();
-            // Phase A: shipdate complement (OR over keys > cutoff, ~90 keys).
-            // β scheme: BPE prefix-encoded fast path (active under
-            // DEBIT_BM=cb_bpe).  shipdate>cutoff = prefix(LAST) AND_NOT
-            // prefix(B) | per-day OR over (cutoff, bucket_max(B)].
-            // TPC-H 1.5.7 §5 compliant — same column, alt encoding.
-            auto* cb_ship_bpe = dynamic_cast<bm_index::IndexedComBitBPE*>(
+
+            auto* cb_ship_bpe = dynamic_cast<bm_index::IndexedDDCBPE*>(
                 static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_BPE));
-            ComBit shipdate_gt;
-            if (cb_ship_bpe) {
+            DDC shipdate_gt;
+            if (cb_ship_bpe) {  // BPE prefix diff + boundary
                 int B    = cb_ship_bpe->bucket_of(Q1_SHIPDATE_CUTOFF);
                 int LAST = static_cast<int>(cb_ship_bpe->num_keys()) - 1;
                 shipdate_gt = *cb_ship_bpe->prefix_at_bucket(LAST);
                 shipdate_gt &= ~(*cb_ship_bpe->prefix_at_bucket(B));
                 int64_t bmax = cb_ship_bpe->bucket_max(B);
                 if (Q1_SHIPDATE_CUTOFF + 1 <= bmax) {
-                    ComBit boundary = ComBit::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
+                    DDC boundary = DDC::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
                     cb_ship->apply_or_range_to(boundary, Q1_SHIPDATE_CUTOFF + 1, bmax);
                     shipdate_gt |= boundary;
                 }
             } else {
-                // ComBit (no BPE): gather in-range keys + sca or_many.
+
                 std::vector<int64_t> gt_keys;
                 cb_ship->for_each_key([&](int64_t k) {
                     if (k > Q1_SHIPDATE_CUTOFF) gt_keys.push_back(k);
@@ -498,17 +399,16 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
             auto t_a1 = clk::now();
             phaseA = q1_ms(t_a0, t_a1);
 
-            // Phase B: per (rf, ls): ls AND rf → bitmap, byte-stream, AND filter.
             std::map<char, std::vector<uint8_t>> ls_bs, rf_bs;
             for (int li = 0; li < LS_COUNT; li++) {
-                ComBit b = ComBit::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
+                DDC b = DDC::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
                 cb_ls_x->apply_or_to(b, static_cast<int64_t>(LS_CHARS[li]));
                 std::vector<uint8_t> tmp;
                 q1_to_byte_stream(b, tmp, num_rows);
                 ls_bs[LS_CHARS[li]] = std::move(tmp);
             }
             for (int ri = 0; ri < RF_COUNT; ri++) {
-                ComBit b = ComBit::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
+                DDC b = DDC::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
                 cb_rf_x->apply_or_to(b, static_cast<int64_t>(RF_CHARS[ri]));
                 std::vector<uint8_t> tmp;
                 q1_to_byte_stream(b, tmp, num_rows);
@@ -524,7 +424,7 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
                 }
             }
         }
-        else if (auto* cr_ship = dynamic_cast<bm_index::IndexedCRoaring*>(idx_use)) {
+        else if (auto* cr_ship = dynamic_cast<bm_index::IndexedCRoaring*>(idx_use)) {  // CRoaring
             auto* cr_ls_x = dynamic_cast<bm_index::IndexedCRoaring*>(idx_ls);
             auto* cr_rf_x = dynamic_cast<bm_index::IndexedCRoaring*>(idx_rf);
             if (!cr_ls_x || !cr_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
@@ -532,11 +432,11 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
             auto t_a0 = clk::now();
             roaring::Roaring shipdate_gt;
             if (use_month_ge) {
-                // Month-GE: 4-key OR over 199809..199812 (teacher's plan).
+
                 std::vector<int64_t> month_keys(Q1_GE_AFTER_MONTHS, Q1_GE_AFTER_MONTHS + 4);
                 shipdate_gt = cr_ship->or_many(month_keys);
             } else {
-                // β scheme: BPE prefix-encoded fast path for cr_bpe.
+
                 auto* cr_ship_bpe = dynamic_cast<bm_index::IndexedCRoaringBPE*>(
                     static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_BPE));
                 if (cr_ship_bpe) {
@@ -552,7 +452,7 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
                         shipdate_gt |= boundary;
                     }
                 } else {
-                    // Both CR & CRR: Roaring or_range (= fastunion under the hood).
+
                     shipdate_gt = cr_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
                 }
             }
@@ -586,7 +486,7 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
                 }
             }
         }
-        else if (auto* wah_ship = dynamic_cast<bm_index::IndexedWAH*>(idx_use)) {
+        else if (auto* wah_ship = dynamic_cast<bm_index::IndexedWAH*>(idx_use)) {  // WAH
             auto* wah_ls_x = dynamic_cast<bm_index::IndexedWAH*>(idx_ls);
             auto* wah_rf_x = dynamic_cast<bm_index::IndexedWAH*>(idx_rf);
             if (!wah_ls_x || !wah_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
@@ -597,7 +497,7 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
                 std::vector<int64_t> month_keys(Q1_GE_AFTER_MONTHS, Q1_GE_AFTER_MONTHS + 4);
                 shipdate_gt = wah_ship->or_many(month_keys);
             } else {
-                // WAH: copy(first) + decompress + |= rest pairwise (teacher).
+
                 shipdate_gt = wah_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
             }
             q1_to_byte_stream(shipdate_gt, shipdate_filter_bs, num_rows);
@@ -630,7 +530,7 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
                 }
             }
         }
-        else if (auto* ew_ship = dynamic_cast<bm_index::IndexedEWAH*>(idx_use)) {
+        else if (auto* ew_ship = dynamic_cast<bm_index::IndexedEWAH*>(idx_use)) {  // EWAH
             auto* ew_ls_x = dynamic_cast<bm_index::IndexedEWAH*>(idx_ls);
             auto* ew_rf_x = dynamic_cast<bm_index::IndexedEWAH*>(idx_rf);
             if (!ew_ls_x || !ew_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
@@ -673,7 +573,7 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
                 }
             }
         }
-        else if (auto* con_ship = dynamic_cast<bm_index::IndexedConcise*>(idx_use)) {
+        else if (auto* con_ship = dynamic_cast<bm_index::IndexedConcise*>(idx_use)) {  // Concise
             auto* con_ls_x = dynamic_cast<bm_index::IndexedConcise*>(idx_ls);
             auto* con_rf_x = dynamic_cast<bm_index::IndexedConcise*>(idx_rf);
             if (!con_ls_x || !con_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
@@ -722,11 +622,10 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
         }
 
         auto t_b1 = clk::now();
-        // PhaseA was captured per-branch as `phaseA`; PhaseB is everything
-        // from end-of-PhaseA up to here (group_bs build).
+
         double phaseB = q1_ms(t0, t_b1) - phaseA;
 
-        q1_run_aggregate(context.client, lineitem_table, lineitem_tx, group_bs, ans);
+        q1_run_aggregate(context.client, lineitem_table, lineitem_tx, group_bs, ans);  // phase C
         auto t_c1 = clk::now();
         double phaseC = q1_ms(t_b1, t_c1);
         double tot    = q1_ms(t0, t_c1);
@@ -743,13 +642,12 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
         last_ans = ans;
     }
 
-    // ----- Validate vs DuckDB SQL -----
+    // SQL ground truth
     bool gt_ok = false;
     std::map<std::pair<char,char>, std::vector<double>> gt;
     {
         Connection con(*context.client.db);
-        // When month-GE is in use the cutoff is rounded down to 1998-08-31
-        // (= '1998-09-01' - 1 day) — matches the 4-month OR over 199809..199812.
+
         const char* sql_cutoff = use_month_ge
             ? "DATE '1998-09-01' - INTERVAL '1' DAY"
             : "DATE '1998-12-01' - INTERVAL '90' DAY";
@@ -781,9 +679,7 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
         }
     }
     if (gt_ok) {
-        // Drop empty (zero-count) groups from last_ans before comparing
-        // — the cartesian (rf, ls) generation produces 6 entries but
-        // SQL's GROUP BY only emits the 4 non-empty groups in TPC-H data.
+
         std::map<std::pair<char,char>, Q1GroupAns> non_empty;
         for (auto& [k, g] : last_ans)
             if (g.count_order > 0) non_empty[k] = g;
@@ -823,7 +719,7 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
 
     std::cout << "\n  Q1 group results (rf,ls): qty / base_price / disc_price / charge / discount / count\n";
     for (auto& [k, g] : last_ans) {
-        if (g.count_order == 0) continue;  // skip empty cartesian-product placeholder groups
+        if (g.count_order == 0) continue;
         std::cout << "  (" << k.first << "," << k.second << "): "
                   << std::fixed << std::setprecision(2)
                   << double(g.sum_qty) / 100        << "  "
@@ -851,14 +747,13 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
     std::cout << "  TOTAL                       : " << sT.median << " +/- " << sT.stddev << " ms\n";
     std::cout << "================================================================\n\n";
 
-    // CSV row
     std::string sf = q1_get_sf_label();
     std::ofstream csv("q1_results_" + sf + ".csv");
     if (csv) {
         csv << std::fixed << std::setprecision(4);
         csv << "sf,operation,"
             << "wah_median_ms,wah_stddev_ms,wah_min_ms,wah_max_ms,"
-            << "combit_median_ms,combit_stddev_ms,combit_min_ms,combit_max_ms,"
+            << "ddc_median_ms,ddc_stddev_ms,ddc_min_ms,ddc_max_ms,"
             << "croaring_median_ms,croaring_stddev_ms,croaring_min_ms,croaring_max_ms,"
             << "croaring_run_median_ms,croaring_run_stddev_ms,croaring_run_min_ms,croaring_run_max_ms,"
             << "ewah_median_ms,ewah_stddev_ms,ewah_min_ms,ewah_max_ms,"
@@ -874,7 +769,7 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
                 csv << v.median << "," << v.stddev << "," << v.min_val << "," << v.max_val << ",";
             };
             cell(bn == "WAH" ? s : z);
-            cell(bn == "ComBit" ? s : z);
+            cell(bn == "DDC" ? s : z);
             cell(bn == "CRoaring" ? s : z);
             cell(bn == "CRoaringRun" ? s : z);
             cell(bn == "EWAH" ? s : z);
@@ -889,7 +784,7 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
         std::cout << "  [CSV] q1_results_" << sf << ".csv\n";
     }
 
-    });  // end call_once
+    });
 }
 
-}  // namespace duckdb
+}

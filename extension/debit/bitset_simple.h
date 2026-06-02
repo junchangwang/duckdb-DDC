@@ -1,16 +1,5 @@
-// bitset_simple.h
-//
-// Uncompressed bitmap baseline ("no algorithm") for the TPC-H bitmap
-// benchmarks (Q1/Q5/Q6/Q10).  A `bool simd` flag selects between a
-// strictly-scalar path (BS — pure baseline) and an AVX-512 path (BSA —
-// uncompressed baseline + SIMD).  The same Bitmap type backs both so
-// memory and load costs are identical; only the OR/AND/popcount kernels
-// differ.
-//
-// File format = raw packed bits (LSB-first per byte), exactly the
-// gen_bitmap output that compress_tpch_q* consumes.  Storage is 64-byte
-// aligned and word count is rounded up to a multiple of 8 so AVX-512
-// 512-bit loads never need tail handling.
+
+
 #pragma once
 
 #include <algorithm>
@@ -27,9 +16,10 @@
 
 namespace bs {
 
+// dense bitmap
 struct Bitmap {
     uint64_t* words  = nullptr;
-    size_t    nwords = 0;        // padded to multiple of 8 (AVX-512 friendly)
+    size_t    nwords = 0;
     uint64_t  nbits  = 0;
 
     Bitmap() = default;
@@ -50,6 +40,7 @@ struct Bitmap {
     }
     ~Bitmap() { std::free(words); }
 
+    // 64B-aligned alloc
     void alloc_for_bits(uint64_t bits) {
         std::free(words);
         nbits = bits;
@@ -67,9 +58,7 @@ struct Bitmap {
     }
 };
 
-// ----------------------------------------------------------------------------
-// AVX-512 kernels (only emitted when target supports it; runtime guarded).
-// ----------------------------------------------------------------------------
+// SIMD kernels
 #if defined(__AVX512F__)
 __attribute__((target("avx512f")))
 inline void or_simd(uint64_t* __restrict a, const uint64_t* __restrict b, size_t n) {
@@ -91,9 +80,7 @@ inline void not_simd(uint64_t* __restrict a, size_t n) {
 }
 #endif
 
-// Scalar kernels: explicitly de-vectorised so BS measures a real "no
-// algorithm + no SIMD" floor (otherwise GCC would auto-vectorise these
-// trivial loops and there'd be no difference between BS and BSA).
+// scalar fallback
 __attribute__((optimize("no-tree-vectorize")))
 inline void or_scalar(uint64_t* __restrict a, const uint64_t* __restrict b, size_t n) {
     for (size_t i = 0; i < n; ++i) a[i] |= b[i];
@@ -107,9 +94,6 @@ inline void not_scalar(uint64_t* __restrict a, size_t n) {
     for (size_t i = 0; i < n; ++i) a[i] = ~a[i];
 }
 
-// ----------------------------------------------------------------------------
-// Public ops: dispatch on simd flag.
-// ----------------------------------------------------------------------------
 inline void or_inplace(Bitmap& a, const Bitmap& b, bool simd) {
     size_t n = std::min(a.nwords, b.nwords);
 #if defined(__AVX512F__)
@@ -130,9 +114,6 @@ inline void and_inplace(Bitmap& a, const Bitmap& b, bool simd) {
     and_scalar(a.words, b.words, n);
 }
 
-// In-place complement.  Flips every word then clears the bits past
-// nbits in the last logical word and zero-fills the padding tail, so
-// downstream AND / decode see only the logical [0, nbits) range.
 inline void not_inplace(Bitmap& bm, bool simd) {
 #if defined(__AVX512F__)
     if (simd) not_simd(bm.words, bm.nwords);
@@ -141,25 +122,18 @@ inline void not_inplace(Bitmap& bm, bool simd) {
     (void)simd;
     not_scalar(bm.words, bm.nwords);
 #endif
-    // Clear bits past nbits in the last logical word (everything in
-    // padding words stays 0 because nwords is a multiple of 8 and the
-    // tail words were zeroed at alloc).
+
+    // mask tail bits
     const uint64_t tail = bm.nbits & 63;
     if (tail != 0 && bm.nbits > 0) {
         const size_t last = (bm.nbits - 1) / 64;
         bm.words[last] &= (uint64_t(1) << tail) - 1;
     }
-    // Padding words [last+1 .. nwords) must stay 0 — they were 0 before
-    // the flip (alloc memset), so flipping made them all-ones.  Reset.
+
     const size_t logical_words = (bm.nbits + 63) / 64;
     for (size_t i = logical_words; i < bm.nwords; ++i) bm.words[i] = 0;
 }
 
-// Popcount over the logical [0, nbits) range.  Padding words are kept
-// zero by alloc / not_inplace tail-clear, so a flat sum over the whole
-// words[] array is correct and avoids a per-word bounds check.
-//   simd=false  → scalar __builtin_popcountll loop (BS baseline).
-//   simd=true   → AVX-512 VPOPCNTDQ-accelerated reduction (BSA).
 __attribute__((optimize("no-tree-vectorize")))
 inline size_t popcount_scalar(const uint64_t* __restrict a, size_t n) {
     size_t c = 0;
@@ -178,6 +152,7 @@ inline size_t popcount_simd(const uint64_t* __restrict a, size_t n) {
     return total;
 }
 #endif
+// popcount dispatch
 inline size_t popcount(const Bitmap& bm, bool simd) {
 #if defined(__AVX512F__) && defined(__AVX512VPOPCNTDQ__)
     if (simd) return popcount_simd(bm.words, bm.nwords);
@@ -187,13 +162,6 @@ inline size_t popcount(const Bitmap& bm, bool simd) {
     return popcount_scalar(bm.words, bm.nwords);
 }
 
-// Fused AND-popcount over `a` and `b` without materialising the
-// intersection — `popcount(a & b)` in a single streaming pass.  Mirrors
-// CRoaring's `and_cardinality`, EWAH's `logicalandcount`, Concise's
-// `logicalandCount`, and ibis::bitvector's `count(mask)`, so the BS / BSA
-// baselines compete on equal API footing with the compressed backends.
-//   simd=false → scalar __builtin_popcountll loop (BS).
-//   simd=true  → AVX-512 VPOPCNTDQ-accelerated reduction (BSA).
 __attribute__((optimize("no-tree-vectorize")))
 inline size_t and_popcount_scalar(const uint64_t* __restrict a,
                                   const uint64_t* __restrict b, size_t n) {
@@ -217,6 +185,7 @@ inline size_t and_popcount_simd(const uint64_t* __restrict a,
     return total;
 }
 #endif
+// fused AND + popcount
 inline size_t and_popcount(const Bitmap& a, const Bitmap& b, bool simd) {
     size_t n = std::min(a.nwords, b.nwords);
 #if defined(__AVX512F__) && defined(__AVX512VPOPCNTDQ__)
@@ -227,7 +196,7 @@ inline size_t and_popcount(const Bitmap& a, const Bitmap& b, bool simd) {
     return and_popcount_scalar(a.words, b.words, n);
 }
 
-// Decode set bits to row IDs (used by Q6's row-id materialisation).
+// bits -> positions
 inline void decode(const Bitmap& bm, std::vector<int64_t>& out) {
     out.clear();
     const uint64_t nb = bm.nbits;
@@ -236,11 +205,11 @@ inline void decode(const Bitmap& bm, std::vector<int64_t>& out) {
         const uint64_t base = static_cast<uint64_t>(i) * 64;
         while (w) {
             const uint64_t pos = base + __builtin_ctzll(w);
-            if (pos >= nb) return;          // safety: padding tail (always 0)
+            if (pos >= nb) return;
             out.push_back(static_cast<int64_t>(pos));
             w &= w - 1;
         }
     }
 }
 
-} // namespace bs
+}

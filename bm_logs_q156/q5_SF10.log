@@ -7,31 +7,31 @@ PRAGMA load_bitmap('orderkey');
 PRAGMA load_bitmap('suppkey');
 PRAGMA bm_tpch(5);
 [load_bitmap] orderkey: scanned 59986052 rows in 633 ms
-[load_bitmap] orderkey: built ComBit index (15000000 keys, 4448.84 MB) in 12869 ms
+[load_bitmap] orderkey: built DDC index (15000000 keys, 4448.84 MB) in 12869 ms
 [load_bitmap] suppkey: scanned 59986052 rows in 283 ms
-[load_bitmap] suppkey: built ComBit index (100000 keys, 13176 MB) in 31724 ms
+[load_bitmap] suppkey: built DDC index (100000 keys, 13176 MB) in 31724 ms
 
 ================================================================
-  TPC-H Q5 (BitEngine pattern, BMFetch) — ComBit (SF10)
+  TPC-H Q5 (BitEngine pattern, BMFetch) — DDC (SF10)
   Pre-loaded auxiliary structures: bitmap_orderkey + bitmap_suppkey
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  ComBit:  PhaseA=397.869  PhaseB=959.928  PhaseC=261.554  Total=1619.35  rows=72985  ids=366425
+  DDC:  PhaseA=397.869  PhaseB=959.928  PhaseC=261.554  Total=1619.35  rows=72985  ids=366425
 
 --- Iteration 2/5 ---
-  ComBit:  PhaseA=308.612  PhaseB=888.119  PhaseC=123.656  Total=1320.39  rows=72985  ids=366425
+  DDC:  PhaseA=308.612  PhaseB=888.119  PhaseC=123.656  Total=1320.39  rows=72985  ids=366425
 
 --- Iteration 3/5 ---
-  ComBit:  PhaseA=305.292  PhaseB=890.158  PhaseC=124.051  Total=1319.5  rows=72985  ids=366425
+  DDC:  PhaseA=305.292  PhaseB=890.158  PhaseC=124.051  Total=1319.5  rows=72985  ids=366425
 
 --- Iteration 4/5 ---
-  ComBit:  PhaseA=306.154  PhaseB=890.56  PhaseC=123.396  Total=1320.11  rows=72985  ids=366425
+  DDC:  PhaseA=306.154  PhaseB=890.56  PhaseC=123.396  Total=1320.11  rows=72985  ids=366425
 
 --- Iteration 5/5 ---
-  ComBit:  PhaseA=307.329  PhaseB=901.043  PhaseC=123.304  Total=1331.68  rows=72985  ids=366425
+  DDC:  PhaseA=307.329  PhaseB=901.043  PhaseC=123.304  Total=1331.68  rows=72985  ids=366425
 
-[OK] ComBit matches DuckDB SQL ground truth (5 nations).
+[OK] DDC matches DuckDB SQL ground truth (5 nations).
 
   Q5 Top results (revenue DESC):
   nation                     revenue
@@ -42,7 +42,7 @@ PRAGMA bm_tpch(5);
   INDONESIA           523176852.3189
 
 ================================================================
-  Q5 RESULTS — ComBit only (4 measured iter, median +/- stddev)
+  Q5 RESULTS — DDC only (4 measured iter, median +/- stddev)
 ================================================================
   PhaseA (small joins) : 306.7415 +/- 1.2496 ms
   PhaseB (bitmap OR/AND): 890.3590 +/- 5.0354 ms

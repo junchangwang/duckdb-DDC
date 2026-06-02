@@ -1,29 +1,4 @@
-// TPC-H Q5 — Local Supplier Volume Query
-// Verbatim port of teacher's BitEngine BMTPCH_Q5 pattern.
-//
-// Logic (mirrors teacher 1:1):
-//   Phase A — explicit small-table scans + semi-joins (region → nation →
-//             customer → orders → supplier).  Builds:
-//                  order_nation_map[o_orderkey] = nationkey
-//                  supp_nation_map[s_suppkey]   = nationkey
-//                  n_name_map[nationkey]        = "ASIA-CHINA" / etc.
-//
-//   Phase B — per-value indexed bitmap on lineitem (PRE-BUILT via PRAGMA
-//             load_bitmap("orderkey") / load_bitmap("suppkey")):
-//                  btv_res  = OR over rabit_orderkey->Btvs[okey] for okey
-//                              in order_nation_map.
-//                  btv_supp = OR over rabit_suppkey ->Btvs[skey] for skey
-//                              in supp_nation_map.
-//                  btv_res &= btv_supp.
-//
-//   Phase C — extract row IDs from btv_res, then BMFetch the qualifying
-//             lineitem rows (l_orderkey, l_suppkey, l_extendedprice,
-//             l_discount), aggregate sum(price * (1-disc)) per nation.
-//
-// All Phase A + B + C cost is the timed "Q5 latency".  The auxiliary
-// IndexedBitmap construction is NOT in Q5 latency (TPC-H 1.5.7 §5: pre-
-// built single-table FK / PK / date indexes are permitted auxiliary
-// structures, built outside the timed path via PRAGMA load_bitmap).
+
 
 #include "duckdb/execution/execution_context.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -38,8 +13,8 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
 
-#include "combit_adapter.h"
-#include "combit/include/combit.h"
+#include "ddc_adapter.h"
+#include "ddc/include/ddc.h"
 #include "fastbit/bitvector.h"
 #include "roaring.hh"
 #include "ewah.h"
@@ -81,15 +56,10 @@ static const int Q5_WARMUP     = bm_bench::warmup_count(1);
 
 static std::once_flag q5_once_flag;
 
-// -----------------------------------------------------------------------
-// GetRowids — extract sorted ascending row IDs from a backend's result
-// bitmap into a `vector<row_t>` consumable by DataTable::BMFetch.
-// One overload per backend bitmap type (mirror teacher's `GetRowids`
-// helper which is WAH-specific).
-// -----------------------------------------------------------------------
-static void get_rowids(const ComBit& btv, std::vector<row_t>& out) {
+// DDC -> rowids
+static void get_rowids(const DDC& btv, std::vector<row_t>& out) {
     out.clear();
-    btv.for_each_literal([&](uint32_t word_pos, uint8_t val) {
+    btv.for_each_literal([&](uint32_t word_pos, uint8_t val) {  // decode literals
         size_t rbase = static_cast<size_t>(word_pos) * 8;
         const auto& e = bm_bench::byte_lut[val];
         for (int k = 0; k < e.count; k++)
@@ -125,11 +95,6 @@ static void get_rowids(const ConciseSet<false>& btv, std::vector<row_t>& out) {
         out.push_back(static_cast<row_t>(*it));
 }
 
-// -----------------------------------------------------------------------
-// run_q5_aggregate — given a sorted ids list (= rows that pass filter),
-// BMFetch lineitem columns in 2048-row chunks and aggregate revenue per
-// nation_name.  Mirrors teacher's BMTPCH_Q5 Phase C exactly.
-// -----------------------------------------------------------------------
 static void run_q5_aggregate(
     ClientContext& ctx,
     TableCatalogEntry& lineitem_table,
@@ -141,14 +106,15 @@ static void run_q5_aggregate(
     std::map<std::string, int64_t>& ans,
     size_t& matched_rows)
 {
+    // PhaseC: fetch + aggregate
     matched_rows = 0;
     if (ids.empty()) return;
 
     vector<StorageIndex> col_ids = {
-        StorageIndex(0),  // l_orderkey
-        StorageIndex(2),  // l_suppkey
-        StorageIndex(5),  // l_extendedprice
-        StorageIndex(6),  // l_discount
+        StorageIndex(0),
+        StorageIndex(2),
+        StorageIndex(5),
+        StorageIndex(6),
     };
     vector<LogicalType> types = {
         lineitem_table.GetColumns().GetColumnTypes()[0],
@@ -162,15 +128,14 @@ static void run_q5_aggregate(
     while (cursor < ids.size()) {
         DataChunk result; result.Initialize(ctx, types);
         ColumnFetchState column_fetch_state;
-        // Cast away constness: BMFetch needs non-const Vector pointing into
-        // ids[cursor].  ids stays unchanged.
+
         data_ptr_t row_ids_data = (data_ptr_t)&ids[cursor];
         Vector row_ids_vec(LogicalType::ROW_TYPE, row_ids_data);
         idx_t fetch_count = 2048;
         if (cursor + fetch_count > ids.size())
             fetch_count = ids.size() - cursor;
 
-        lineitem_table.GetStorage().BMFetch(
+        lineitem_table.GetStorage().BMFetch(  // batched fetch
             tx, result, col_ids, row_ids_vec, fetch_count,
             column_fetch_state, num_idlist);
         cursor += fetch_count;
@@ -187,15 +152,13 @@ static void run_q5_aggregate(
                 on_it->second != sn_it->second) continue;
             auto nm = n_name_map.find(on_it->second);
             if (nm == n_name_map.end()) continue;
-            ans[nm->second] += pr[i] * (100 - dc[i]);
+            ans[nm->second] += pr[i] * (100 - dc[i]);  // revenue group-by
             matched_rows++;
         }
     }
 }
 
-// =========================================================================
-// BMTPCH_Q5 — main entry
-// =========================================================================
+// Q5 entry
 void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &op)
 {
     std::call_once(q5_once_flag, [&]() {
@@ -215,7 +178,6 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
     std::cout << "  Pre-loaded auxiliary structures: bitmap_orderkey + bitmap_suppkey" << std::endl;
     std::cout << "================================================================" << std::endl;
 
-    // ----- Pull pre-built indexed bitmaps from client_context -----
     auto* idx_okey_base = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_orderkey);
     auto* idx_skey_base = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_suppkey);
     if (!idx_okey_base || !idx_skey_base) {
@@ -224,9 +186,6 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
         return;
     }
 
-    // -----------------------------------------------------------------------
-    // Iterations begin here.  All Phase A + B + C are inside the loop.
-    // -----------------------------------------------------------------------
     std::vector<double> tA_t, tB_t, tC_t, tot_t;
     std::map<std::string, int64_t> last_ans;
     size_t last_rows = 0;
@@ -239,9 +198,9 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
 
         auto t_total_start = clk::now();
 
-        // ===== Phase A: small-table semi-joins =====
+        // PhaseA: region -> nation -> customer -> orders/supplier joins
         std::unordered_set<int32_t> r_regionkey_set;
-        {
+        {  // region = ASIA
             auto& tx = DuckTransaction::Get(context.client, region_table.catalog);
             TableScanState ss;
             vector<StorageIndex> col_ids = {StorageIndex(0), StorageIndex(1)};
@@ -311,8 +270,8 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
             }
         }
 
-        constexpr int32_t Q5_DATE_LO = 8766;   // 1994-01-01 epoch
-        constexpr int32_t Q5_DATE_HI = 9131;   // 1995-01-01 epoch (excl)
+        constexpr int32_t Q5_DATE_LO = 8766;
+        constexpr int32_t Q5_DATE_HI = 9131;
 
         std::unordered_map<int64_t, int32_t> order_nation_map;
         {
@@ -333,7 +292,7 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
                 auto ckey  = FlatVector::GetData<int64_t>(chunk.data[1]);
                 auto odate = FlatVector::GetData<int32_t>(chunk.data[2]);
                 for (idx_t i = 0; i < chunk.size(); i++) {
-                    if (odate[i] < Q5_DATE_LO || odate[i] >= Q5_DATE_HI) continue;
+                    if (odate[i] < Q5_DATE_LO || odate[i] >= Q5_DATE_HI) continue;  // date filter
                     auto it = customer_nation_map.find(ckey[i]);
                     if (it != customer_nation_map.end())
                         order_nation_map[okey[i]] = it->second;
@@ -365,13 +324,11 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
 
         auto t_phaseA_end = clk::now();
 
-        // Skip Phase B/C if no qualifying orderkeys/suppkeys
         if (order_nation_map.empty() || supp_nation_map.empty()) {
             std::cout << "  (no qualifying rows)" << std::endl;
             continue;
         }
 
-        // ===== Phase B + C: backend-specific bitmap multi-OR + AND + BMFetch =====
         std::map<std::string, int64_t> ans;
         size_t matched = 0;
         size_t num_rows_lineitem = idx_okey_base->num_rows();
@@ -379,55 +336,33 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
 
         std::vector<row_t> ids;
 
-        // ============================================================
-        // Teacher's BitEngine BMTPCH_Q5 logic + apples-to-apples
-        // multi-key OR per backend's natural primitive (Plan A):
-        //
-        //   ComBit  → SparseComBit::or_many (sca scatter-by-segment)
-        //   CR      → pairwise `|=` (no run-opt → no fastunion design)
-        //   CRR     → roaring::Roaring::fastunion (run-opt's natural k-way)
-        //   WAH     → copy + decompress + pairwise `|=` (FastBit has no
-        //             k-way primitive — this IS teacher's verbatim Q5)
-        //   EW      → ewah::fast_logicalor (EWAH's natural k-way)
-        //   CON     → ConciseSet::fast_logicalor (Concise's natural k-way)
-        //
-        // Final &= between btv_or and btv_supp is shared by all backends
-        // (in-place dense AND, the same shape as teacher's `&=`).
-        // ============================================================
         std::vector<int64_t> okeys, skeys;
         okeys.reserve(order_nation_map.size());
         skeys.reserve(supp_nation_map.size());
         for (auto& [k, _] : order_nation_map) okeys.push_back(k);
         for (auto& [k, _] : supp_nation_map ) skeys.push_back(k);
 
-        // ---- ComBit (scatter-by-segment or_many — sca optimization) ----
-        if (auto* cb_okey = dynamic_cast<bm_index::IndexedComBit*>(idx_okey_base)) {
-            auto* cb_skey = dynamic_cast<bm_index::IndexedComBit*>(idx_skey_base);
-            if (!cb_skey) { std::cerr << "[Q5] ERROR: orderkey is ComBit, suppkey isn't.\n"; return; }
-            ComBit btv_or   = cb_okey->or_many(okeys);
-            ComBit btv_supp = cb_skey->or_many(skeys);
-            btv_or &= btv_supp;
+        // PhaseB: OR keys per side, then AND
+        if (auto* cb_okey = dynamic_cast<bm_index::IndexedDDC*>(idx_okey_base)) {
+            auto* cb_skey = dynamic_cast<bm_index::IndexedDDC*>(idx_skey_base);
+            if (!cb_skey) { std::cerr << "[Q5] ERROR: orderkey is DDC, suppkey isn't.\n"; return; }
+            DDC btv_or   = cb_okey->or_many(okeys);
+            DDC btv_supp = cb_skey->or_many(skeys);
+            btv_or &= btv_supp;  // AND kernel
             get_rowids(btv_or, ids);
         }
-        // ---- CR (pairwise |=) / CRR (fastunion) ----
+
         else if (auto* cr_okey = dynamic_cast<bm_index::IndexedCRoaring*>(idx_okey_base)) {
             auto* cr_skey = dynamic_cast<bm_index::IndexedCRoaring*>(idx_skey_base);
             if (!cr_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
             roaring::Roaring btv_or, btv_supp;
-            // Both CR and CRR use Roaring's fastunion (k-way priority-queue
-            // merge — Roaring's intended k-way OR primitive, available
-            // independent of runOptimize).  CR vs CRR delta is now purely
-            // the run-encoding effect on input/output containers.
+
             btv_or   = cr_okey->or_many(okeys);
             btv_supp = cr_skey->or_many(skeys);
             btv_or &= btv_supp;
             get_rowids(btv_or, ids);
         }
-        // ---- WAH (teacher's copy+decompress+|= pattern via or_many) ----
-        // IndexedWAH::or_many encapsulates the verbatim teacher BMTPCH_Q5
-        // pattern; calling it here keeps Q dispatch symmetric with the
-        // other backends (one or_many call per key set) instead of
-        // hand-rolling the loop.
+
         else if (auto* wah_okey = dynamic_cast<bm_index::IndexedWAH*>(idx_okey_base)) {
             auto* wah_skey = dynamic_cast<bm_index::IndexedWAH*>(idx_skey_base);
             if (!wah_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
@@ -436,7 +371,7 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
             btv_res &= btv_suppkey;
             get_rowids(btv_res, ids);
         }
-        // ---- EWAH — fast_logicalor (library k-way primitive) ----
+
         else if (auto* ew_okey = dynamic_cast<bm_index::IndexedEWAH*>(idx_okey_base)) {
             auto* ew_skey = dynamic_cast<bm_index::IndexedEWAH*>(idx_skey_base);
             if (!ew_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
@@ -446,7 +381,7 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
             btv_or.logicaland(btv_supp, filt);
             get_rowids(filt, ids);
         }
-        // ---- Concise — fast_logicalor (library k-way primitive) ----
+
         else if (auto* con_okey = dynamic_cast<bm_index::IndexedConcise*>(idx_okey_base)) {
             auto* con_skey = dynamic_cast<bm_index::IndexedConcise*>(idx_skey_base);
             if (!con_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
@@ -462,7 +397,7 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
 
         auto t_phaseB_end = clk::now();
 
-        run_q5_aggregate(context.client, lineitem_table, lineitem_tx, ids,
+        run_q5_aggregate(context.client, lineitem_table, lineitem_tx, ids,  // PhaseC
                          order_nation_map, supp_nation_map, n_name_map,
                          ans, matched);
 
@@ -484,7 +419,7 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
         }
     }
 
-    // ----- Validate vs DuckDB SQL -----
+    // SQL ground-truth check
     bool gt_ok = false;
     std::map<std::string, double> gt_revenue;
     {
@@ -527,7 +462,6 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
             std::cerr << "\n[FAIL] mismatch vs SQL ground truth!\n";
     }
 
-    // ----- Print final results -----
     std::vector<std::pair<int64_t, std::string>> rows;
     for (auto& [name, rev] : last_ans) rows.push_back({rev, name});
     std::sort(rows.rbegin(), rows.rend());
@@ -555,14 +489,14 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
     std::cout << "  rows: " << last_rows << "\n";
     std::cout << "================================================================\n\n";
 
-    // CSV row (Schema-A: 5 phases × 8 backends; only the active backend has data)
+    // CSV emit
     std::string sf = q5_get_sf_label();
     std::ofstream csv("q5_results_" + sf + ".csv");
     if (csv) {
         csv << std::fixed << std::setprecision(4);
         csv << "sf,operation,"
             << "wah_median_ms,wah_stddev_ms,wah_min_ms,wah_max_ms,"
-            << "combit_median_ms,combit_stddev_ms,combit_min_ms,combit_max_ms,"
+            << "ddc_median_ms,ddc_stddev_ms,ddc_min_ms,ddc_max_ms,"
             << "croaring_median_ms,croaring_stddev_ms,croaring_min_ms,croaring_max_ms,"
             << "croaring_run_median_ms,croaring_run_stddev_ms,croaring_run_min_ms,croaring_run_max_ms,"
             << "ewah_median_ms,ewah_stddev_ms,ewah_min_ms,ewah_max_ms,"
@@ -573,18 +507,18 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
         bm_bench::Stats z{0,0,0,0};
         std::string bn = idx_okey_base->backend_name();
         auto put = [&](const std::string& op, bm_bench::Stats s) {
-            // Place stats into the column matching the active backend; others 0.
+
             csv << sf << "," << op << ",";
             auto cell = [&](bm_bench::Stats v) {
                 csv << v.median << "," << v.stddev << "," << v.min_val << "," << v.max_val << ",";
             };
-            // wah, combit, croaring, croaring_run, ewah, bs, bsa, concise
+
             cell(bn == "WAH" ? s : z);
-            cell(bn == "ComBit" ? s : z);
+            cell(bn == "DDC" ? s : z);
             cell(bn == "CRoaring" ? s : z);
             cell(bn == "CRoaringRun" ? s : z);
             cell(bn == "EWAH" ? s : z);
-            cell(z); cell(z);  // BS, BSA — N/A for Q5
+            cell(z); cell(z);
             cell(bn == "Concise" ? s : z);
             csv << "0,0,0,0,0,0,0\n";
         };
@@ -595,7 +529,7 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
         std::cout << "  [CSV] q5_results_" << sf << ".csv\n";
     }
 
-    });  // end call_once
+    });
 }
 
-} // namespace duckdb
+}

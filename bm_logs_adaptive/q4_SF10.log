@@ -2,7 +2,7 @@
 # cmd=/home/lichenhang/lee/thesis/check/lee/duckdb-dev/build/release/duckdb /home/lichenhang/lee/thesis/check/lee/duckdb-dev/tpch_sf10.db -c PRAGMA bm_tpch(4);
 
 ================================================================
-  TPC-H Q4 Benchmark — ComBit vs WAH vs CRoaring vs EWAH (SF10)
+  TPC-H Q4 Benchmark — DDC vs WAH vs CRoaring vs EWAH (SF10)
   OR orderdate days 547..638 (92 bitmaps) -> AND late_lineitem -> per-priority popcount
   TPC-H params: orderdate range [1993-07-01, 1993-10-01), EXISTS l_commitdate < l_receiptdate
   Iterations: 10 (first 2 = warm-up)
@@ -12,7 +12,7 @@
 
 [Load] Loading bitmaps (mode=ALL)...
   WAH load:      16.662 ms
-  ComBit load:   287.603 ms
+  DDC load:   287.603 ms
   CRoaring load: 10.612 ms
   CRR load:      11.424 ms
   EWAH load:     11.672 ms
@@ -122,7 +122,7 @@
 [Baseline] DuckDB native SQL Q4  (single run: 1216.71 ms)
 [OK] all active backends match DuckDB SQL ground truth (per-priority counts exact).
 
-  Q4 per-priority counts (source=ComBit):
+  Q4 per-priority counts (source=DDC):
   o_orderpriority        order_count
   1-URGENT                    105214
   2-HIGH                      104821
@@ -166,4 +166,4 @@
 │ 4-NOT SPECIFIED │      105422 │
 │ 5-LOW           │      105356 │
 └─────────────────┴─────────────┘
-  [Breakdown] ComBit   L1=10.33 MiB  L2=1.39 MiB  L3=1.44 MiB  total=13.17 MiB
+  [Breakdown] DDC   L1=10.33 MiB  L2=1.39 MiB  L3=1.44 MiB  total=13.17 MiB

@@ -7,9 +7,9 @@ PRAGMA load_bitmap('orderkey');
 PRAGMA load_bitmap('returnflag');
 PRAGMA bm_tpch(10);
 [load_bitmap] orderkey: scanned 59986052 rows in 645 ms
-[load_bitmap] orderkey: built ComBit index (15000000 keys, 1679.94 MB) in 4903 ms
+[load_bitmap] orderkey: built DDC index (15000000 keys, 1679.94 MB) in 4903 ms
 [load_bitmap] returnflag: scanned 59986052 rows in 521 ms
-[load_bitmap] returnflag: built ComBit index (3 keys, 29.7766 MB) in 2329 ms
+[load_bitmap] returnflag: built DDC index (3 keys, 29.7766 MB) in 2329 ms
 
 ================================================================
   TPC-H Q10 (BitEngine pattern, runtime semi-joins)
@@ -17,24 +17,24 @@ PRAGMA bm_tpch(10);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  ComBit:  PhaseA(orders)=209.321  PhaseB(okey_OR)=80.309  PhaseC(rf_OR)=6.839  PhaseD(AND+rids)=22.407  PhaseE(BMFetch+agg)=374.852  PhaseF(top20)=7.69  Total=701.42  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  DDC:  PhaseA(orders)=209.321  PhaseB(okey_OR)=80.309  PhaseC(rf_OR)=6.839  PhaseD(AND+rids)=22.407  PhaseE(BMFetch+agg)=374.852  PhaseF(top20)=7.69  Total=701.42  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 2/5 ---
-  ComBit:  PhaseA(orders)=105.655  PhaseB(okey_OR)=75.461  PhaseC(rf_OR)=2.594  PhaseD(AND+rids)=18.586  PhaseE(BMFetch+agg)=201.642  PhaseF(top20)=7.249  Total=411.19  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  DDC:  PhaseA(orders)=105.655  PhaseB(okey_OR)=75.461  PhaseC(rf_OR)=2.594  PhaseD(AND+rids)=18.586  PhaseE(BMFetch+agg)=201.642  PhaseF(top20)=7.249  Total=411.19  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 3/5 ---
-  ComBit:  PhaseA(orders)=93.216  PhaseB(okey_OR)=74.325  PhaseC(rf_OR)=3.296  PhaseD(AND+rids)=21.791  PhaseE(BMFetch+agg)=201.942  PhaseF(top20)=7.28  Total=401.852  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  DDC:  PhaseA(orders)=93.216  PhaseB(okey_OR)=74.325  PhaseC(rf_OR)=3.296  PhaseD(AND+rids)=21.791  PhaseE(BMFetch+agg)=201.942  PhaseF(top20)=7.28  Total=401.852  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 4/5 ---
-  ComBit:  PhaseA(orders)=92.907  PhaseB(okey_OR)=73.879  PhaseC(rf_OR)=3.239  PhaseD(AND+rids)=21.746  PhaseE(BMFetch+agg)=200.821  PhaseF(top20)=7.298  Total=399.893  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  DDC:  PhaseA(orders)=92.907  PhaseB(okey_OR)=73.879  PhaseC(rf_OR)=3.239  PhaseD(AND+rids)=21.746  PhaseE(BMFetch+agg)=200.821  PhaseF(top20)=7.298  Total=399.893  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
 --- Iteration 5/5 ---
-  ComBit:  PhaseA(orders)=92.92  PhaseB(okey_OR)=74.43  PhaseC(rf_OR)=3.334  PhaseD(AND+rids)=21.902  PhaseE(BMFetch+agg)=205.133  PhaseF(top20)=7.411  Total=405.133  rows=1147084  custkeys=381105  top1=1237537/8849896657
+  DDC:  PhaseA(orders)=92.92  PhaseB(okey_OR)=74.43  PhaseC(rf_OR)=3.334  PhaseD(AND+rids)=21.902  PhaseE(BMFetch+agg)=205.133  PhaseF(top20)=7.411  Total=405.133  rows=1147084  custkeys=381105  top1=1237537/8849896657
 
-[OK] ComBit matches DuckDB SQL ground truth (top-1 custkey=1237537 revenue=884990).
+[OK] DDC matches DuckDB SQL ground truth (top-1 custkey=1237537 revenue=884990).
 
 ================================================================
-  Q10 RESULTS — ComBit (4 measured iter, median +/- stddev)
+  Q10 RESULTS — DDC (4 measured iter, median +/- stddev)
 ================================================================
   PhaseA (orders scan)       : 93.068 +/- 5.47496 ms
   PhaseB (orderkey OR)       : 74.3775 +/- 0.579317 ms

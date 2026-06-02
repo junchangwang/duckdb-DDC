@@ -1,50 +1,4 @@
-// TPC-H Q8 — National Market Share (spec v3.0.1 §2.4.8)
-//
-//   SELECT o_year,
-//          SUM(CASE WHEN nation = 'BRAZIL' THEN volume ELSE 0 END) / SUM(volume)
-//            AS mkt_share
-//   FROM (
-//       SELECT EXTRACT(YEAR FROM o_orderdate) AS o_year,
-//              l_extendedprice * (1 - l_discount) AS volume,
-//              n2.n_name AS nation
-//       FROM part, supplier, lineitem, orders, customer,
-//            nation n1, region, nation n2
-//       WHERE p_partkey = l_partkey
-//         AND s_suppkey = l_suppkey
-//         AND l_orderkey = o_orderkey
-//         AND o_custkey  = c_custkey
-//         AND c_nationkey = n1.n_nationkey
-//         AND n1.n_regionkey = r_regionkey
-//         AND r_name = 'AMERICA'
-//         AND s_nationkey = n2.n_nationkey
-//         AND o_orderdate BETWEEN DATE '1995-01-01' AND DATE '1996-12-31'
-//         AND p_type = 'ECONOMY ANODIZED STEEL'
-//   ) AS all_nations
-//   GROUP BY o_year
-//   ORDER BY o_year;
-//
-// TPC-H 1.5.7 compliance: bitmap_partkey references l_partkey (FK,
-// strict-compliant); bitmap_orderkey references l_orderkey (FK,
-// strict-compliant).  All multi-table joins (region/nation/customer/
-// supplier/orders) and the o_orderdate range are evaluated at
-// query-time on fresh table scans — there is no pre-built
-// lineitem×orders×part bitmap (the prior in_america_part_match aux
-// joined three tables and violated 1.5.7 §5).
-//
-// Pipeline:
-//   Phase A: build america_customers (region→nation→customer chain) +
-//            brazil_suppliers (nation BRAZIL → supplier set) +
-//            part_set (p_type='ECONOMY ANODIZED STEEL').
-//   Phase B: scan orders → orderdate IN [1995,1996] AND custkey ∈
-//            america_customers → orderkey_year map.
-//   Phase C: bitmap_orderkey OR (orderkey_year.keys) → orderkey_filter.
-//   Phase D: bitmap_partkey OR (part_set) → part_filter.
-//   Phase E: orderkey_filter & part_filter → mask; get_rowids.
-//   Phase F: BMFetch lineitem(orderkey, partkey, suppkey, extprice,
-//            discount); per-row look up year via orderkey, accumulate
-//            volume per year (denominator) and brazil-only volume per
-//            year (numerator).
-//   Phase G: compute mkt_share = numer / denom per year.
+
 
 #include "duckdb/execution/execution_context.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -57,8 +11,8 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
 
-#include "combit_adapter.h"
-#include "combit/include/combit.h"
+#include "ddc_adapter.h"
+#include "ddc/include/ddc.h"
 #include "fastbit/bitvector.h"
 #include "roaring.hh"
 #include "ewah.h"
@@ -91,19 +45,14 @@ static const int Q8_ITERATIONS = bm_bench::iter_count(5);
 static const int Q8_WARMUP     = bm_bench::warmup_count(1);
 static std::once_flag q8_once_flag_new;
 
-// 1995-01-01 / 1997-01-01 epoch days.  Q8 spec is BETWEEN 1995-01-01
-// AND 1996-12-31 inclusive; we compare with `< Q8_DATE_HI`.
-static constexpr int64_t Q8_DATE_LO = 9131;   // 1995-01-01
-static constexpr int64_t Q8_DATE_HI = 9862;   // 1997-01-01
+static constexpr int64_t Q8_DATE_LO = 9131;
+static constexpr int64_t Q8_DATE_HI = 9862;
 
 static constexpr int Q8_YEAR_LO = 1995;
 static constexpr int Q8_YEAR_HI = 1996;
 
-// Convert an epoch-day to its calendar year — copy of the closed-form
-// used in debit_extension.cpp.  Hand-rolled here to avoid pulling in
-// the full epoch_day_to_year helper.
 static inline int q8_day_to_year(int32_t day) {
-    if (day < 8401)  return 1992;   // 1992-01-01..1992-12-31
+    if (day < 8401)  return 1992;
     if (day < 8766)  return 1993;
     if (day < 9131)  return 1994;
     if (day < 9496)  return 1995;
@@ -112,10 +61,12 @@ static inline int q8_day_to_year(int32_t day) {
     return 1998;
 }
 
+// rowid extract per backend
 template <typename Btv>
 static void q8_get_rowids(const Btv& b, std::vector<row_t>* out);
 template <>
-void q8_get_rowids<ComBit>(const ComBit& b, std::vector<row_t>* out) {
+void q8_get_rowids<DDC>(const DDC& b, std::vector<row_t>* out) {
+    // DDC literal walk
     out->clear();
     b.for_each_literal([&](uint32_t word_pos, uint8_t val) {
         size_t rbase = static_cast<size_t>(word_pos) * 8;
@@ -182,11 +133,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         auto t0 = clk::now();
         auto& lineitem_tx = DuckTransaction::Get(context.client, lineitem_table.catalog);
 
-        // ===== Phase A: build america_customers + brazil_suppliers + part_set =====
-        // NOTE: region/nation key columns are INTEGER (int32_t) in the
-        // TPC-H schema, NOT BIGINT.  Reading them as int64 produces
-        // garbage (two int32 values smushed into 64 bits).
-        // A1: region scan -> AMERICA region key
+        // PhaseA: side tables
         int32_t america_regionkey = -1;
         {
             auto& tx = DuckTransaction::Get(context.client, region_table.catalog);
@@ -212,7 +159,6 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
             }
         }
 
-        // A2: nation scan -> america_nationkeys + brazil_nationkey
         std::unordered_set<int32_t> america_nationkeys;
         int32_t brazil_nationkey = -1;
         {
@@ -241,7 +187,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
             }
         }
 
-        // A3: customer scan -> america_customers (custkeys whose nation in AMERICA region)
+        // customer semi-join
         std::unordered_set<int64_t> america_customers;
         america_customers.reserve(300000);
         {
@@ -258,7 +204,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
                 customer_table.GetStorage().Scan(tx, chunk, ss);
                 if (chunk.size() == 0) break;
                 auto ck = FlatVector::GetData<int64_t>(chunk.data[0]);
-                auto cn = FlatVector::GetData<int32_t>(chunk.data[1]);  // INTEGER, not BIGINT
+                auto cn = FlatVector::GetData<int32_t>(chunk.data[1]);
                 for (idx_t i = 0; i < chunk.size(); i++) {
                     if (america_nationkeys.count(cn[i]))
                         america_customers.insert(ck[i]);
@@ -266,7 +212,6 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
             }
         }
 
-        // A4: supplier scan -> suppkey -> nationkey map (for BRAZIL check at agg time)
         std::unordered_map<int64_t, int32_t> supp_to_nation;
         supp_to_nation.reserve(150000);
         {
@@ -283,13 +228,13 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
                 supplier_table.GetStorage().Scan(tx, chunk, ss);
                 if (chunk.size() == 0) break;
                 auto sk = FlatVector::GetData<int64_t>(chunk.data[0]);
-                auto sn = FlatVector::GetData<int32_t>(chunk.data[1]);  // INTEGER
+                auto sn = FlatVector::GetData<int32_t>(chunk.data[1]);
                 for (idx_t i = 0; i < chunk.size(); i++)
                     supp_to_nation.emplace(sk[i], sn[i]);
             }
         }
 
-        // A5: part scan -> part_set where p_type = 'ECONOMY ANODIZED STEEL'
+        // part filter (p_type)
         std::vector<int64_t> part_set;
         part_set.reserve(2000);
         {
@@ -320,8 +265,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         }
         auto t_a = clk::now();
 
-        // ===== Phase B: orders scan -> orderkey -> year map =====
-        // Filter o_orderdate ∈ [1995-01-01, 1997-01-01) AND custkey ∈ america.
+        // PhaseB: orders scan + date filter
         std::unordered_map<int64_t, int> okey_to_year;
         okey_to_year.reserve(2000000);
         std::vector<int64_t> matched_okeys;
@@ -351,24 +295,23 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         }
         auto t_b = clk::now();
 
-        // ===== Phase C: orderkey OR + Phase D: partkey OR + Phase E: AND + get_rowids =====
         size_t num_rows = idx_okey->num_rows();
         std::vector<row_t> ids;
 
-        // Plan A — each backend uses its natural multi-key OR primitive.
+        // PhaseCDE: OR-many + AND per backend
         clk::time_point t_cd;
-        if (auto* cb_okey = dynamic_cast<bm_index::IndexedComBit*>(idx_okey)) {
-            auto* cb_pk = dynamic_cast<bm_index::IndexedComBit*>(idx_pk);
+        if (auto* cb_okey = dynamic_cast<bm_index::IndexedDDC*>(idx_okey)) {
+            auto* cb_pk = dynamic_cast<bm_index::IndexedDDC*>(idx_pk);
             if (!cb_pk) { std::cerr << "[Q8] type mismatch.\n"; return; }
-            ComBit okey_filter = cb_okey->or_many(matched_okeys);  // ComBit: sca
-            ComBit part_filter = cb_pk->or_many(part_set);
-            okey_filter &= part_filter;
+            DDC okey_filter = cb_okey->or_many(matched_okeys);
+            DDC part_filter = cb_pk->or_many(part_set);
+            okey_filter &= part_filter;  // AND kernel
             q8_get_rowids(okey_filter, &ids);
             t_cd = clk::now();
         } else if (auto* cr_okey = dynamic_cast<bm_index::IndexedCRoaring*>(idx_okey)) {
             auto* cr_pk = dynamic_cast<bm_index::IndexedCRoaring*>(idx_pk);
             if (!cr_pk) { std::cerr << "[Q8] type mismatch.\n"; return; }
-            // Both CR & CRR use Roaring fastunion (k-way primitive).
+
             roaring::Roaring okey_filter = cr_okey->or_many(matched_okeys);
             roaring::Roaring part_filter = cr_pk->or_many(part_set);
             okey_filter &= part_filter;
@@ -377,7 +320,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         } else if (auto* wah_okey = dynamic_cast<bm_index::IndexedWAH*>(idx_okey)) {
             auto* wah_pk = dynamic_cast<bm_index::IndexedWAH*>(idx_pk);
             if (!wah_pk) { std::cerr << "[Q8] type mismatch.\n"; return; }
-            ibis::bitvector okey_filter = wah_okey->or_many(matched_okeys);  // WAH: copy+decompress+|=
+            ibis::bitvector okey_filter = wah_okey->or_many(matched_okeys);
             ibis::bitvector part_filter = wah_pk->or_many(part_set);
             okey_filter &= part_filter;
             q8_get_rowids(okey_filter, &ids);
@@ -385,7 +328,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         } else if (auto* ew_okey = dynamic_cast<bm_index::IndexedEWAH*>(idx_okey)) {
             auto* ew_pk = dynamic_cast<bm_index::IndexedEWAH*>(idx_pk);
             if (!ew_pk) { std::cerr << "[Q8] type mismatch.\n"; return; }
-            ewah::EWAHBoolArray<uint64_t> okey_filter = ew_okey->or_many(matched_okeys);  // EW: fast_logicalor
+            ewah::EWAHBoolArray<uint64_t> okey_filter = ew_okey->or_many(matched_okeys);
             ewah::EWAHBoolArray<uint64_t> part_filter = ew_pk->or_many(part_set);
             ewah::EWAHBoolArray<uint64_t> tmp;
             okey_filter.logicaland(part_filter, tmp);
@@ -394,7 +337,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         } else if (auto* con_okey = dynamic_cast<bm_index::IndexedConcise*>(idx_okey)) {
             auto* con_pk = dynamic_cast<bm_index::IndexedConcise*>(idx_pk);
             if (!con_pk) { std::cerr << "[Q8] type mismatch.\n"; return; }
-            ConciseSet<false> okey_filter = con_okey->or_many(matched_okeys);  // CON: fast_logicalor
+            ConciseSet<false> okey_filter = con_okey->or_many(matched_okeys);
             ConciseSet<false> part_filter = con_pk->or_many(part_set);
             ConciseSet<false> result = okey_filter.logicaland(part_filter);
             q8_get_rowids(result, &ids);
@@ -404,9 +347,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
             return;
         }
 
-        // ===== Phase F: BMFetch lineitem + per-year volume + per-year brazil volume =====
-        // l_orderkey (0), l_partkey (1) [unused — already filtered],
-        // l_suppkey (2), l_extendedprice (5), l_discount (6).
+        // PhaseF: BMFetch + aggregate
         std::unordered_map<int, int64_t> volume_by_year;
         std::unordered_map<int, int64_t> brazil_by_year;
         if (!ids.empty()) {
@@ -424,6 +365,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
                 Vector row_ids_vec(LogicalType::ROW_TYPE, row_ids_data);
                 idx_t fetch_count = 2048;
                 if (cursor + fetch_count > ids.size()) fetch_count = ids.size() - cursor;
+                // fetch lineitem cols
                 lineitem_table.GetStorage().BMFetch(lineitem_tx, chunk, col_ids, row_ids_vec,
                                                     fetch_count, column_fetch_state, num_idlist);
                 cursor += fetch_count;
@@ -444,7 +386,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         }
         auto t_e = clk::now();
 
-        // ===== Phase G: compute mkt_share per year =====
+        // PhaseG: market share
         double share_1995 = 0, share_1996 = 0;
         {
             auto d95 = volume_by_year[1995];
@@ -482,6 +424,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         last_share_1996 = share_1996;
     }
 
+    // SQL ground-truth check
     {
         Connection con(*context.client.db);
         auto r = con.Query(
@@ -542,13 +485,14 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
     std::cout << "  TOTAL                        : " << sT.median << " +/- " << sT.stddev << " ms\n";
     std::cout << "================================================================\n\n";
 
+    // emit CSV
     std::string sf = bm_bench::sf_label();
     std::ofstream csv("q8_results_" + sf + ".csv");
     if (csv) {
         csv << std::fixed << std::setprecision(4);
         csv << "sf,operation,"
             << "wah_median_ms,wah_stddev_ms,wah_min_ms,wah_max_ms,"
-            << "combit_median_ms,combit_stddev_ms,combit_min_ms,combit_max_ms,"
+            << "ddc_median_ms,ddc_stddev_ms,ddc_min_ms,ddc_max_ms,"
             << "croaring_median_ms,croaring_stddev_ms,croaring_min_ms,croaring_max_ms,"
             << "croaring_run_median_ms,croaring_run_stddev_ms,croaring_run_min_ms,croaring_run_max_ms,"
             << "ewah_median_ms,ewah_stddev_ms,ewah_min_ms,ewah_max_ms,"
@@ -564,7 +508,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
                 csv << v.median << "," << v.stddev << "," << v.min_val << "," << v.max_val << ",";
             };
             cell(bn == "WAH" ? s : z);
-            cell(bn == "ComBit" ? s : z);
+            cell(bn == "DDC" ? s : z);
             cell(bn == "CRoaring" ? s : z);
             cell(bn == "CRoaringRun" ? s : z);
             cell(bn == "EWAH" ? s : z);
@@ -581,7 +525,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         std::cout << "  [CSV] q8_results_" << sf << ".csv\n";
     }
 
-    });  // end call_once
+    });
 }
 
-}  // namespace duckdb
+}

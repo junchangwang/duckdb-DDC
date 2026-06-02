@@ -12,7 +12,7 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #endif
 
-#define DECLARER /* EXTERN references get defined here */
+#define DECLARER
 
 #include <cassert>
 #include <cmath>

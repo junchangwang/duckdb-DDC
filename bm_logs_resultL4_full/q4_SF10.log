@@ -6,7 +6,7 @@
 PRAGMA load_bitmap('orderkey');
 PRAGMA bm_tpch(4);
 [load_bitmap] orderkey: scanned 59986052 rows in 653 ms
-[load_bitmap] orderkey: built ComBit index (15000000 keys, 1679.94 MB) in 4953 ms
+[load_bitmap] orderkey: built DDC index (15000000 keys, 1679.94 MB) in 4953 ms
 
 ================================================================
   TPC-H Q4 (BitEngine pattern, runtime EXISTS via BMFetch)
@@ -14,24 +14,24 @@ PRAGMA bm_tpch(4);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  ComBit:  PhaseA(orders_scan)=324.897  PhaseB(orderkey_OR+ids)=122.416  PhaseC(BMFetch+EXISTS)=420.977  PhaseD(count_by_priority)=63.137  Total=931.429  rows=2294856  groups=5
+  DDC:  PhaseA(orders_scan)=324.897  PhaseB(orderkey_OR+ids)=122.416  PhaseC(BMFetch+EXISTS)=420.977  PhaseD(count_by_priority)=63.137  Total=931.429  rows=2294856  groups=5
 
 --- Iteration 2/5 ---
-  ComBit:  PhaseA(orders_scan)=249.447  PhaseB(orderkey_OR+ids)=117.105  PhaseC(BMFetch+EXISTS)=236.523  PhaseD(count_by_priority)=60.119  Total=663.195  rows=2294856  groups=5
+  DDC:  PhaseA(orders_scan)=249.447  PhaseB(orderkey_OR+ids)=117.105  PhaseC(BMFetch+EXISTS)=236.523  PhaseD(count_by_priority)=60.119  Total=663.195  rows=2294856  groups=5
 
 --- Iteration 3/5 ---
-  ComBit:  PhaseA(orders_scan)=256.819  PhaseB(orderkey_OR+ids)=116.802  PhaseC(BMFetch+EXISTS)=236.624  PhaseD(count_by_priority)=62.049  Total=672.296  rows=2294856  groups=5
+  DDC:  PhaseA(orders_scan)=256.819  PhaseB(orderkey_OR+ids)=116.802  PhaseC(BMFetch+EXISTS)=236.624  PhaseD(count_by_priority)=62.049  Total=672.296  rows=2294856  groups=5
 
 --- Iteration 4/5 ---
-  ComBit:  PhaseA(orders_scan)=251.243  PhaseB(orderkey_OR+ids)=119.436  PhaseC(BMFetch+EXISTS)=237.173  PhaseD(count_by_priority)=61.044  Total=668.897  rows=2294856  groups=5
+  DDC:  PhaseA(orders_scan)=251.243  PhaseB(orderkey_OR+ids)=119.436  PhaseC(BMFetch+EXISTS)=237.173  PhaseD(count_by_priority)=61.044  Total=668.897  rows=2294856  groups=5
 
 --- Iteration 5/5 ---
-  ComBit:  PhaseA(orders_scan)=250.792  PhaseB(orderkey_OR+ids)=118.485  PhaseC(BMFetch+EXISTS)=237.378  PhaseD(count_by_priority)=62.233  Total=668.89  rows=2294856  groups=5
+  DDC:  PhaseA(orders_scan)=250.792  PhaseB(orderkey_OR+ids)=118.485  PhaseC(BMFetch+EXISTS)=237.378  PhaseD(count_by_priority)=62.233  Total=668.89  rows=2294856  groups=5
 
-[OK] ComBit matches DuckDB SQL ground truth (5 priorities).
+[OK] DDC matches DuckDB SQL ground truth (5 priorities).
 
 ================================================================
-  Q4 RESULTS — ComBit (4 measured iter, median +/- stddev)
+  Q4 RESULTS — DDC (4 measured iter, median +/- stddev)
 ================================================================
   PhaseA (orders scan)        : 251.017 +/- 2.81737 ms
   PhaseB (orderkey OR + ids)  : 117.795 +/- 1.06374 ms

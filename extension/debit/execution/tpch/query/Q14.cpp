@@ -1,19 +1,4 @@
-// TPC-H Q14 — Promotion Effect Query (spec v3.0.1 §2.4.14)
-//
-// Verbatim port of teacher's BitEngine BMTPCH_Q14: shipdate-month
-// filter via single-column bitmap on lineitem.l_shipdate, then
-// runtime semi-join on part (single-column scan of p_type LIKE 'PROMO%').
-// TPC-H 1.5.7-compliant — no pre-built lineitem×part bitmap (the prior
-// is_promo/0.bm violated the single-base-table rule).
-//
-// Pipeline:
-//   Phase A: shipdate range OR (l_shipdate ∈ [DATE, DATE + 1 month))
-//            via bitmap_shipdate (per-day, single column).
-//   Phase B: scan part — collect partkeys where p_type LIKE 'PROMO%'.
-//   Phase C: get_rowids on shipdate filter; BMFetch lineitem
-//            (l_partkey, l_extendedprice, l_discount); accumulate
-//            total_rev and (if l_partkey ∈ promo_set) promo_rev.
-// Result: 100 * promo_rev / total_rev.
+
 
 #include "duckdb/execution/execution_context.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -26,8 +11,8 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
 
-#include "combit_adapter.h"
-#include "combit/include/combit.h"
+#include "ddc_adapter.h"
+#include "ddc/include/ddc.h"
 #include "fastbit/bitvector.h"
 #include "roaring.hh"
 #include "ewah.h"
@@ -59,17 +44,17 @@ static const int Q14_ITERATIONS = bm_bench::iter_count(5);
 static const int Q14_WARMUP     = bm_bench::warmup_count(1);
 static std::once_flag q14_once_flag_new;
 
-static constexpr int64_t Q14_DATE_LO = 9374;   // 1995-09-01 epoch days
-static constexpr int64_t Q14_DATE_HI = 9404;   // 1995-10-01 (excl)
-// Month-GE key: 1995-09 = year*100+month = 199509.  Used when
-// bitmap_shipdate_GE_month is pre-loaded (cardinality 84 vs per-day 2526).
+static constexpr int64_t Q14_DATE_LO = 9374;
+static constexpr int64_t Q14_DATE_HI = 9404;
+
 static constexpr int64_t Q14_MONTH_KEY = 199509;
 
 template <typename Btv>
 static void q14_get_rowids(const Btv& b, std::vector<row_t>* out);
 template <>
-void q14_get_rowids<ComBit>(const ComBit& b, std::vector<row_t>* out) {
+void q14_get_rowids<DDC>(const DDC& b, std::vector<row_t>* out) {
     out->clear();
+    // expand via byte LUT
     b.for_each_literal([&](uint32_t word_pos, uint8_t val) {
         size_t rbase = static_cast<size_t>(word_pos) * 8;
         const auto& e = bm_bench::byte_lut[val];
@@ -107,11 +92,9 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
     auto& part_table     = Catalog::GetEntry<TableCatalogEntry>(context.client, "", "", "part");
     auto& lineitem_table = Catalog::GetEntry<TableCatalogEntry>(context.client, "", "", "lineitem");
 
-    // Prefer month-GE if pre-loaded (84 keys, single-key OR for 1995-09).
-    // Falls back to per-day shipdate range OR otherwise.
     auto* idx_ge_m = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_GE_month);
     auto* idx_ship = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate);
-    auto* idx_use  = idx_ge_m ? idx_ge_m : idx_ship;
+    auto* idx_use  = idx_ge_m ? idx_ge_m : idx_ship;  // prefer month-GE
     if (!idx_use) {
         std::cerr << "[Q14] ERROR: neither bitmap_shipdate_GE_month nor bitmap_shipdate loaded.\n";
         return;
@@ -132,25 +115,10 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
         std::cout << "\n--- Iteration " << iter+1 << "/" << Q14_ITERATIONS
                   << (warm ? " (warm-up)" : "") << " ---" << std::endl;
 
+        // Phase A: shipdate filter
         auto t0 = clk::now();
         auto& lineitem_tx = DuckTransaction::Get(context.client, lineitem_table.catalog);
 
-        // ===== Phase A: shipdate filter =====
-        // use_month_ge: 1-key OR on month key 199509 (teacher's GE plan).
-        // else:         30-key range OR on per-day shipdate.
-        //
-        // Single-key fast path (use_month_ge==true): for a one-month
-        // predicate there is nothing for the bitmap algorithm to
-        // contribute — both ComBit's scatter_or_decompressed and
-        // Roaring's or_many produce a bitmap whose only purpose is
-        // to be iterated back to row-ids.  We therefore short-circuit
-        // to InvertedIndex::positions_for(key), which returns the
-        // sorted positions array directly from the build-time scaffold
-        // (every IndexedX inherits the same InvertedIndex base, so
-        // this fast path is uniformly applied to all 5 backends and
-        // does not give ComBit a privileged shortcut).  Saves the
-        // 7.5 MB byte-stream materialisation that pollutes L2 before
-        // BMFetch and adds ~5 ms of unrelated cache-miss cost.
         std::vector<row_t> ids;
         auto fastpath_single_key = [&](bm_index::InvertedIndex* idx, int64_t key) {
             auto [p, n] = idx->positions_for(key);
@@ -158,21 +126,17 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
             for (size_t i = 0; i < n; i++) ids[i] = static_cast<row_t>(p[i]);
         };
 
-        if (auto* cbge = dynamic_cast<bm_index::IndexedComBitGE*>(idx_use)) {
-            // Month-GE path always lands here for CB backend
-            // (loader builds IndexedComBitGE for 'shipdate_GE_month').
+        // backend dispatch: 1-key GE vs range OR
+        if (auto* cbge = dynamic_cast<bm_index::IndexedDDCGE*>(idx_use)) {
+
             fastpath_single_key(cbge, Q14_MONTH_KEY);
-        } else if (auto* cb = dynamic_cast<bm_index::IndexedComBit*>(idx_use)) {
-            // Per-day path (30 keys): keep the bitmap-based path —
-            // multi-key OR is exactly where ComBit's
-            // scatter_or_decompressed primitive shines, and the
-            // result row-id ordering must be sorted globally for
-            // BMFetch (which the bitmap walk gives us naturally).
-            std::vector<int64_t> ks;
+        } else if (auto* cb = dynamic_cast<bm_index::IndexedDDC*>(idx_use)) {
+
+            std::vector<int64_t> ks;  // DDC range OR
             cb->for_each_key([&](int64_t k) {
                 if (k >= Q14_DATE_LO && k < Q14_DATE_HI) ks.push_back(k);
             });
-            ComBit ship_filter = cb->or_many(ks);
+            DDC ship_filter = cb->or_many(ks);
             q14_get_rowids(ship_filter, &ids);
         } else if (auto* cr = dynamic_cast<bm_index::IndexedCRoaring*>(idx_use)) {
             if (use_month_ge) {
@@ -209,7 +173,7 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
         }
         auto t_a = clk::now();
 
-        // ===== Phase B: part scan → promo_partkeys =====
+        // Phase B: scan part, collect PROMO keys
         std::unordered_set<int64_t> promo_partkeys;
         promo_partkeys.reserve(50000);
         {
@@ -232,14 +196,14 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
                 for (idx_t i = 0; i < chunk.size(); i++) {
                     if (!valid.RowIsValid(i)) continue;
                     auto sz = pt[i].GetSize();
-                    if (sz >= 5 && std::memcmp(pt[i].GetData(), "PROMO", 5) == 0)
+                    if (sz >= 5 && std::memcmp(pt[i].GetData(), "PROMO", 5) == 0)  // PROMO prefix
                         promo_partkeys.insert(pk[i]);
                 }
             }
         }
         auto t_b = clk::now();
 
-        // ===== Phase C: BMFetch lineitem + agg =====
+        // Phase C: BMFetch lineitem + aggregate
         int64_t total_rev = 0, promo_rev = 0;
         if (!ids.empty()) {
             vector<StorageIndex> col_ids = {StorageIndex(1), StorageIndex(5), StorageIndex(6)};
@@ -264,7 +228,7 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
                 auto pr = FlatVector::GetData<int64_t>(chunk.data[1]);
                 auto dc = FlatVector::GetData<int64_t>(chunk.data[2]);
                 for (idx_t i = 0; i < chunk.size(); i++) {
-                    int64_t v = pr[i] * (100 - dc[i]);
+                    int64_t v = pr[i] * (100 - dc[i]);  // revenue
                     total_rev += v;
                     if (promo_partkeys.count(pk[i])) promo_rev += v;
                 }
@@ -293,6 +257,7 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
     }
 
     {
+        // SQL ground-truth check
         Connection con(*context.client.db);
         auto r = con.Query(
             "SELECT 100.00 * sum(CASE WHEN p_type LIKE 'PROMO%' "
@@ -331,13 +296,14 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
     std::cout << "  TOTAL                     : " << sT.median << " +/- " << sT.stddev << " ms\n";
     std::cout << "================================================================\n\n";
 
+    // emit CSV
     std::string sf = bm_bench::sf_label();
     std::ofstream csv("q14_results_" + sf + ".csv");
     if (csv) {
         csv << std::fixed << std::setprecision(4);
         csv << "sf,operation,"
             << "wah_median_ms,wah_stddev_ms,wah_min_ms,wah_max_ms,"
-            << "combit_median_ms,combit_stddev_ms,combit_min_ms,combit_max_ms,"
+            << "ddc_median_ms,ddc_stddev_ms,ddc_min_ms,ddc_max_ms,"
             << "croaring_median_ms,croaring_stddev_ms,croaring_min_ms,croaring_max_ms,"
             << "croaring_run_median_ms,croaring_run_stddev_ms,croaring_run_min_ms,croaring_run_max_ms,"
             << "ewah_median_ms,ewah_stddev_ms,ewah_min_ms,ewah_max_ms,"
@@ -353,7 +319,7 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
                 csv << v.median << "," << v.stddev << "," << v.min_val << "," << v.max_val << ",";
             };
             cell(bn == "WAH" ? s : z);
-            cell(bn == "ComBit" ? s : z);
+            cell(bn == "DDC" ? s : z);
             cell(bn == "CRoaring" ? s : z);
             cell(bn == "CRoaringRun" ? s : z);
             cell(bn == "EWAH" ? s : z);
@@ -368,7 +334,7 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
         std::cout << "  [CSV] q14_results_" << sf << ".csv\n";
     }
 
-    });  // end call_once
+    });
 }
 
-}  // namespace duckdb
+}

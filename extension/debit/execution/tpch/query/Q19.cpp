@@ -1,21 +1,4 @@
-// TPC-H Q19 - Discounted Revenue Query (spec v3.0.1 §2.4.19)
-//
-// Streaming variant - mirrors BitEngine paper Q19 methodology.
-//
-// Pipeline:
-//   - First lineitem table-scan call: build row_ids via the loaded
-//     bitmap_shipmode AND bitmap_shipinstr filter.
-//   - Subsequent calls: Fetch one 2048-row chunk of
-//       (l_partkey, l_quantity, l_shipmode, l_extendedprice, l_discount)
-//     and return it to DuckDB's upstream operators.
-//   - DuckDB upstream pipeline does the actual TPC-H Q19 work:
-//       hash join with part on l_partkey = p_partkey
-//       3-OR predicate filter (Brand#12/SM*/qty1-11/size1-5, Brand#23/MED*,
-//                              Brand#34/LG*) AND shipmode/shipinstruct
-//       SUM(l_extendedprice * (1 - l_discount))
-//
-// The end-to-end query latency observed by the user (printed by DuckDB
-// CLI .timer) is the comparable measurement against BitEngine paper.
+
 
 #include "duckdb/execution/execution_context.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -26,8 +9,8 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
 
-#include "combit_adapter.h"
-#include "combit/include/combit.h"
+#include "ddc_adapter.h"
+#include "ddc/include/ddc.h"
 #include "fastbit/bitvector.h"
 #include "roaring.hh"
 #include "ewah.h"
@@ -46,17 +29,15 @@
 
 namespace duckdb {
 
-// Per-iteration build state.  We RESET on FINISHED so each subsequent
-// PRAGMA bm_tpch(19) call re-builds row_ids (re-measures bitmap phase).
 static std::mutex     q19_build_mutex;
 static std::atomic<bool> q19_built{false};
 
-// Per-backend row-id extractors (sorted output for BMFetch/Fetch).
 template <typename Btv>
 static void q19_get_rowids(const Btv& b, std::vector<row_t>* out);
 template <>
-void q19_get_rowids<ComBit>(const ComBit& b, std::vector<row_t>* out) {
+void q19_get_rowids<DDC>(const DDC& b, std::vector<row_t>* out) {
     out->clear();
+    // expand literals via LUT
     b.for_each_literal([&](uint32_t word_pos, uint8_t val) {
         size_t rbase = static_cast<size_t>(word_pos) * 8;
         const auto& e = bm_bench::byte_lut[val];
@@ -87,12 +68,7 @@ void q19_get_rowids<ConciseSet<false>>(const ConciseSet<false>& b, std::vector<r
     for (auto it = b.begin(); it != b.end(); ++it) out->push_back(static_cast<row_t>(*it));
 }
 
-// =====================================================================
-// TPCH_Q19_Lineitem_GetRowIds - bitmap filter (per active backend) ->
-// row_ids vector.  Single-threaded under q19_build_mutex (held by
-// BMTPCH_Q19 caller).  Mirrors BitEngine paper exactly: shipmode 'A'
-// (= AIR or AIR REG) AND shipinstruct 'D' (= DELIVER IN PERSON).
-// =====================================================================
+// build row-id list once
 void BMTableScan::TPCH_Q19_Lineitem_GetRowIds(ExecutionContext &context,
                                               vector<row_t> *row_ids)
 {
@@ -110,14 +86,16 @@ void BMTableScan::TPCH_Q19_Lineitem_GetRowIds(ExecutionContext &context,
     size_t num_rows = idx_sm->num_rows();
     row_ids->clear();
 
-    if (auto* cb_sm = dynamic_cast<bm_index::IndexedComBit*>(idx_sm)) {
-        auto* cb_si = dynamic_cast<bm_index::IndexedComBit*>(idx_si);
+    // DDC backend
+    if (auto* cb_sm = dynamic_cast<bm_index::IndexedDDC*>(idx_sm)) {
+        auto* cb_si = dynamic_cast<bm_index::IndexedDDC*>(idx_si);
         if (!cb_si) { std::cerr << "[Q19] CB type mismatch.\n"; return; }
-        ComBit bm_sm = ComBit::from_sparse_positions({}, num_rows, cb_sm->segment_bits());
-        ComBit bm_si = ComBit::from_sparse_positions({}, num_rows, cb_si->segment_bits());
+        // empty seed
+        DDC bm_sm = DDC::from_sparse_positions({}, num_rows, cb_sm->segment_bits());
+        DDC bm_si = DDC::from_sparse_positions({}, num_rows, cb_si->segment_bits());
         cb_sm->apply_or_to(bm_sm, 'A');
         cb_si->apply_or_to(bm_si, 'D');
-        bm_sm &= bm_si;
+        bm_sm &= bm_si;   // AND
         q19_get_rowids(bm_sm, row_ids);
     } else if (auto* cr_sm = dynamic_cast<bm_index::IndexedCRoaring*>(idx_sm)) {
         auto* cr_si = dynamic_cast<bm_index::IndexedCRoaring*>(idx_si);
@@ -142,7 +120,7 @@ void BMTableScan::TPCH_Q19_Lineitem_GetRowIds(ExecutionContext &context,
         ew_sm->apply_or_to(bm_sm, 'A');
         ew_si->apply_or_to(bm_si, 'D');
         ewah::EWAHBoolArray<uint64_t> tmp;
-        bm_sm.logicaland(bm_si, tmp);
+        bm_sm.logicaland(bm_si, tmp);   // AND
         q19_get_rowids(tmp, row_ids);
     } else if (auto* con_sm = dynamic_cast<bm_index::IndexedConcise*>(idx_sm)) {
         auto* con_si = dynamic_cast<bm_index::IndexedConcise*>(idx_si);
@@ -159,13 +137,7 @@ void BMTableScan::TPCH_Q19_Lineitem_GetRowIds(ExecutionContext &context,
     q19_built.store(true);
 }
 
-// =====================================================================
-// BMTPCH_Q19 - DuckDB pull-style streaming entry point.  First call
-// (cursor==0) builds row_ids via the bitmap filter; subsequent calls
-// Fetch a 2048-row chunk and return SourceResultType::HAVE_MORE_OUTPUT.
-// On exhaustion, state is reset so the NEXT PRAGMA bm_tpch(19) re-runs
-// the full pipeline (allowing multi-iter benchmarking).
-// =====================================================================
+// scan source: fetch by row-id
 SourceResultType BMTableScan::BMTPCH_Q19(ExecutionContext &context,
                                           DataChunk &chunk,
                                           const TableScanBindData &bind_data)
@@ -178,9 +150,7 @@ SourceResultType BMTableScan::BMTPCH_Q19(ExecutionContext &context,
     }
 
     if (*cursor < row_ids->size()) {
-        // 5 columns matching BitEngine paper Q19 BMTPCH_Q19:
-        //   l_partkey (1), l_quantity (4), l_shipmode (14),
-        //   l_extendedprice (5), l_discount (6).
+
         vector<StorageIndex> storage_column_ids;
         storage_column_ids.push_back(StorageIndex(1));
         storage_column_ids.push_back(StorageIndex(4));
@@ -197,11 +167,10 @@ SourceResultType BMTableScan::BMTPCH_Q19(ExecutionContext &context,
 
         data_ptr_t row_ids_data = (data_ptr_t)&((*row_ids)[*cursor]);
         Vector row_ids_vec(LogicalType::ROW_TYPE, row_ids_data);
-        idx_t fetch_count = 2048;
+        idx_t fetch_count = 2048;   // chunk batch
         if (*cursor + fetch_count > row_ids->size())
             fetch_count = row_ids->size() - *cursor;
 
-        // Matches BitEngine paper Q19: vanilla Fetch (slow path).
         table_bind_data.table.GetStorage().Fetch(transaction, chunk,
                                                  storage_column_ids, row_ids_vec,
                                                  fetch_count, column_fetch_state);
@@ -209,15 +178,14 @@ SourceResultType BMTableScan::BMTPCH_Q19(ExecutionContext &context,
         return SourceResultType::HAVE_MORE_OUTPUT;
     }
 
-    // Exhausted - reset state for the NEXT PRAGMA bm_tpch(19) call so
-    // we re-measure the bitmap-filter + Fetch + upstream pipeline fresh.
+    // reset state
     row_ids->clear();
     *cursor = 0;
     num_idlist = 0;
     q19_built.store(false);
-    context.client.query_source = "tpch";   // resume normal scan path
+    context.client.query_source = "tpch";
 
     return SourceResultType::FINISHED;
 }
 
-}  // namespace duckdb
+}

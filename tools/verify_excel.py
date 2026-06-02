@@ -28,9 +28,9 @@ BACKENDS = ["WAH", "CB", "CB+BPE", "CR", "CR+BPE", "CRR", "EW", "BS", "BSA", "CO
 
 # Map IBitmapIndex::backend_name() -> canonical Excel backend tag.
 NAME_TO_BACKEND = {
-    "ComBit":      "CB",
-    "ComBitGE":    "CB",
-    "ComBitBPE":   "CB+BPE",
+    "DDC":      "CB",
+    "DDCGE":    "CB",
+    "DDCBPE":   "CB+BPE",
     "CRoaring":    "CR",
     "CRoaringRun": "CRR",
     "CRoaringBPE": "CR+BPE",
@@ -63,7 +63,7 @@ def parse_log(q: int) -> Dict:
         if backend:
             # The log emits one `built` line per (column, backend, run).
             # Multiple runs of the same backend (cb vs cb_bpe both call
-            # ComBit::compress, and Q15 has 8 runs) overwrite the entry —
+            # DDC::compress, and Q15 has 8 runs) overwrite the entry —
             # they should all measure the same MB, so this is benign.
             out_total[(backend, col)] = mb
     for m in RE_LOAD_BREAKDOWN.finditer(text):
@@ -186,8 +186,8 @@ def main() -> int:
 
             # Expected per-column total from the log.  For β-scheme
             # backends (CB+BPE / CR+BPE) the run loads BOTH the per-value
-            # bitmap (logged as `ComBit`/`CRoaring`) AND the bucketed-prefix
-            # column (logged as `ComBitBPE`/`CRoaringBPE`).  The Excel
+            # bitmap (logged as `DDC`/`CRoaring`) AND the bucketed-prefix
+            # column (logged as `DDCBPE`/`CRoaringBPE`).  The Excel
             # breakdown cell shows both, so we have to union both backend
             # families when checking.
             backends_for_match: List[str] = [backend]

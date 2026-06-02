@@ -7,9 +7,9 @@ PRAGMA load_bitmap('orderkey');
 PRAGMA load_bitmap('shipdate');
 PRAGMA bm_tpch(3);
 [load_bitmap] orderkey: scanned 59986052 rows in 639 ms
-[load_bitmap] orderkey: built ComBit index (15000000 keys, 1679.94 MB) in 4909 ms
+[load_bitmap] orderkey: built DDC index (15000000 keys, 1679.94 MB) in 4909 ms
 [load_bitmap] shipdate: scanned 59986052 rows in 273 ms
-[load_bitmap] shipdate: built ComBit index (2526 keys, 6586.7 MB) in 23669 ms
+[load_bitmap] shipdate: built DDC index (2526 keys, 6586.7 MB) in 23669 ms
 
 ================================================================
   TPC-H Q3 (BitEngine pattern, runtime semi-joins)
@@ -17,21 +17,21 @@ PRAGMA bm_tpch(3);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  ComBit:  PhaseA(cust_scan)=26.744  PhaseB(orders+okey_OR)=857.532  PhaseC(shipdate_OR)=1895.12  PhaseD(AND+rowids)=6.841  PhaseE(BMFetch+agg)=252.82  Total=3039.06  rows=302114
+  DDC:  PhaseA(cust_scan)=26.744  PhaseB(orders+okey_OR)=857.532  PhaseC(shipdate_OR)=1895.12  PhaseD(AND+rowids)=6.841  PhaseE(BMFetch+agg)=252.82  Total=3039.06  rows=302114
 
 --- Iteration 2/5 ---
-  ComBit:  PhaseA(cust_scan)=23.884  PhaseB(orders+okey_OR)=691.548  PhaseC(shipdate_OR)=1836.99  PhaseD(AND+rowids)=5.656  PhaseE(BMFetch+agg)=81.787  Total=2639.87  rows=302114
+  DDC:  PhaseA(cust_scan)=23.884  PhaseB(orders+okey_OR)=691.548  PhaseC(shipdate_OR)=1836.99  PhaseD(AND+rowids)=5.656  PhaseE(BMFetch+agg)=81.787  Total=2639.87  rows=302114
 
 --- Iteration 3/5 ---
-  ComBit:  PhaseA(cust_scan)=23.979  PhaseB(orders+okey_OR)=691.233  PhaseC(shipdate_OR)=1836.38  PhaseD(AND+rowids)=5.594  PhaseE(BMFetch+agg)=82.372  Total=2639.56  rows=302114
+  DDC:  PhaseA(cust_scan)=23.979  PhaseB(orders+okey_OR)=691.233  PhaseC(shipdate_OR)=1836.38  PhaseD(AND+rowids)=5.594  PhaseE(BMFetch+agg)=82.372  Total=2639.56  rows=302114
 
 --- Iteration 4/5 ---
-  ComBit:  PhaseA(cust_scan)=23.886  PhaseB(orders+okey_OR)=700.043  PhaseC(shipdate_OR)=1833.91  PhaseD(AND+rowids)=5.662  PhaseE(BMFetch+agg)=82.095  Total=2645.6  rows=302114
+  DDC:  PhaseA(cust_scan)=23.886  PhaseB(orders+okey_OR)=700.043  PhaseC(shipdate_OR)=1833.91  PhaseD(AND+rowids)=5.662  PhaseE(BMFetch+agg)=82.095  Total=2645.6  rows=302114
 
 --- Iteration 5/5 ---
-  ComBit:  PhaseA(cust_scan)=23.844  PhaseB(orders+okey_OR)=703.963  PhaseC(shipdate_OR)=1836.91  PhaseD(AND+rowids)=5.877  PhaseE(BMFetch+agg)=81.901  Total=2652.5  rows=302114
+  DDC:  PhaseA(cust_scan)=23.844  PhaseB(orders+okey_OR)=703.963  PhaseC(shipdate_OR)=1836.91  PhaseD(AND+rowids)=5.877  PhaseE(BMFetch+agg)=81.901  Total=2652.5  rows=302114
 
-[OK] ComBit matches DuckDB SQL ground truth (top 10).
+[OK] DDC matches DuckDB SQL ground truth (top 10).
 
   Q3 top-10 (orderkey, revenue, orderdate, shippriority):
     4791171  440715.2185  1995-02-23  9060
@@ -46,7 +46,7 @@ PRAGMA bm_tpch(3);
     52974151  415367.1195  1995-02-05  9882
 
 ================================================================
-  Q3 RESULTS — ComBit (4 measured iter, median +/- stddev)
+  Q3 RESULTS — DDC (4 measured iter, median +/- stddev)
 ================================================================
   PhaseA (customer scan)    : 23.8850 +/- 0.0495 ms
   PhaseB (orders+orderkey OR): 695.7955 +/- 5.4854 ms

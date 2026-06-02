@@ -6,7 +6,7 @@
 PRAGMA load_bitmap('partkey');
 PRAGMA bm_tpch(17);
 [load_bitmap] partkey: scanned 59986052 rows in 727 ms
-[load_bitmap] partkey: built ComBit index (2000000 keys, 431.944 MB) in 6548 ms
+[load_bitmap] partkey: built DDC index (2000000 keys, 431.944 MB) in 6548 ms
 
 ================================================================
   TPC-H Q17 (BitEngine pattern, runtime part-join)
@@ -14,24 +14,24 @@ PRAGMA bm_tpch(17);
 ================================================================
 
 --- Iteration 1/5 (warm-up) ---
-  ComBit:  PhaseA(part_scan+pk_OR)=39.455  PhaseB(BMFetch+avg)=252.534  PhaseC(filter+sum)=0.916  Total=292.906  rows=61385  avg_yearly=3295493.512857
+  DDC:  PhaseA(part_scan+pk_OR)=39.455  PhaseB(BMFetch+avg)=252.534  PhaseC(filter+sum)=0.916  Total=292.906  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 2/5 ---
-  ComBit:  PhaseA(part_scan+pk_OR)=28.601000  PhaseB(BMFetch+avg)=23.192000  PhaseC(filter+sum)=0.899000  Total=52.693000  rows=61385  avg_yearly=3295493.512857
+  DDC:  PhaseA(part_scan+pk_OR)=28.601000  PhaseB(BMFetch+avg)=23.192000  PhaseC(filter+sum)=0.899000  Total=52.693000  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 3/5 ---
-  ComBit:  PhaseA(part_scan+pk_OR)=26.906000  PhaseB(BMFetch+avg)=22.456000  PhaseC(filter+sum)=0.899000  Total=50.261000  rows=61385  avg_yearly=3295493.512857
+  DDC:  PhaseA(part_scan+pk_OR)=26.906000  PhaseB(BMFetch+avg)=22.456000  PhaseC(filter+sum)=0.899000  Total=50.261000  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 4/5 ---
-  ComBit:  PhaseA(part_scan+pk_OR)=26.347000  PhaseB(BMFetch+avg)=14.981000  PhaseC(filter+sum)=0.899000  Total=42.228000  rows=61385  avg_yearly=3295493.512857
+  DDC:  PhaseA(part_scan+pk_OR)=26.347000  PhaseB(BMFetch+avg)=14.981000  PhaseC(filter+sum)=0.899000  Total=42.228000  rows=61385  avg_yearly=3295493.512857
 
 --- Iteration 5/5 ---
-  ComBit:  PhaseA(part_scan+pk_OR)=26.268000  PhaseB(BMFetch+avg)=13.118000  PhaseC(filter+sum)=0.907000  Total=40.294000  rows=61385  avg_yearly=3295493.512857
+  DDC:  PhaseA(part_scan+pk_OR)=26.268000  PhaseB(BMFetch+avg)=13.118000  PhaseC(filter+sum)=0.907000  Total=40.294000  rows=61385  avg_yearly=3295493.512857
 
-[OK] ComBit matches DuckDB SQL (avg_yearly = 3295493.512857).
+[OK] DDC matches DuckDB SQL (avg_yearly = 3295493.512857).
 
 ================================================================
-  Q17 RESULTS — ComBit (4 measured iter, median +/- stddev)
+  Q17 RESULTS — DDC (4 measured iter, median +/- stddev)
 ================================================================
   PhaseA (part scan + partkey OR)    : 26.626500 +/- 0.939488 ms
   PhaseB (BMFetch + per-pk avg)      : 18.718500 +/- 4.444043 ms

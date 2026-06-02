@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdint>
 
-extern const int BMTPCH_QUERIES_COUNT;
+extern const int BMTPCH_QUERIES_COUNT;  // query count
 
 extern const uint8_t BMTPCH_QUERIES_q01[];
 extern const uint8_t BMTPCH_QUERIES_q02[];
@@ -26,4 +26,4 @@ extern const uint8_t BMTPCH_QUERIES_q20[];
 extern const uint8_t BMTPCH_QUERIES_q21[];
 extern const uint8_t BMTPCH_QUERIES_q22[];
 
-extern const char *BMTPCH_QUERIES[];
+extern const char *BMTPCH_QUERIES[];  // query table
