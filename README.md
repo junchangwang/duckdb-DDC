@@ -43,12 +43,18 @@ pragma bm_tpch(1);
 
 The bitmaps each TPC-H query needs:
 
-- Q1: shipdate, linestatus, returnflag         Q3: orderkey, shipdate
-- Q4: orderkey                                 Q5: orderkey, suppkey
-- Q6: shipdate_GE, discount, quantity          Q8: orderkey, partkey
-- Q10: orderkey, returnflag                    Q12: shipmode, receiptdate
-- Q14: shipdate                                Q15: shipdate
-- Q17: partkey                                 Q19: shipmode, shipinstruct
+- Q1: shipdate, linestatus, returnflag
+- Q3: orderkey, shipdate
+- Q4: orderkey
+- Q5: orderkey, suppkey
+- Q6: shipdate_GE, discount, quantity
+- Q8: orderkey, partkey
+- Q10: orderkey, returnflag
+- Q12: shipmode, receiptdate
+- Q14: shipdate
+- Q15: shipdate
+- Q17: partkey
+- Q19: shipmode, shipinstruct
 
 To run the query with DuckDB's native operators instead of the bitmap-indexed plan:
 
