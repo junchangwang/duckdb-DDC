@@ -403,3 +403,11 @@ tools/pythonpkg/duckdb_build/
 
 # Personal-only Q explanation files (Chinese annotations for thesis review)
 extension/debit/execution/tpch/query/Q*_explain.cpp
+
+# Bitmap benchmark logs / results / measurement data (never tracked)
+bm_logs*/
+raw_q*/
+*_SF10.log
+*.xlsx
+perf_*.data
+tpch_*.db
