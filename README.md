@@ -36,11 +36,13 @@ DEBIT_BM=ddc TPCH_SF=10 build/release/duckdb tpch_sf10.db
 ```
 ```DuckDB
 set threads to 1;
-pragma load_bitmap('shipdate', 'linestatus', 'returnflag');
+pragma load_bitmap('shipdate');
+pragma load_bitmap('linestatus');
+pragma load_bitmap('returnflag');
 pragma bm_tpch(1);
 ```
 
-Here `load_bitmap` builds the three bitmaps that query 1 needs, and `bm_tpch(1)` runs query 1 on them. The bitmaps each TPC-H query needs are listed below.
+Call `load_bitmap` once for each column. Together these build the three bitmaps that query 1 needs, and `bm_tpch(1)` runs query 1 on them. The bitmaps each TPC-H query needs are listed below.
 
 - **Q1** shipdate, linestatus, returnflag
 - **Q3** orderkey, shipdate
