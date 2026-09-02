@@ -17,7 +17,6 @@
 
 extern bool ddc_compress_results;
 
-// per-segment bitvector
 class DDCBtv {
 public:
     static constexpr unsigned word_size = 8;
@@ -45,7 +44,6 @@ public:
     static DDCBtv from_string(const std::string& bitstring, bool l1_fill_ones = false);
     std::string to_string() const;
 
-    // boolean kernels
     DDCBtv operator&(const DDCBtv& other) const;
     DDCBtv operator|(const DDCBtv& other) const;
     DDCBtv operator^(const DDCBtv& other) const;
@@ -98,7 +96,6 @@ public:
 
 #ifdef __AVX512VBMI2__
 
-    // SIMD walk state
     struct SideCtx {
         const uint8_t* l4_bits;
         const uint8_t* l3_lits;
@@ -133,7 +130,6 @@ public:
         return c;
     }
 
-    // advance literal offsets
     static inline void advance_side(SideCtx& s, uint8_t l3) {
         __m512i l2v = _mm512_mask_expandloadu_epi8(s.l2_fill_vec,
             static_cast<__mmask64>(l3), s.l2_lits + s.l2_lit_off);
@@ -153,11 +149,18 @@ public:
     void serialize_v4(std::ostream& os, bool is_last_seg) const;
     static DDCBtv deserialize_v4(std::istream& is, size_t segment_bits);
 
+    // Cache prefetch
+    inline void prefetch_layers() const {
+        __builtin_prefetch(l4_bits_.data());
+        __builtin_prefetch(l3_literals_.data());
+        __builtin_prefetch(l2_literals_.data());
+        __builtin_prefetch(l1_literals_.data());
+    }
+
     void print(std::ostream& os = std::cout) const;
 
 private:
 
-    // 4-level layout
     State                   state_;
     bool                    l1_fill_ones_;
     bool                    l2_fill_ones_;
@@ -185,7 +188,6 @@ private:
     friend class DDC;
 };
 
-// segmented bitmap
 class DDC {
 public:
     static constexpr size_t default_segment_bits = size_t(1) << 16;
@@ -203,6 +205,8 @@ public:
 
     static DDC compress(const std::vector<bool>& bits, bool l1_fill_ones = false, size_t segment_bits = default_segment_bits);
     static DDC from_sparse_positions(const std::vector<uint32_t>& positions, size_t num_rows, size_t segment_bits = default_segment_bits);
+    // Compact builder
+    static DDC from_sparse_positions_compact(const std::vector<uint32_t>& positions, size_t num_rows, size_t segment_bits = default_segment_bits);
     std::vector<bool> decompress() const;
 
     static DDC from_string(const std::string& bitstring, bool l1_fill_ones = false, size_t segment_bits = default_segment_bits);
@@ -224,7 +228,6 @@ public:
     std::vector<size_t> set_bit_positions() const;
     size_t popcount_and(const DDC& other) const;
 
-    // iterate set words
     template<typename Fn>
     void for_each_literal(Fn&& fn) const {
         size_t word_off = 0;
@@ -232,12 +235,11 @@ public:
             const uint8_t* l1 = seg.l1_literal_data();
             const size_t l2_total = seg.l2_count();
 
-            if (seg.is_all_zero()) {  // skip empty
+            if (seg.is_all_zero()) {
                 word_off += l2_total;
                 continue;
             }
 
-            // dense flat path
             if (seg.state() == DDCBtv::State::Decompressed) {
                 size_t i = 0;
 #ifdef __AVX512BW__
@@ -274,7 +276,6 @@ public:
 
 #ifdef __AVX512VBMI2__
 
-            // SIMD compressed walk
             if (can_skip) {
                 for (size_t l3_base = 0; l3_base < l3_bytes; l3_base += 64) {
                     size_t chunk = l3_bytes - l3_base;
@@ -343,7 +344,6 @@ public:
             }
 #endif
 
-            // scalar fallback
             size_t cur_l3_byte_idx = static_cast<size_t>(-1);
             uint8_t cur_l3_byte = 0;
             for (size_t l3_idx = 0; l3_idx < l3_total; l3_idx++) {
@@ -383,9 +383,18 @@ public:
     std::vector<DDCBtv>& segments() { return segments_; }
     const DDCBtv& segment(size_t i) const { return segments_[i]; }
 
-    // scatter into segments
     void scatter_or_decompressed(const uint32_t* positions, size_t n) {
         const uint32_t seg_bits = static_cast<uint32_t>(segment_bits_);
+        if ((seg_bits & (seg_bits - 1)) == 0) {
+            // Fast addressing
+            const uint32_t shift = static_cast<uint32_t>(__builtin_ctz(seg_bits));
+            const uint32_t mask  = seg_bits - 1;
+            for (size_t i = 0; i < n; i++) {
+                uint32_t p = positions[i];
+                segments_[p >> shift].set_bit_decompressed(p & mask);
+            }
+            return;
+        }
         for (size_t i = 0; i < n; i++) {
             uint32_t p = positions[i];
             uint32_t seg = p / seg_bits;
@@ -411,12 +420,11 @@ private:
     size_t segment_bits_ = default_segment_bits;
 };
 
-// sparse OR accumulator
 class SparseDDC {
 public:
     SparseDDC() = default;
 
-    static SparseDDC from_positions(const std::vector<uint32_t>& positions, size_t num_rows, size_t segment_bits = DDC::default_segment_bits);
+    static SparseDDC from_positions(const std::vector<uint32_t>& positions, size_t num_rows, size_t segment_bits = DDC::default_segment_bits, bool adaptive_l1_polarity = false);
 
     void apply_or_to(DDC& dst) const;
     static DDC or_many(size_t count, const SparseDDC** sparses, size_t num_rows, size_t segment_bits);

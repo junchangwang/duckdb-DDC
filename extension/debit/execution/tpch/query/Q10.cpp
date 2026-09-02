@@ -51,7 +51,7 @@ static constexpr int64_t Q10_DATE_HI = 8766;
 
 static constexpr int64_t Q10_RETURNFLAG_R = 'R';
 
-// rowid decode per backend
+// Row IDs
 template <typename Btv>
 static void q10_get_rowids(const Btv& b, std::vector<row_t>* out);
 template <>
@@ -86,6 +86,23 @@ void q10_get_rowids<ConciseSet<false>>(const ConciseSet<false>& b, std::vector<r
     out->clear();
     for (auto it = b.begin(); it != b.end(); ++it) out->push_back(static_cast<row_t>(*it));
 }
+template <>
+void q10_get_rowids<::bitset::BitsetVector>(const ::bitset::BitsetVector& b, std::vector<row_t>* out) {
+    out->clear();
+    const uint64_t* w = b.words();
+    const uint64_t nb = b.num_bits();
+    for (size_t i = 0; i < b.words_cnt(); ++i) {
+        uint64_t x = w[i];
+        const uint64_t base = static_cast<uint64_t>(i) * 64;
+        while (x) {
+            const uint64_t pos = base + __builtin_ctzll(x);
+            if (pos >= nb) return;
+            out->push_back(static_cast<row_t>(pos));
+            x &= x - 1;
+        }
+    }
+}
+
 
 void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan &op)
 {
@@ -190,7 +207,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
                 auto okey = FlatVector::GetData<int64_t>(chunk.data[0]);
                 auto ck   = FlatVector::GetData<int64_t>(chunk.data[1]);
                 auto od   = FlatVector::GetData<int32_t>(chunk.data[2]);
-                // date + nation filter
+                // Input filters
                 for (idx_t i = 0; i < chunk.size(); i++) {
                     if (od[i] < Q10_DATE_LO || od[i] >= Q10_DATE_HI) continue;
                     if (!customer_nation.count(ck[i])) continue;
@@ -217,7 +234,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
             okey_filter &= rf_filter;  // AND
             q10_get_rowids(okey_filter, &ids);
             t_d = clk::now();
-        // baselines: same OR/AND shape
+        // Baseline paths
         } else if (auto* cr_okey = dynamic_cast<bm_index::IndexedCRoaring*>(idx_okey)) {
             auto* cr_rf = dynamic_cast<bm_index::IndexedCRoaring*>(idx_rf);
             if (!cr_rf) { std::cerr << "[Q10] type mismatch.\n"; return; }
@@ -228,6 +245,17 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
             cr_rf->apply_or_to(rf_filter, Q10_RETURNFLAG_R);
             t_c = clk::now();
             okey_filter &= rf_filter;
+            q10_get_rowids(okey_filter, &ids);
+            t_d = clk::now();
+        } else if (auto* bs_okey = dynamic_cast<bm_index::IndexedBitsetAVX512*>(idx_okey)) {
+            auto* bs_rf = dynamic_cast<bm_index::IndexedBitsetAVX512*>(idx_rf);
+            if (!bs_rf) { std::cerr << "[Q10] type mismatch.\n"; return; }
+            ::bitset::BitsetVector okey_filter = bs_okey->or_many(matched_okeys);
+            t_b = clk::now();
+            ::bitset::BitsetVector rf_filter = bs_rf->make_empty();
+            bs_rf->apply_or_to(rf_filter, Q10_RETURNFLAG_R);
+            t_c = clk::now();
+            ::bitset::BitsetVector::word_and_inplace(okey_filter, rf_filter, bs_okey->use_simd());
             q10_get_rowids(okey_filter, &ids);
             t_d = clk::now();
         } else if (auto* wah_okey = dynamic_cast<bm_index::IndexedWAH*>(idx_okey)) {
@@ -269,7 +297,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
             return;
         }
 
-        // BMFetch + revenue agg
+        // Fetch aggregate
         std::unordered_map<int64_t, int64_t> revenue_by_custkey;
         revenue_by_custkey.reserve(600000);
         if (!ids.empty()) {
@@ -300,7 +328,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
                 auto okey = FlatVector::GetData<int64_t>(chunk.data[0]);
                 auto pr   = FlatVector::GetData<int64_t>(chunk.data[1]);
                 auto dc   = FlatVector::GetData<int64_t>(chunk.data[2]);
-                // accumulate, cache custkey slot
+                // Customer cache
                 for (idx_t i = 0; i < chunk.size(); i++) {
                     if (okey[i] != prev_okey) {
                         prev_okey = okey[i];
@@ -357,7 +385,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         topk_custkeys.reserve(64);
         for (auto& e : top20) topk_custkeys.insert(e.custkey);
 
-        // fetch top-20 cust attrs
+        // Customer projection
         std::unordered_map<int64_t, Q10Attrs> cust_attr;
         cust_attr.reserve(64);
         {
@@ -434,7 +462,7 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
         }
     }
 
-    // SQL ground-truth check
+    // SQL validation
     {
         Connection con(*context.client.db);
         auto r = con.Query(
@@ -516,7 +544,8 @@ void BMTableScan::BMTPCH_Q10(ExecutionContext &context, const PhysicalTableScan 
             cell(bn == "CRoaring" ? s : z);
             cell(bn == "CRoaringRun" ? s : z);
             cell(bn == "EWAH" ? s : z);
-            cell(z); cell(z);
+            cell(bn == "Bitset" ? s : z);
+            cell(bn == "Bitset+AVX512" ? s : z);
             cell(bn == "Concise" ? s : z);
             csv << "0,0,0,0,0,0,0\n";
         };

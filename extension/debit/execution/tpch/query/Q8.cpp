@@ -61,7 +61,7 @@ static inline int q8_day_to_year(int32_t day) {
     return 1998;
 }
 
-// rowid extract per backend
+// Row IDs
 template <typename Btv>
 static void q8_get_rowids(const Btv& b, std::vector<row_t>* out);
 template <>
@@ -96,6 +96,23 @@ void q8_get_rowids<ConciseSet<false>>(const ConciseSet<false>& b, std::vector<ro
     out->clear();
     for (auto it = b.begin(); it != b.end(); ++it) out->push_back(static_cast<row_t>(*it));
 }
+template <>
+void q8_get_rowids<::bitset::BitsetVector>(const ::bitset::BitsetVector& b, std::vector<row_t>* out) {
+    out->clear();
+    const uint64_t* w = b.words();
+    const uint64_t nb = b.num_bits();
+    for (size_t i = 0; i < b.words_cnt(); ++i) {
+        uint64_t x = w[i];
+        const uint64_t base = static_cast<uint64_t>(i) * 64;
+        while (x) {
+            const uint64_t pos = base + __builtin_ctzll(x);
+            if (pos >= nb) return;
+            out->push_back(static_cast<row_t>(pos));
+            x &= x - 1;
+        }
+    }
+}
+
 
 void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &op)
 {
@@ -265,7 +282,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         }
         auto t_a = clk::now();
 
-        // PhaseB: orders scan + date filter
+        // Orders filter
         std::unordered_map<int64_t, int> okey_to_year;
         okey_to_year.reserve(2000000);
         std::vector<int64_t> matched_okeys;
@@ -298,7 +315,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         size_t num_rows = idx_okey->num_rows();
         std::vector<row_t> ids;
 
-        // PhaseCDE: OR-many + AND per backend
+        // Bitmap filtering
         clk::time_point t_cd;
         if (auto* cb_okey = dynamic_cast<bm_index::IndexedDDC*>(idx_okey)) {
             auto* cb_pk = dynamic_cast<bm_index::IndexedDDC*>(idx_pk);
@@ -315,6 +332,14 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
             roaring::Roaring okey_filter = cr_okey->or_many(matched_okeys);
             roaring::Roaring part_filter = cr_pk->or_many(part_set);
             okey_filter &= part_filter;
+            q8_get_rowids(okey_filter, &ids);
+            t_cd = clk::now();
+        } else if (auto* bs_okey = dynamic_cast<bm_index::IndexedBitsetAVX512*>(idx_okey)) {
+            auto* bs_pk = dynamic_cast<bm_index::IndexedBitsetAVX512*>(idx_pk);
+            if (!bs_pk) { std::cerr << "[Q8] type mismatch.\n"; return; }
+            ::bitset::BitsetVector okey_filter = bs_okey->or_many(matched_okeys);
+            ::bitset::BitsetVector part_filter = bs_pk->or_many(part_set);
+            ::bitset::BitsetVector::word_and_inplace(okey_filter, part_filter, bs_okey->use_simd());
             q8_get_rowids(okey_filter, &ids);
             t_cd = clk::now();
         } else if (auto* wah_okey = dynamic_cast<bm_index::IndexedWAH*>(idx_okey)) {
@@ -347,7 +372,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
             return;
         }
 
-        // PhaseF: BMFetch + aggregate
+        // Fetch aggregate
         std::unordered_map<int, int64_t> volume_by_year;
         std::unordered_map<int, int64_t> brazil_by_year;
         if (!ids.empty()) {
@@ -424,7 +449,7 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
         last_share_1996 = share_1996;
     }
 
-    // SQL ground-truth check
+    // SQL validation
     {
         Connection con(*context.client.db);
         auto r = con.Query(
@@ -512,7 +537,8 @@ void BMTableScan::BMTPCH_Q8(ExecutionContext &context, const PhysicalTableScan &
             cell(bn == "CRoaring" ? s : z);
             cell(bn == "CRoaringRun" ? s : z);
             cell(bn == "EWAH" ? s : z);
-            cell(z); cell(z);
+            cell(bn == "Bitset" ? s : z);
+            cell(bn == "Bitset+AVX512" ? s : z);
             cell(bn == "Concise" ? s : z);
             csv << "0,0,0,0,0,0,0\n";
         };

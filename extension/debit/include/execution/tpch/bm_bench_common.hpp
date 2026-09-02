@@ -42,7 +42,7 @@ inline std::string resolve_bitmap_dir(const std::string& rel) {
     return p.string();
 }
 
-enum class Backend { ALL, WAH, CB, CB_BPE, CR, CR_BPE, CRR, EW, BS, BSA, CON, CB_GE };
+enum class Backend { ALL, WAH, CB, CB_BPE, CR, CR_BPE, CRR, EW, BS, BSA, CON, CB_GE, BSR };
 
 // parse backend env
 inline Backend parse_backend(const char* legacy_env) {
@@ -65,9 +65,10 @@ inline Backend parse_backend(const char* legacy_env) {
     if (s == "bs"  || s == "bitset")                                return Backend::BS;
     if (s == "bsa" || s == "bitset_avx512" || s == "bitset_simd")   return Backend::BSA;
     if (s == "con" || s == "concise")                               return Backend::CON;
+    if (s == "bsr" || s == "qfilter" || s == "qfilter_bsr")         return Backend::BSR;
 
     std::cerr << "[DEBIT_BM] unknown value '" << env
-              << "' — defaulting to ALL. Accepted: all|wah|cb|cb_bpe|cr|cr_bpe|crr|ew|bs|bsa|con\n";
+              << "' — defaulting to ALL. Accepted: all|wah|cb|cb_bpe|cr|cr_bpe|crr|ew|bs|bsa|con|bsr\n";
     return Backend::ALL;
 }
 
@@ -85,6 +86,7 @@ inline const char* backend_label(Backend b) {
         case Backend::BS:  return "Bitset";
         case Backend::BSA: return "Bitset+AVX512";
         case Backend::CON: return "Concise";
+        case Backend::BSR: return "QFilter-BSR";
     }
     return "?";
 }

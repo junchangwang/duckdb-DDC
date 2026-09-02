@@ -54,7 +54,7 @@ static void q14_get_rowids(const Btv& b, std::vector<row_t>* out);
 template <>
 void q14_get_rowids<DDC>(const DDC& b, std::vector<row_t>* out) {
     out->clear();
-    // expand via byte LUT
+    // Row IDs
     b.for_each_literal([&](uint32_t word_pos, uint8_t val) {
         size_t rbase = static_cast<size_t>(word_pos) * 8;
         const auto& e = bm_bench::byte_lut[val];
@@ -83,6 +83,23 @@ void q14_get_rowids<ConciseSet<false>>(const ConciseSet<false>& b, std::vector<r
     out->clear();
     for (auto it = b.begin(); it != b.end(); ++it) out->push_back(static_cast<row_t>(*it));
 }
+template <>
+void q14_get_rowids<::bitset::BitsetVector>(const ::bitset::BitsetVector& b, std::vector<row_t>* out) {
+    out->clear();
+    const uint64_t* w = b.words();
+    const uint64_t nb = b.num_bits();
+    for (size_t i = 0; i < b.words_cnt(); ++i) {
+        uint64_t x = w[i];
+        const uint64_t base = static_cast<uint64_t>(i) * 64;
+        while (x) {
+            const uint64_t pos = base + __builtin_ctzll(x);
+            if (pos >= nb) return;
+            out->push_back(static_cast<row_t>(pos));
+            x &= x - 1;
+        }
+    }
+}
+
 
 void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan &op)
 {
@@ -115,7 +132,7 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
         std::cout << "\n--- Iteration " << iter+1 << "/" << Q14_ITERATIONS
                   << (warm ? " (warm-up)" : "") << " ---" << std::endl;
 
-        // Phase A: shipdate filter
+        // Shipdate filter
         auto t0 = clk::now();
         auto& lineitem_tx = DuckTransaction::Get(context.client, lineitem_table.catalog);
 
@@ -126,7 +143,7 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
             for (size_t i = 0; i < n; i++) ids[i] = static_cast<row_t>(p[i]);
         };
 
-        // backend dispatch: 1-key GE vs range OR
+        // Backend dispatch
         if (auto* cbge = dynamic_cast<bm_index::IndexedDDCGE*>(idx_use)) {
 
             fastpath_single_key(cbge, Q14_MONTH_KEY);
@@ -143,6 +160,14 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
                 fastpath_single_key(cr, Q14_MONTH_KEY);
             } else {
                 roaring::Roaring ship_filter = cr->or_range(Q14_DATE_LO, Q14_DATE_HI - 1);
+                q14_get_rowids(ship_filter, &ids);
+            }
+        } else if (auto* bs = dynamic_cast<bm_index::IndexedBitsetAVX512*>(idx_use)) {
+            if (use_month_ge) {
+                fastpath_single_key(bs, Q14_MONTH_KEY);
+            } else {
+                ::bitset::BitsetVector ship_filter = bs->make_empty();
+                bs->apply_or_range_to(ship_filter, Q14_DATE_LO, Q14_DATE_HI - 1);
                 q14_get_rowids(ship_filter, &ids);
             }
         } else if (auto* wah = dynamic_cast<bm_index::IndexedWAH*>(idx_use)) {
@@ -173,7 +198,7 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
         }
         auto t_a = clk::now();
 
-        // Phase B: scan part, collect PROMO keys
+        // Promo keys
         std::unordered_set<int64_t> promo_partkeys;
         promo_partkeys.reserve(50000);
         {
@@ -203,7 +228,7 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
         }
         auto t_b = clk::now();
 
-        // Phase C: BMFetch lineitem + aggregate
+        // Fetch aggregate
         int64_t total_rev = 0, promo_rev = 0;
         if (!ids.empty()) {
             vector<StorageIndex> col_ids = {StorageIndex(1), StorageIndex(5), StorageIndex(6)};
@@ -257,7 +282,7 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
     }
 
     {
-        // SQL ground-truth check
+        // SQL validation
         Connection con(*context.client.db);
         auto r = con.Query(
             "SELECT 100.00 * sum(CASE WHEN p_type LIKE 'PROMO%' "
@@ -323,7 +348,8 @@ void BMTableScan::BMTPCH_Q14(ExecutionContext &context, const PhysicalTableScan 
             cell(bn == "CRoaring" ? s : z);
             cell(bn == "CRoaringRun" ? s : z);
             cell(bn == "EWAH" ? s : z);
-            cell(z); cell(z);
+            cell(bn == "Bitset" ? s : z);
+            cell(bn == "Bitset+AVX512" ? s : z);
             cell(bn == "Concise" ? s : z);
             csv << "0,0,0,0,0,0,0\n";
         };

@@ -78,6 +78,23 @@ void q17_get_rowids<ConciseSet<false>>(const ConciseSet<false>& b, std::vector<r
     out->clear();
     for (auto it = b.begin(); it != b.end(); ++it) out->push_back(static_cast<row_t>(*it));
 }
+template <>
+void q17_get_rowids<::bitset::BitsetVector>(const ::bitset::BitsetVector& b, std::vector<row_t>* out) {
+    out->clear();
+    const uint64_t* w = b.words();
+    const uint64_t nb = b.num_bits();
+    for (size_t i = 0; i < b.words_cnt(); ++i) {
+        uint64_t x = w[i];
+        const uint64_t base = static_cast<uint64_t>(i) * 64;
+        while (x) {
+            const uint64_t pos = base + __builtin_ctzll(x);
+            if (pos >= nb) return;
+            out->push_back(static_cast<row_t>(pos));
+            x &= x - 1;
+        }
+    }
+}
+
 
 // Q17 entry
 void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan &op)
@@ -110,13 +127,14 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
         auto* cb_pk  = dynamic_cast<bm_index::IndexedDDC*>(idx_pk);
         auto* cr_pk  = dynamic_cast<bm_index::IndexedCRoaring*>(idx_pk);
         auto* wah_pk = dynamic_cast<bm_index::IndexedWAH*>(idx_pk);
+        auto* bs_pk  = dynamic_cast<bm_index::IndexedBitsetAVX512*>(idx_pk);
         auto* ew_pk  = dynamic_cast<bm_index::IndexedEWAH*>(idx_pk);
         auto* con_pk = dynamic_cast<bm_index::IndexedConcise*>(idx_pk);
 
         std::vector<int64_t> matched_pks;
         matched_pks.reserve(2000);
         {
-            // scan part, filter brand/container
+            // Part filter
             auto& tx = DuckTransaction::Get(context.client, part_table.catalog);
             TableScanState ss;
             vector<StorageIndex> col_ids = {StorageIndex(0), StorageIndex(3), StorageIndex(6)};
@@ -148,12 +166,15 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
 
         std::vector<row_t> ids;
 
-        // partkey OR -> rowids (per backend)
+        // Bitmap filter
         if (cb_pk) {
             auto bv = cb_pk->or_many(matched_pks); q17_get_rowids(bv, &ids);
         } else if (cr_pk) {
 
             roaring::Roaring bv = cr_pk->or_many(matched_pks);
+            q17_get_rowids(bv, &ids);
+        } else if (bs_pk) {
+            ::bitset::BitsetVector bv = bs_pk->or_many(matched_pks);
             q17_get_rowids(bv, &ids);
         } else if (wah_pk) {
             auto bv = wah_pk->or_many(matched_pks); q17_get_rowids(bv, &ids);
@@ -195,7 +216,7 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
                 auto qt = FlatVector::GetData<int64_t>(chunk.data[1]);
                 auto pr = FlatVector::GetData<int64_t>(chunk.data[2]);
                 for (idx_t i = 0; i < chunk.size(); i++) {
-                    // accumulate per-pk qty/count
+                    // Quantity stats
                     auto& slot = pk_qty[pk[i]];
                     slot.first  += qt[i];
                     slot.second += 1;
@@ -205,13 +226,13 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
                 }
             }
         }
-        // 0.2 * avg(qty) per pk
+        // Quantity threshold
         std::unordered_map<int64_t, double> pk_avg_qty;
         for (auto& [k, v] : pk_qty)
             pk_avg_qty[k] = 0.2 * double(v.first) / double(v.second);
         auto t_b = clk::now();
 
-        // filter qty<avg, sum price
+        // Final aggregate
         int64_t sum_extprice = 0;
         for (size_t i = 0; i < col_pk.size(); i++) {
             auto it = pk_avg_qty.find(col_pk[i]);
@@ -242,7 +263,7 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
     }
 
     {
-        // verify vs SQL
+        // SQL validation
         Connection con(*context.client.db);
         auto r = con.Query(
             "SELECT sum(l_extendedprice) / 7.0 AS avg_yearly "
@@ -307,7 +328,8 @@ void BMTableScan::BMTPCH_Q17(ExecutionContext &context, const PhysicalTableScan 
             cell(bn == "CRoaring" ? s : z);
             cell(bn == "CRoaringRun" ? s : z);
             cell(bn == "EWAH" ? s : z);
-            cell(z); cell(z);
+            cell(bn == "Bitset" ? s : z);
+            cell(bn == "Bitset+AVX512" ? s : z);
             cell(bn == "Concise" ? s : z);
             csv << "0,0,0,0,0,0,0\n";
         };

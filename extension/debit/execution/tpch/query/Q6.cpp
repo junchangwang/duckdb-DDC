@@ -22,6 +22,7 @@
 #include "execution/tpch/bm_baseline_loaders.hpp"
 #include "execution/tpch/bm_bench_common.hpp"
 #include "execution/tpch/indexed_bitmap.hpp"
+#include "execution/tpch/bsr_index.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -45,7 +46,7 @@ static std::once_flag q6_once_flag_new;
 static std::mutex     q6_build_mutex;
 static std::atomic<bool> q6_built{false};
 
-// SQL ground truth
+// SQL validation
 static void q6_check_correctness(ExecutionContext& context,
                                  const char* backend_name,
                                  size_t bitmap_rows) {
@@ -116,7 +117,6 @@ static void q6_emit_csv(const char* backend_name,
     }
 }
 
-// rowids via byte LUT
 static void q6_get_rowids(const DDC& btv, std::vector<row_t>* out) {
     out->clear();
     btv.for_each_literal([&](uint32_t word_pos, uint8_t val) {
@@ -140,6 +140,22 @@ static void q6_get_rowids(const ibis::bitvector& btv, std::vector<row_t>* out) {
     while (*pit != 0xFFFFFFFFU) {
         out->push_back(static_cast<row_t>(*pit));
         pit.next();
+    }
+}
+
+static void q6_get_rowids(const ::bitset::BitsetVector& btv, std::vector<row_t>* out) {
+    out->clear();
+    const uint64_t* w = btv.words();
+    const uint64_t nb = btv.num_bits();
+    for (size_t i = 0; i < btv.words_cnt(); ++i) {
+        uint64_t x = w[i];
+        const uint64_t base = static_cast<uint64_t>(i) * 64;
+        while (x) {
+            const uint64_t pos = base + __builtin_ctzll(x);
+            if (pos >= nb) return;
+            out->push_back(static_cast<row_t>(pos));
+            x &= x - 1;
+        }
     }
 }
 
@@ -169,7 +185,6 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
         std::cout << "================================================================" << std::endl;
     });
 
-    // preloaded indexes
     auto* idx_ship_ge = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_GE);
     auto* idx_disc    = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_discount);
     auto* idx_qty     = static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_quantity);
@@ -184,7 +199,47 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
 
     size_t num_rows = idx_disc->num_rows();
 
-    // DDC backend
+    if (auto* bs_ship = dynamic_cast<bm_index::IndexedBSR*>(idx_ship_ge)) {
+        auto* bs_disc = dynamic_cast<bm_index::IndexedBSR*>(idx_disc);
+        auto* bs_qty  = dynamic_cast<bm_index::IndexedBSR*>(idx_qty);
+        if (!bs_disc || !bs_qty) { std::cerr << "[Q6] BSR type mismatch.\n"; return; }
+
+        auto t_a = clk::now();
+        bm_index::BsrSet btv_ship = bs_ship->single_key(Q6_SHIPDATE_YEAR);
+        auto t_b = clk::now();
+        bm_index::BsrSet btv_disc = bs_disc->or_range(Q6_DISCOUNT_LO, Q6_DISCOUNT_HI);
+        auto t_c = clk::now();
+        bm_index::BsrSet btv_qty  = bs_qty->or_range(Q6_QUANTITY_LO, Q6_QUANTITY_HI_EXCL - 1);
+        auto t_d = clk::now();
+        bm_index::BsrSet r1 = bm_index::bsr_and(btv_ship, btv_disc);
+        bm_index::BsrSet r2 = bm_index::bsr_and(r1, btv_qty);
+        auto t_e = clk::now();
+        r2.get_rowids(row_ids);
+        auto t_f = clk::now();
+
+        auto ms = [](clk::time_point a, clk::time_point b) {
+            return std::chrono::duration_cast<std::chrono::microseconds>(b - a).count() / 1000.0;
+        };
+        std::cout << "  [Q6 QFilter-BSR] ship_ge=" << ms(t_a, t_b)
+                  << "  disc_or=" << ms(t_b, t_c)
+                  << "  qty_or="  << ms(t_c, t_d)
+                  << "  AND="     << ms(t_d, t_e)
+                  << "  rowids="  << ms(t_e, t_f)
+                  << "  total="   << ms(t0, t_f)
+                  << "  rows="    << row_ids->size() << std::endl;
+        q6_emit_csv("QFilter-BSR", {
+            {"ship_GE",     ms(t_a, t_b)},
+            {"OR_discount", ms(t_b, t_c)},
+            {"OR_quantity", ms(t_c, t_d)},
+            {"AND",         ms(t_d, t_e)},
+            {"GetRowIds",   ms(t_e, t_f)},
+            {"TOTAL",       ms(t0, t_f)},
+        });
+        q6_check_correctness(context, "QFilter-BSR", row_ids->size());
+        q6_built.store(true);
+        return;
+    }
+
     if (auto* cb_ship = dynamic_cast<bm_index::IndexedDDCGE*>(idx_ship_ge)) {
         auto* cb_disc_x = dynamic_cast<bm_index::IndexedDDC*>(idx_disc);
         auto* cb_qty_x  = dynamic_cast<bm_index::IndexedDDC*>(idx_qty);
@@ -194,13 +249,12 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
         auto* cb_qty_bpe = dynamic_cast<bm_index::IndexedDDCBPE*>(
             static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_quantity_BPE));
 
-        DDC btv_ship = DDC::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
-
         auto t_a = clk::now();
+        // Timed seed
+        DDC btv_ship = DDC::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
         cb_ship->apply_or_to(btv_ship, Q6_SHIPDATE_YEAR);
         auto t_b = clk::now();
         DDC btv_disc;
-        // discount range OR
         if (cb_disc_bpe) {
 
             int hi_b = cb_disc_bpe->bucket_of(Q6_DISCOUNT_HI);
@@ -218,7 +272,6 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
         }
         auto t_c = clk::now();
         DDC btv_qty;
-        // quantity range OR
         if (cb_qty_bpe) {
 
             int hi_b = cb_qty_bpe->bucket_of(Q6_QUANTITY_HI_EXCL - 1);
@@ -238,7 +291,6 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
         }
         auto t_d = clk::now();
 
-        // 3-way AND
         btv_disc &= btv_qty;
         btv_disc &= btv_ship;
 
@@ -270,7 +322,6 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
         return;
     }
 
-    // CRoaring backend
     if (auto* cr_ship = dynamic_cast<bm_index::IndexedCRoaring*>(idx_ship_ge)) {
         auto* cr_disc_x = dynamic_cast<bm_index::IndexedCRoaring*>(idx_disc);
         auto* cr_qty_x  = dynamic_cast<bm_index::IndexedCRoaring*>(idx_qty);
@@ -335,7 +386,51 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
         return;
     }
 
-    // WAH backend
+    if (auto* bs_ship = dynamic_cast<bm_index::IndexedBitsetAVX512*>(idx_ship_ge)) {
+        auto* bs_disc_x = dynamic_cast<bm_index::IndexedBitsetAVX512*>(idx_disc);
+        auto* bs_qty_x  = dynamic_cast<bm_index::IndexedBitsetAVX512*>(idx_qty);
+        if (!bs_disc_x || !bs_qty_x) { std::cerr << "[Q6] Bitset type mismatch.\n"; return; }
+        const bool simd = bs_ship->use_simd();
+
+        auto t_a = clk::now();
+        ::bitset::BitsetVector btv_ship = bs_ship->make_empty();
+        bs_ship->apply_or_to(btv_ship, Q6_SHIPDATE_YEAR);
+        auto t_b = clk::now();
+        ::bitset::BitsetVector btv_disc = bs_disc_x->make_empty();
+        bs_disc_x->apply_or_range_to(btv_disc, Q6_DISCOUNT_LO, Q6_DISCOUNT_HI);
+        auto t_c = clk::now();
+        ::bitset::BitsetVector btv_qty = bs_qty_x->make_empty();
+        bs_qty_x->apply_or_range_to(btv_qty, Q6_QUANTITY_LO, Q6_QUANTITY_HI_EXCL - 1);
+        auto t_d = clk::now();
+        ::bitset::BitsetVector::word_and_inplace(btv_ship, btv_disc, simd);
+        ::bitset::BitsetVector::word_and_inplace(btv_ship, btv_qty,  simd);
+        auto t_e = clk::now();
+        q6_get_rowids(btv_ship, row_ids);
+        auto t_f = clk::now();
+
+        auto ms = [](clk::time_point a, clk::time_point b) {
+            return std::chrono::duration_cast<std::chrono::microseconds>(b - a).count() / 1000.0;
+        };
+        std::cout << "  [Q6 " << idx_disc->backend_name() << "] ship_ge=" << ms(t_a, t_b)
+                  << "  disc_or=" << ms(t_b, t_c)
+                  << "  qty_or="  << ms(t_c, t_d)
+                  << "  AND="     << ms(t_d, t_e)
+                  << "  rowids="  << ms(t_e, t_f)
+                  << "  total="   << ms(t0, t_f)
+                  << "  rows="    << row_ids->size() << std::endl;
+        q6_emit_csv(idx_disc->backend_name(), {
+            {"ship_GE",     ms(t_a, t_b)},
+            {"OR_discount", ms(t_b, t_c)},
+            {"OR_quantity", ms(t_c, t_d)},
+            {"AND",         ms(t_d, t_e)},
+            {"GetRowIds",   ms(t_e, t_f)},
+            {"TOTAL",       ms(t0, t_f)},
+        });
+        q6_check_correctness(context, idx_disc->backend_name(), row_ids->size());
+        q6_built.store(true);
+        return;
+    }
+
     if (auto* wah_ship = dynamic_cast<bm_index::IndexedWAH*>(idx_ship_ge)) {
         auto* wah_disc_x = dynamic_cast<bm_index::IndexedWAH*>(idx_disc);
         auto* wah_qty_x  = dynamic_cast<bm_index::IndexedWAH*>(idx_qty);
@@ -377,7 +472,6 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
         return;
     }
 
-    // EWAH backend
     if (auto* ew_ship = dynamic_cast<bm_index::IndexedEWAH*>(idx_ship_ge)) {
         auto* ew_disc_x = dynamic_cast<bm_index::IndexedEWAH*>(idx_disc);
         auto* ew_qty_x  = dynamic_cast<bm_index::IndexedEWAH*>(idx_qty);
@@ -420,7 +514,6 @@ void BMTableScan::TPCH_Q6_Lineitem_GetRowIds(ExecutionContext &context, vector<r
         return;
     }
 
-    // Concise backend
     if (auto* con_ship = dynamic_cast<bm_index::IndexedConcise*>(idx_ship_ge)) {
         auto* con_disc_x = dynamic_cast<bm_index::IndexedConcise*>(idx_disc);
         auto* con_qty_x  = dynamic_cast<bm_index::IndexedConcise*>(idx_qty);
@@ -475,7 +568,6 @@ SourceResultType BMTableScan::BMTPCH_Q6(ExecutionContext &context, DataChunk &ch
         num_idlist = row_ids->size();
     }
 
-    // BMFetch by rowid
     if (*cursor < row_ids->size()) {
         vector<StorageIndex> storage_column_ids;
         storage_column_ids.push_back(StorageIndex(6));

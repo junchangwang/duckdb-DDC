@@ -16,6 +16,7 @@
 #endif
 
 #include "execution/tpch/indexed_bitmap.hpp"
+#include "execution/tpch/bsr_index.hpp"
 #include "execution/tpch/bm_bench_common.hpp"
 #include <chrono>
 #include <iostream>
@@ -47,7 +48,6 @@ enum class Q1ColKind {
     DateGEMonth,
 };
 
-// epoch day -> year
 static int64_t epoch_day_to_year(int32_t day) {
     static constexpr int boundaries[] = {
          8035,  8401,  8766,  9131,  9496,  9862, 10227, 10592, 10957
@@ -62,7 +62,6 @@ static int64_t epoch_day_to_year(int32_t day) {
     return 2001;
 }
 
-// epoch day -> year*100+month
 static int64_t epoch_day_to_year_month(int32_t day) {
 
     static constexpr int year_start[] = {
@@ -97,7 +96,6 @@ struct ColInfo {
     Q1ColKind kind;
 };
 
-// column -> table/storage
 static ColInfo resolve_column(const std::string& col) {
 
     if (col == "orderkey")    return {"lineitem", 0,  Q1ColKind::Int64};
@@ -145,7 +143,6 @@ static void** resolve_context_field(ClientContext& ctx, const std::string& col) 
     return nullptr;
 }
 
-// scan column to int64
 static std::vector<int64_t> scan_column(ClientContext& ctx, const ColInfo& info) {
     auto& tbl = Catalog::GetEntry<TableCatalogEntry>(ctx, "", "", info.table);
     auto& tx  = DuckTransaction::Get(ctx, tbl.catalog);
@@ -154,7 +151,7 @@ static std::vector<int64_t> scan_column(ClientContext& ctx, const ColInfo& info)
     tbl.GetStorage().InitializeScan(ctx, tx, ss, col_ids);
     vector<LogicalType> types = {tbl.GetColumns().GetColumnTypes()[info.storage_index]};
     std::vector<int64_t> out;
-    while (true) {  // scan loop
+    while (true) {
         DataChunk chunk; chunk.Initialize(ctx, types);
         tbl.GetStorage().Scan(tx, chunk, ss);
         if (chunk.size() == 0) break;
@@ -182,7 +179,7 @@ static std::vector<int64_t> scan_column(ClientContext& ctx, const ColInfo& info)
                     out.push_back(epoch_day_to_year_month(p[i]));
                 break;
             }
-            case Q1ColKind::VarChar: {  // first byte as key
+            case Q1ColKind::VarChar: {
                 auto& vec = chunk.data[0];
                 vec.Flatten(chunk.size());
                 auto p = FlatVector::GetData<string_t>(vec);
@@ -204,7 +201,6 @@ static std::vector<int64_t> scan_column(ClientContext& ctx, const ColInfo& info)
 
 }
 
-// load_bitmap pragma: scan + build index
 static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters &parameters) {
     auto col = parameters.values[0].GetValue<std::string>();
     auto info = resolve_column(col);
@@ -230,7 +226,6 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
               << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()
               << " ms" << std::endl;
 
-    // BPE range config
     bool bpe_path = false;
     int64_t bpe_lo = 0, bpe_hi = 0, bpe_bs = 1;
     if (col == "shipdate_BPE") {
@@ -257,7 +252,7 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
     bool ge_month_path = (col == "shipdate_GE_month");
 
     using B = bm_bench::Backend;
-    switch (backend) {  // per-backend build
+    switch (backend) {
         case B::CB:
         case B::CB_BPE: {
             if (bpe_path) {
@@ -300,6 +295,18 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
             }
             break;
         }
+        case B::BS:
+        case B::BSA: {
+            if (bpe_path) {
+                std::cerr << "[load_bitmap] " << col
+                          << ": Bitset BPE not implemented; skipping.\n";
+                return "";
+            }
+            auto* x = new bm_index::IndexedBitsetAVX512();
+            x->build(values, values.size(), backend == B::BSA);
+            idx = x;
+            break;
+        }
         case B::WAH: {
             if (bpe_path) {
                 std::cerr << "[load_bitmap] " << col
@@ -333,6 +340,17 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
             idx = x;
             break;
         }
+        case B::BSR: {
+            if (bpe_path) {
+                std::cerr << "[load_bitmap] " << col
+                          << ": BSR BPE not implemented; skipping.\n";
+                return "";
+            }
+            auto* x = new bm_index::IndexedBSR();
+            x->build(values, values.size());
+            idx = x;
+            break;
+        }
         case B::CB_GE: {
 
             if (bpe_path) {
@@ -348,7 +366,6 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
                 x->build(values, values.size());
                 idx = x;
 
-                // auto-build companion GE
                 if (col == "shipdate" && context.bitmap_shipdate_GE == nullptr) {
                     auto t_ge0 = clock::now();
                     std::vector<int64_t> year_values;
@@ -395,7 +412,7 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
         }
     }
     auto t2 = clock::now();
-    *field = idx;  // publish to context
+    *field = idx;
     std::cerr << "[load_bitmap] " << col << ": built "
               << idx->backend_name() << " index ("
               << idx->num_keys() << " keys, "
@@ -421,7 +438,7 @@ static string PragmaLoadBitmap(ClientContext &context, const FunctionParameters 
     return "";
 }
 
-// register pragmas
+// Register pragmas
 static void LoadInternal(DuckDB &db) {
     auto &db_instance = *db.instance;
 

@@ -84,6 +84,23 @@ void q4_get_rowids<ConciseSet<false>>(const ConciseSet<false>& b, std::vector<ro
     out->clear();
     for (auto it = b.begin(); it != b.end(); ++it) out->push_back(static_cast<row_t>(*it));
 }
+template <>
+void q4_get_rowids<::bitset::BitsetVector>(const ::bitset::BitsetVector& b, std::vector<row_t>* out) {
+    out->clear();
+    const uint64_t* w = b.words();
+    const uint64_t nb = b.num_bits();
+    for (size_t i = 0; i < b.words_cnt(); ++i) {
+        uint64_t x = w[i];
+        const uint64_t base = static_cast<uint64_t>(i) * 64;
+        while (x) {
+            const uint64_t pos = base + __builtin_ctzll(x);
+            if (pos >= nb) return;
+            out->push_back(static_cast<row_t>(pos));
+            x &= x - 1;
+        }
+    }
+}
+
 
 // Q4 entry
 void BMTableScan::BMTPCH_Q4(ExecutionContext &context, const PhysicalTableScan &op)
@@ -113,7 +130,7 @@ void BMTableScan::BMTPCH_Q4(ExecutionContext &context, const PhysicalTableScan &
         auto t0 = clk::now();
         auto& lineitem_tx = DuckTransaction::Get(context.client, lineitem_table.catalog);
 
-        // PhaseA: scan orders, date filter
+        // Orders filter
         std::unordered_map<int64_t, std::string> orderkey_priority;
         orderkey_priority.reserve(600000);
         {
@@ -140,7 +157,7 @@ void BMTableScan::BMTPCH_Q4(ExecutionContext &context, const PhysicalTableScan &
         }
         auto t_a = clk::now();
 
-        // PhaseB: orderkey OR -> rowids
+        // Bitmap filter
         std::vector<row_t> ids;
         size_t num_rows = idx_okey->num_rows();
         std::vector<int64_t> keys;
@@ -152,6 +169,9 @@ void BMTableScan::BMTPCH_Q4(ExecutionContext &context, const PhysicalTableScan &
         } else if (auto* cr = dynamic_cast<bm_index::IndexedCRoaring*>(idx_okey)) {
 
             roaring::Roaring btv = cr->or_many(keys);
+            q4_get_rowids(btv, &ids);
+        } else if (auto* bs = dynamic_cast<bm_index::IndexedBitsetAVX512*>(idx_okey)) {
+            ::bitset::BitsetVector btv = bs->or_many(keys);
             q4_get_rowids(btv, &ids);
         } else if (auto* wah = dynamic_cast<bm_index::IndexedWAH*>(idx_okey)) {
             ibis::bitvector btv = wah->or_many(keys);
@@ -168,7 +188,7 @@ void BMTableScan::BMTPCH_Q4(ExecutionContext &context, const PhysicalTableScan &
         }
         auto t_b = clk::now();
 
-        // PhaseC: BMFetch lineitem, EXISTS
+        // Lineitem probe
         std::unordered_set<int64_t> orderkey_late;
         orderkey_late.reserve(600000);
         if (!ids.empty()) {
@@ -199,7 +219,7 @@ void BMTableScan::BMTPCH_Q4(ExecutionContext &context, const PhysicalTableScan &
         }
         auto t_c = clk::now();
 
-        // PhaseD: count by priority
+        // Priority count
         std::map<std::string, int64_t> priority_count;
         for (int64_t okey : orderkey_late) {
             auto it = orderkey_priority.find(okey);
@@ -228,7 +248,7 @@ void BMTableScan::BMTPCH_Q4(ExecutionContext &context, const PhysicalTableScan &
         last_priority_count = priority_count;
     }
 
-    // verify vs SQL
+    // SQL validation
     {
         Connection con(*context.client.db);
         auto r = con.Query(
@@ -306,7 +326,8 @@ void BMTableScan::BMTPCH_Q4(ExecutionContext &context, const PhysicalTableScan &
             cell(bn == "CRoaring" ? s : z);
             cell(bn == "CRoaringRun" ? s : z);
             cell(bn == "EWAH" ? s : z);
-            cell(z); cell(z);
+            cell(bn == "Bitset" ? s : z);
+            cell(bn == "Bitset+AVX512" ? s : z);
             cell(bn == "Concise" ? s : z);
             csv << "0,0,0,0,0,0,0\n";
         };

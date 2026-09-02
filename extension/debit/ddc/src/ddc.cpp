@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <stdexcept>
 
@@ -34,7 +35,7 @@ struct DDCLoadStats {
 
 DDCLoadStats g_load_stats;
 
-__attribute__((destructor))  // atexit dump
+__attribute__((destructor))
 void ddc_print_load_breakdown() {
     if (g_load_stats.n.load() == 0) return;
     const char* off = std::getenv("DDC_NO_BREAKDOWN");
@@ -94,7 +95,7 @@ uint64_t DDCBtv::get_literal(size_t idx) const {
 }
 
 std::vector<uint8_t>
-DDCBtv::expand_l3() const {  // L4 -> L3
+DDCBtv::expand_l3() const {
     if (state_ != State::Compressed) {
         size_t expected_bytes = (l3_count_ + 7) / 8;
         if (l3_bits_.size() == expected_bytes)
@@ -118,7 +119,7 @@ DDCBtv::expand_l3() const {  // L4 -> L3
 }
 
 std::vector<uint8_t>
-DDCBtv::expand_l2() const {  // L3 -> L2
+DDCBtv::expand_l2() const {
     size_t l2_byte_count = (l2_count_ + 7) / 8;
     uint8_t l2_fill_val = l2_fill_ones_ ? 0xFF : 0x00;
     std::vector<uint8_t> l2(l2_byte_count, l2_fill_val);
@@ -171,7 +172,7 @@ DDCBtv::compact_l2_l3(size_t actual_l1_count) {
         if (l2_flat_[i] != 0xFF) l2_non_ff++;
     }
 
-    bool best_l2_fill_lit = (l2_non_ff < l2_nonzero);  // pick fill polarity
+    bool best_l2_fill_lit = (l2_non_ff < l2_nonzero);
     uint8_t l2_fill_val = best_l2_fill_lit ? 0xFF : 0x00;
 
     size_t l3_byte_count = (l2_byte_count + 7) / 8;
@@ -195,7 +196,7 @@ DDCBtv::compact_l2_l3(size_t actual_l1_count) {
 }
 
 void
-DDCBtv::compress_l3_to_l4() {  // top level
+DDCBtv::compress_l3_to_l4() {
     size_t l3_byte_count = l3_bits_.size();
     size_t l3_nonzero = 0;
     size_t l3_non_ff  = 0;
@@ -226,7 +227,7 @@ DDCBtv::compress_l3_to_l4() {  // top level
     l3_literals_.shrink_to_fit();
 }
 
-DDCBtv  // sparse compress
+DDCBtv
 DDCBtv::compress_sparse_segment(const std::vector<uint16_t>& sorted_positions,
                                    size_t seg_bits, bool l1_fill_ones) {
     if (l1_fill_ones) {
@@ -242,11 +243,18 @@ DDCBtv::compress_sparse_segment(const std::vector<uint16_t>& sorted_positions,
     if (num_words == 0) return result;
     result.l2_count_ = num_words;
 
+    // Stack layers
     size_t l2_byte_count = (num_words + 7) / 8;
-    std::vector<uint8_t> l2_flat(l2_byte_count, 0);
+    size_t l3_byte_count = (l2_byte_count + 7) / 8;
+    uint8_t l2_flat[1024];
+    uint8_t l3_flat[128];
+    std::memset(l2_flat, 0, l2_byte_count);
+    std::memset(l3_flat, 0, l3_byte_count);
 
+    result.l1_literals_.reserve(sorted_positions.size());
     size_t i = 0;
-    while (i < sorted_positions.size()) {  // pack positions per word
+    size_t l2_lo = l2_byte_count, l2_hi = 0;
+    while (i < sorted_positions.size()) {
         size_t word_idx = sorted_positions[i] / 8;
         uint8_t word = 0;
         while (i < sorted_positions.size() &&
@@ -256,39 +264,77 @@ DDCBtv::compress_sparse_segment(const std::vector<uint16_t>& sorted_positions,
             i++;
         }
 
-        l2_flat[word_idx / 8] |= uint8_t(1) << (word_idx % 8);
+        size_t l2_idx = word_idx / 8;
+        l2_flat[l2_idx] |= uint8_t(1) << (word_idx % 8);
+        if (l2_idx < l2_lo) l2_lo = l2_idx;
+        if (l2_idx + 1 > l2_hi) l2_hi = l2_idx + 1;
         result.l1_literals_.push_back(word);
     }
     result.l1_literal_count_ = result.l1_literals_.size();
+    if (l2_lo > l2_hi) { l2_lo = 0; l2_hi = 0; }
 
+    // Sparse range
     size_t l2_nonzero = 0, l2_non_ff = 0;
-    for (size_t k = 0; k < l2_byte_count; k++) {
+    for (size_t k = l2_lo; k < l2_hi; k++) {
         if (l2_flat[k] != 0x00) l2_nonzero++;
         if (l2_flat[k] != 0xFF) l2_non_ff++;
     }
+    l2_non_ff += l2_byte_count - (l2_hi - l2_lo);
     bool best_l2_fill_lit = (l2_non_ff < l2_nonzero);
     uint8_t l2_fill_val = best_l2_fill_lit ? 0xFF : 0x00;
-    size_t l3_byte_count = (l2_byte_count + 7) / 8;
 
     result.l2_fill_ones_ = best_l2_fill_lit;
     result.l3_count_     = l2_byte_count;
-    result.l3_bits_.assign(l3_byte_count, 0);
-    for (size_t k = 0; k < l2_byte_count; k++) {
+    size_t l3_lo = l2_lo / 8, l3_hi = (l2_hi + 7) / 8;
+    if (best_l2_fill_lit) { l3_lo = 0; l3_hi = l3_byte_count; }
+    size_t l2_lit_count = 0;
+    const size_t sc_lo = best_l2_fill_lit ? 0 : l2_lo;
+    const size_t sc_hi = best_l2_fill_lit ? l2_byte_count : l2_hi;
+    for (size_t k = sc_lo; k < sc_hi; k++) {
         if (l2_flat[k] != l2_fill_val) {
-            result.l3_bits_[k / 8] |= uint8_t(1) << (k % 8);
-            result.l2_literals_.push_back(l2_flat[k]);
+            l3_flat[k / 8] |= uint8_t(1) << (k % 8);
+            l2_lit_count++;
         }
+    }
+    result.l2_literals_.reserve(l2_lit_count);
+    for (size_t k = sc_lo; k < sc_hi; k++) {
+        if (l2_flat[k] != l2_fill_val)
+            result.l2_literals_.push_back(l2_flat[k]);
     }
     result.l2_literal_count_ = result.l2_literals_.size();
 
-    result.compress_l3_to_l4();
-
-    result.l1_literals_.shrink_to_fit();
-    result.l2_literals_.shrink_to_fit();
+    // Inline L4
+    {
+        size_t l3_nonzero = 0, l3_non_ff = 0;
+        for (size_t k = l3_lo; k < l3_hi; k++) {
+            if (l3_flat[k] != 0x00) l3_nonzero++;
+            if (l3_flat[k] != 0xFF) l3_non_ff++;
+        }
+        l3_non_ff += l3_byte_count - (l3_hi - l3_lo);
+        bool best_l3_fill_lit = (l3_non_ff < l3_nonzero);
+        uint8_t l3_fill_val = best_l3_fill_lit ? 0xFF : 0x00;
+        result.l3_fill_ones_ = best_l3_fill_lit;
+        result.l4_count_ = l3_byte_count;
+        result.l4_bits_.assign((l3_byte_count + 7) / 8, 0);
+        const size_t t_lo = best_l3_fill_lit ? 0 : l3_lo;
+        const size_t t_hi = best_l3_fill_lit ? l3_byte_count : l3_hi;
+        size_t l3_lits = 0;
+        for (size_t k = t_lo; k < t_hi; k++)
+            if (l3_flat[k] != l3_fill_val) l3_lits++;
+        result.l3_literals_.reserve(l3_lits);
+        for (size_t k = t_lo; k < t_hi; k++) {
+            if (l3_flat[k] != l3_fill_val) {
+                result.l4_bits_[k / 8] |= uint8_t(1) << (k % 8);
+                result.l3_literals_.push_back(l3_flat[k]);
+            }
+        }
+        result.l3_literal_count_ = result.l3_literals_.size();
+    }
+    result.state_ = State::Compressed;
     return result;
 }
 
-DDCBtv  // dense compress
+DDCBtv
 DDCBtv::compress(const std::vector<bool>& bits, bool l1_fill_ones) {
     DDCBtv result(l1_fill_ones);
     result.bit_count_ = bits.size();
@@ -303,7 +349,7 @@ DDCBtv::compress(const std::vector<bool>& bits, bool l1_fill_ones) {
 
     const uint8_t fill_byte = l1_fill_ones ? 0xFF : 0x00;
 
-    for (size_t i = 0; i < num_words; i++) {  // pack bits into L1 words
+    for (size_t i = 0; i < num_words; i++) {
 
         uint8_t word = 0;
         size_t start = i * 8;
@@ -351,7 +397,7 @@ DDCBtv::compress(const std::vector<bool>& bits, bool l1_fill_ones) {
 }
 
 std::vector<bool>
-DDCBtv::decompress() const {  // expand to bits
+DDCBtv::decompress() const {
     assert(state_ != State::Uncompressed);
     std::vector<bool> result;
     result.reserve(bit_count_);
@@ -411,7 +457,7 @@ DDCBtv::popcount() const {
     size_t n = l1_literals_.size();
     size_t i = 0;
 
-#ifdef __AVX512VPOPCNTDQ__  // SIMD popcount
+#ifdef __AVX512VPOPCNTDQ__
     __m512i acc = _mm512_setzero_si512();
     for (; i + 64 <= n; i += 64) {
         __m512i chunk = _mm512_loadu_si512(data + i);
@@ -420,7 +466,7 @@ DDCBtv::popcount() const {
     count += _mm512_reduce_add_epi64(acc);
 #endif
 
-    for (; i + 8 <= n; i += 8) {  // scalar tail
+    for (; i + 8 <= n; i += 8) {
         uint64_t w;
         memcpy(&w, data + i, 8);
         count += __builtin_popcountll(w);
@@ -514,7 +560,7 @@ DDC::compress(const std::vector<bool>& bits, bool l1_fill_ones,
     return result;
 }
 
-DDC  // build from positions
+DDC
 DDC::from_sparse_positions(const std::vector<uint32_t>& positions,
                               size_t num_rows,
                               size_t segment_bits) {
@@ -524,7 +570,7 @@ DDC::from_sparse_positions(const std::vector<uint32_t>& positions,
     const size_t num_segs = (num_rows + segment_bits - 1) / segment_bits;
 
     std::vector<std::vector<uint32_t>> seg_positions(num_segs);
-    for (uint32_t p : positions) {  // bucket by segment
+    for (uint32_t p : positions) {
         seg_positions[p / segment_bits].push_back(p % segment_bits);
     }
 
@@ -545,6 +591,33 @@ DDC::from_sparse_positions(const std::vector<uint32_t>& positions,
         }
     }
 
+    return result;
+}
+
+DDC
+DDC::from_sparse_positions_compact(const std::vector<uint32_t>& positions,
+                                   size_t num_rows, size_t segment_bits) {
+    DDC result;
+    result.bit_count_ = num_rows;
+    result.segment_bits_ = segment_bits;
+    const size_t num_segs = (num_rows + segment_bits - 1) / segment_bits;
+    result.segments_.reserve(num_segs);
+    size_t pi = 0;
+    for (size_t s = 0; s < num_segs; s++) {
+        const size_t seg_start = s * segment_bits;
+        const size_t seg_len = std::min(segment_bits, num_rows - seg_start);
+        const size_t l2_count = (seg_len + 7) / 8;
+        const size_t pstart = pi;
+        while (pi < positions.size() && positions[pi] < seg_start + seg_len) pi++;
+        if (pi == pstart) {
+            result.segments_.push_back(DDCBtv::make_all_fill(seg_len, l2_count, false));
+        } else {
+            std::vector<bool> seg_bits(seg_len, false);
+            for (size_t k = pstart; k < pi; k++)
+                seg_bits[positions[k] - seg_start] = true;
+            result.segments_.emplace_back(DDCBtv::compress(seg_bits, false));
+        }
+    }
     return result;
 }
 
@@ -863,7 +936,7 @@ DDC DDC::deserialize_packed(std::istream& is) {
 
 static constexpr uint8_t DDC_FMT_V4_MAGIC = 0xC4;
 
-void DDCBtv::serialize_v4(std::ostream& os, bool is_last_seg) const {  // compact, omit empty levels
+void DDCBtv::serialize_v4(std::ostream& os, bool is_last_seg) const {
     assert(state_ == State::Compressed);
 
     uint8_t flags = 0;
@@ -962,13 +1035,52 @@ DDC DDC::deserialize_v4(std::istream& is) {
 SparseDDC
 SparseDDC::from_positions(const std::vector<uint32_t>& positions,
                              size_t num_rows,
-                             size_t segment_bits) {
+                             size_t segment_bits, bool adaptive_l1_polarity) {
     SparseDDC s;
     s.bit_count_    = num_rows;
     s.segment_bits_ = segment_bits;
     s.num_set_bits_ = positions.size();
 
     if (positions.empty()) return s;
+
+    // Sorted fastpath
+    static const bool old_build = std::getenv("DDC_OLD_BUILD") != nullptr;
+    if (!old_build && std::is_sorted(positions.begin(), positions.end())) {
+        const size_t n = positions.size();
+        size_t nseg = 0;
+        for (size_t i = 0; i < n; ) {
+            uint32_t seg = static_cast<uint32_t>(positions[i] / segment_bits);
+            while (i < n && static_cast<uint32_t>(positions[i] / segment_bits) == seg) i++;
+            nseg++;
+        }
+        s.seg_indices_.reserve(nseg);
+        s.seg_data_.reserve(nseg);
+        std::vector<uint16_t> local;
+        for (size_t i = 0; i < n; ) {
+            uint32_t seg_idx = static_cast<uint32_t>(positions[i] / segment_bits);
+            size_t seg_off = static_cast<size_t>(seg_idx) * segment_bits;
+            size_t seg_len = std::min(segment_bits, num_rows - seg_off);
+            local.clear();
+            while (i < n && static_cast<uint32_t>(positions[i] / segment_bits) == seg_idx)
+                local.push_back(static_cast<uint16_t>(positions[i++] - seg_off));
+            s.seg_indices_.push_back(seg_idx);
+            if (adaptive_l1_polarity && local.size() * 2 > seg_len) {
+                std::vector<uint16_t> zeros;
+                zeros.reserve(seg_len - local.size());
+                size_t j = 0;
+                for (size_t b = 0; b < seg_len; b++) {
+                    if (j < local.size() && local[j] == b) { j++; continue; }
+                    zeros.push_back(static_cast<uint16_t>(b));
+                }
+                s.seg_data_.emplace_back(
+                    DDCBtv::compress_sparse_segment(zeros, seg_len, true));
+            } else {
+                s.seg_data_.emplace_back(
+                    DDCBtv::compress_sparse_segment(local, seg_len, false));
+            }
+        }
+        return s;
+    }
 
     std::map<uint32_t, std::vector<uint32_t>> by_seg;
     for (uint32_t p : positions) {
@@ -988,19 +1100,42 @@ SparseDDC::from_positions(const std::vector<uint32_t>& positions,
         for (uint32_t p : local_pos) sorted_pos.push_back(static_cast<uint16_t>(p));
         std::sort(sorted_pos.begin(), sorted_pos.end());
         s.seg_indices_.push_back(seg_idx);
-        s.seg_data_.emplace_back(
-            DDCBtv::compress_sparse_segment(sorted_pos, seg_len,
-                                                false));
+        if (adaptive_l1_polarity && sorted_pos.size() * 2 > seg_len) {
+            // Ones polarity
+            std::vector<uint16_t> zeros;
+            zeros.reserve(seg_len - sorted_pos.size());
+            size_t j = 0;
+            for (size_t b = 0; b < seg_len; b++) {
+                if (j < sorted_pos.size() && sorted_pos[j] == b) { j++; continue; }
+                zeros.push_back(static_cast<uint16_t>(b));
+            }
+            s.seg_data_.emplace_back(
+                DDCBtv::compress_sparse_segment(zeros, seg_len, true));
+        } else {
+            s.seg_data_.emplace_back(
+                DDCBtv::compress_sparse_segment(sorted_pos, seg_len,
+                                                    false));
+        }
     }
     return s;
 }
 
-void  // per-segment OR merge
+void
 SparseDDC::apply_or_to(DDC& dst) const {
     assert(dst.bit_count() == bit_count_);
     assert(dst.segment_bits() == segment_bits_);
     auto& dst_segs = dst.segments();
-    for (size_t i = 0; i < seg_indices_.size(); i++) {
+    const size_t nseg = seg_indices_.size();
+    for (size_t i = 0; i < nseg; i++) {
+        // Prefetch pipeline
+        if (i + 2 < nseg) {
+            __builtin_prefetch(reinterpret_cast<const char*>(&seg_data_[i + 2]));
+            __builtin_prefetch(reinterpret_cast<const char*>(&seg_data_[i + 2]) + 128);
+        }
+        if (i + 1 < nseg) {
+            seg_data_[i + 1].prefetch_layers();
+            __builtin_prefetch(&dst_segs[seg_indices_[i + 1]]);
+        }
         uint32_t idx = seg_indices_[i];
         const DDCBtv& src = seg_data_[i];
         if (src.is_all_zero()) continue;
@@ -1014,9 +1149,14 @@ SparseDDC::apply_or_to(DDC& dst) const {
             }
             continue;
         }
-        if (d.is_all_ones()) continue;  // fast-path fills
+        if (d.is_all_ones()) continue;
         if (src.is_all_ones()) {
-            d = DDCBtv::make_all_fill(src.bit_count(), src.l2_count(), true);
+            // Preserve dense
+            if (d.state() == DDCBtv::State::Decompressed) {
+                d |= src;
+            } else {
+                d = DDCBtv::make_all_fill(src.bit_count(), src.l2_count(), true);
+            }
             continue;
         }
 
@@ -1047,7 +1187,7 @@ SparseDDC::storage_bytes() const {
     return total;
 }
 
-DDC  // fused multi-way OR
+DDC
 SparseDDC::or_many(size_t count, const SparseDDC** sparses,
                       size_t num_rows, size_t segment_bits) {
     DDC dst = DDC::from_sparse_positions({}, num_rows, segment_bits);
@@ -1071,7 +1211,7 @@ SparseDDC::or_many(size_t count, const SparseDDC** sparses,
     }
 
     auto& dst_segs = dst.segments();
-    for (uint32_t seg = 0; seg < num_segs; seg++) {  // OR all sources per segment
+    for (uint32_t seg = 0; seg < num_segs; seg++) {
         auto& srcs = by_seg[seg];
         if (srcs.empty()) continue;
         DDCBtv& d = dst_segs[seg];

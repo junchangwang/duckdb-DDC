@@ -23,6 +23,7 @@
 #include "execution/tpch/bm_baseline_loaders.hpp"
 #include "execution/tpch/bm_bench_common.hpp"
 #include "execution/tpch/indexed_bitmap.hpp"
+#include "execution/tpch/bsr_index.hpp"
 
 #include <algorithm>
 #include <array>
@@ -73,7 +74,6 @@ struct Q1GroupAns {
     int64_t count_order    = 0;
 };
 
-// agg one row
 #define Q1_AGG_ROW(g, r, qty, price, disc, tax) do { \
     (g).sum_qty        += (qty)[(r)];                 \
     (g).sum_discount   += (disc)[(r)];                \
@@ -100,7 +100,7 @@ static inline void q1_agg_8rows(
     const int64_t* qty, const int64_t* price, const int64_t* disc, const int64_t* tax,
     size_t base, uint8_t bits_msb, Q1GroupAns& ans)
 {
-#if defined(__AVX512F__)  // SIMD agg 8 rows
+#if defined(__AVX512F__)
     if (!bits_msb) return;
 
     const uint8_t mask = q1_reverse_table[bits_msb];
@@ -128,7 +128,6 @@ static inline void q1_agg_8rows(
 
     ans.count_order += __builtin_popcount(static_cast<unsigned>(bits_msb));
 #else
-    // scalar fallback
     for (int i = 0; i < 8; i++) {
         if (bits_msb & (0x80 >> i))
             Q1_AGG_ROW(ans, base + i, qty, price, disc, tax);
@@ -136,7 +135,21 @@ static inline void q1_agg_8rows(
 #endif
 }
 
-// decompress -> byte stream
+
+// Word flatten
+static inline void q1_lsb_words_to_bs(const uint64_t* w, size_t nwords,
+                                      std::vector<uint8_t>& bs, size_t nbytes) {
+    const size_t lim_w = std::min(nwords, (nbytes + 7) / 8);
+    for (size_t i = 0; i < lim_w; i++) {
+        const uint64_t x = w[i];
+        if (!x) continue;
+        const size_t o = i * 8;
+        const size_t n = std::min<size_t>(8, nbytes - o);
+        for (size_t j = 0; j < n; j++)
+            bs[o + j] = q1_reverse_table[static_cast<uint8_t>(x >> (8 * j))];
+    }
+}
+
 static void q1_to_byte_stream(const DDC& b, std::vector<uint8_t>& bs,
                               size_t num_rows) {
     bs.assign((num_rows + 7) / 8, 0);
@@ -146,32 +159,83 @@ static void q1_to_byte_stream(const DDC& b, std::vector<uint8_t>& bs,
     });
 }
 
-static void q1_to_byte_stream(const roaring::Roaring& b, std::vector<uint8_t>& bs,
+static void q1_to_byte_stream(const bm_index::BsrSet& b, std::vector<uint8_t>& bs,
                               size_t num_rows) {
     bs.assign((num_rows + 7) / 8, 0);
-    for (auto it = b.begin(); it != b.end(); ++it) {
-        uint32_t p = *it;
-        if (p < num_rows) bs[p / 8] |= uint8_t(1) << (7 - (p % 8));
+    for (int i = 0; i < b.size; i++) {
+        uint32_t st = static_cast<uint32_t>(b.states[i]);
+        uint64_t base_bit = static_cast<uint64_t>(static_cast<uint32_t>(b.bases[i])) * 32ULL;
+        while (st) {
+            int t = __builtin_ctz(st); st &= st - 1;
+            uint64_t p = base_bit + static_cast<uint64_t>(t);
+            if (p < num_rows) bs[p >> 3] |= static_cast<uint8_t>(1u << (7 - (p & 7)));
+        }
     }
+}
+
+static void q1_to_byte_stream(const ::bitset::BitsetVector& b, std::vector<uint8_t>& bs,
+                              size_t num_rows) {
+    const size_t nbytes = (num_rows + 7) / 8;
+    bs.assign(nbytes, 0);
+    q1_lsb_words_to_bs(b.words(), b.words_cnt(), bs, nbytes);
+}
+
+static void q1_to_byte_stream(const roaring::Roaring& b, std::vector<uint8_t>& bs,
+                              size_t num_rows) {
+    const size_t nbytes = (num_rows + 7) / 8;
+    bs.assign(nbytes, 0);
+    roaring::api::bitset_t* dense = roaring::api::bitset_create_with_capacity(num_rows);
+    if (!dense) return;
+    if (roaring::api::roaring_bitmap_to_bitset(&b.roaring, dense))
+        q1_lsb_words_to_bs(dense->array, dense->arraysize, bs, nbytes);
+    roaring::api::bitset_free(dense);
 }
 
 static void q1_to_byte_stream(const ibis::bitvector& b, std::vector<uint8_t>& bs,
                               size_t num_rows) {
-    bs.assign((num_rows + 7) / 8, 0);
-    ibis::bitvector::pit pit(b);
-    while (*pit != 0xFFFFFFFFU) {
-        uint32_t p = *pit;
-        if (p < num_rows) bs[p / 8] |= uint8_t(1) << (7 - (p % 8));
-        pit.next();
+    const size_t nbytes = (num_rows + 7) / 8;
+    bs.assign(nbytes, 0);
+    uint64_t acc = 0; int nb = 0; size_t out = 0;
+    auto push31 = [&](uint32_t payload) {
+        acc = (acc << 31) | payload; nb += 31;
+        while (nb >= 8 && out < nbytes) {
+            bs[out++] = static_cast<uint8_t>(acc >> (nb - 8)); nb -= 8;
+        }
+    };
+    for (auto it = b.m_vec.begin(); it != b.m_vec.end() && out < nbytes; ++it) {
+        const uint32_t w = *it;
+        if (w > ibis::bitvector::ALLONES) {
+            const uint32_t cnt = w & ibis::bitvector::MAXCNT;
+            const uint32_t val = (w >= ibis::bitvector::HEADER1)
+                                     ? ibis::bitvector::ALLONES : 0u;
+            for (uint32_t k = 0; k < cnt && out < nbytes; k++) push31(val);
+        } else {
+            push31(w);
+        }
     }
+    if (b.active.nbits && out < nbytes) {
+        acc = (acc << b.active.nbits) | b.active.val;
+        nb += static_cast<int>(b.active.nbits);
+        while (nb >= 8 && out < nbytes) {
+            bs[out++] = static_cast<uint8_t>(acc >> (nb - 8)); nb -= 8;
+        }
+    }
+    if (nb > 0 && out < nbytes) bs[out++] = static_cast<uint8_t>(acc << (8 - nb));
 }
 
 static void q1_to_byte_stream(const ewah::EWAHBoolArray<uint64_t>& b,
                               std::vector<uint8_t>& bs, size_t num_rows) {
-    bs.assign((num_rows + 7) / 8, 0);
-    for (auto it = b.begin(); it != b.end(); ++it) {
-        uint32_t p = *it;
-        if (p < num_rows) bs[p / 8] |= uint8_t(1) << (7 - (p % 8));
+    const size_t nbytes = (num_rows + 7) / 8;
+    bs.assign(nbytes, 0);
+    auto it = b.uncompress();
+    for (size_t i = 0; it.hasNext(); i++) {
+        const uint64_t x = it.next();
+        const size_t o = i * 8;
+        if (o >= nbytes) break;
+        if (!x) continue;
+        const size_t n = std::min<size_t>(8, nbytes - o);
+        for (size_t j = 0; j < n; j++)
+            bs[o + j] = q1_reverse_table[static_cast<uint8_t>(x >> (8 * j))];
     }
 }
 
@@ -184,7 +248,6 @@ static void q1_to_byte_stream(const ConciseSet<false>& b, std::vector<uint8_t>& 
     }
 }
 
-// complement (<=)
 static void q1_byte_stream_not(std::vector<uint8_t>& bs, size_t num_rows) {
     for (auto& b : bs) b = ~b;
     size_t tail = num_rows & 7;
@@ -195,7 +258,6 @@ static void q1_byte_stream_not(std::vector<uint8_t>& bs, size_t num_rows) {
     }
 }
 
-// AND kernel
 static void q1_byte_stream_and(std::vector<uint8_t>& dst,
                                const std::vector<uint8_t>& src) {
     size_t n = dst.size();
@@ -235,7 +297,7 @@ static void q1_run_aggregate(
     }
 
     size_t row_offset = 0;
-    while (true) {  // seq scan
+    while (true) {
         DataChunk chunk; chunk.Initialize(ctx, types);
         lineitem_table.GetStorage().Scan(tx, chunk, scan_state);
         if (chunk.size() == 0) break;
@@ -246,7 +308,7 @@ static void q1_run_aggregate(
         idx_t n = chunk.size();
 
         idx_t base = 0;
-        while (base + 7 < n) {  // 8-row blocks
+        while (base + 7 < n) {
             size_t bs_off = (row_offset + base) / 8;
             for (auto& slot : slots) {
                 uint8_t bits = slot.bs_base[bs_off];
@@ -255,7 +317,7 @@ static void q1_run_aggregate(
             base += 8;
         }
 
-        if (base < n) {  // scalar tail
+        if (base < n) {
             for (auto& slot : slots) {
                 for (idx_t r = base; r < n; r++) {
                     size_t pos = row_offset + r;
@@ -269,7 +331,6 @@ static void q1_run_aggregate(
     }
 }
 
-// Q1 entry
 void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &op)
 {
     std::call_once(q1_once_flag_new, [&]() {
@@ -326,15 +387,19 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
         std::vector<uint8_t> shipdate_filter_bs;
         double phaseA = 0;
 
-        // backend dispatch
-        if (auto* cbge_ship = dynamic_cast<bm_index::IndexedDDCGE*>(idx_use)) {  // DDC month-GE
-            auto* cb_ls_x = dynamic_cast<bm_index::IndexedDDC*>(idx_ls);
-            auto* cb_rf_x = dynamic_cast<bm_index::IndexedDDC*>(idx_rf);
-            if (!cb_ls_x || !cb_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
+        if (auto* bs_ship = dynamic_cast<bm_index::IndexedBSR*>(idx_use)) {
+            auto* bs_ls_x = dynamic_cast<bm_index::IndexedBSR*>(idx_ls);
+            auto* bs_rf_x = dynamic_cast<bm_index::IndexedBSR*>(idx_rf);
+            if (!bs_ls_x || !bs_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
 
-            auto t_a0 = clk::now();  // phase A: shipdate OR + flip
-            std::vector<int64_t> month_keys(Q1_GE_AFTER_MONTHS, Q1_GE_AFTER_MONTHS + 4);
-            DDC shipdate_gt = cbge_ship->or_many(month_keys);
+            auto t_a0 = clk::now();
+            bm_index::BsrSet shipdate_gt;
+            if (use_month_ge) {
+                std::vector<int64_t> month_keys(Q1_GE_AFTER_MONTHS, Q1_GE_AFTER_MONTHS + 4);
+                shipdate_gt = bs_ship->or_many(month_keys);
+            } else {
+                shipdate_gt = bs_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
+            }
             q1_to_byte_stream(shipdate_gt, shipdate_filter_bs, num_rows);
             q1_byte_stream_not(shipdate_filter_bs, num_rows);
             auto t_a1 = clk::now();
@@ -342,20 +407,18 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
 
             std::map<char, std::vector<uint8_t>> ls_bs, rf_bs;
             for (int li = 0; li < LS_COUNT; li++) {
-                DDC b = DDC::from_sparse_positions({}, num_rows, cbge_ship->segment_bits());
-                cb_ls_x->apply_or_to(b, static_cast<int64_t>(LS_CHARS[li]));
+                bm_index::BsrSet b = bs_ls_x->single_key(static_cast<int64_t>(LS_CHARS[li]));
                 std::vector<uint8_t> tmp;
                 q1_to_byte_stream(b, tmp, num_rows);
                 ls_bs[LS_CHARS[li]] = std::move(tmp);
             }
             for (int ri = 0; ri < RF_COUNT; ri++) {
-                DDC b = DDC::from_sparse_positions({}, num_rows, cbge_ship->segment_bits());
-                cb_rf_x->apply_or_to(b, static_cast<int64_t>(RF_CHARS[ri]));
+                bm_index::BsrSet b = bs_rf_x->single_key(static_cast<int64_t>(RF_CHARS[ri]));
                 std::vector<uint8_t> tmp;
                 q1_to_byte_stream(b, tmp, num_rows);
                 rf_bs[RF_CHARS[ri]] = std::move(tmp);
             }
-            for (int ri = 0; ri < RF_COUNT; ri++) {  // per-group AND
+            for (int ri = 0; ri < RF_COUNT; ri++) {
                 for (int li = 0; li < LS_COUNT; li++) {
                     char rf = RF_CHARS[ri], ls = LS_CHARS[li];
                     std::vector<uint8_t> bs = ls_bs[ls];
@@ -365,7 +428,38 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
                 }
             }
         }
-        else if (auto* cb_ship = dynamic_cast<bm_index::IndexedDDC*>(idx_use)) {  // DDC per-key
+        else if (auto* cbge_ship = dynamic_cast<bm_index::IndexedDDCGE*>(idx_use)) {
+            auto* cb_ls_x = dynamic_cast<bm_index::IndexedDDC*>(idx_ls);
+            auto* cb_rf_x = dynamic_cast<bm_index::IndexedDDC*>(idx_rf);
+            if (!cb_ls_x || !cb_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
+
+            auto t_a0 = clk::now();
+            std::vector<int64_t> month_keys(Q1_GE_AFTER_MONTHS, Q1_GE_AFTER_MONTHS + 4);
+            DDC shipdate_gt = cbge_ship->or_many(month_keys);
+            auto t_a1 = clk::now();
+            phaseA = q1_ms(t_a0, t_a1);
+
+            DDC ship_le = ~shipdate_gt;
+            DDC ls_bm[LS_COUNT], rf_bm[RF_COUNT];
+            for (int li = 0; li < LS_COUNT; li++) {
+                ls_bm[li] = DDC::from_sparse_positions({}, num_rows, cbge_ship->segment_bits());
+                cb_ls_x->apply_or_to(ls_bm[li], static_cast<int64_t>(LS_CHARS[li]));
+            }
+            for (int ri = 0; ri < RF_COUNT; ri++) {
+                rf_bm[ri] = DDC::from_sparse_positions({}, num_rows, cbge_ship->segment_bits());
+                cb_rf_x->apply_or_to(rf_bm[ri], static_cast<int64_t>(RF_CHARS[ri]));
+            }
+            for (int ri = 0; ri < RF_COUNT; ri++) {
+                for (int li = 0; li < LS_COUNT; li++) {
+                    DDC g = (rf_bm[ri] & ls_bm[li]) & ship_le;
+                    if (g.popcount() == 0) continue;
+                    std::vector<uint8_t> gbs;
+                    q1_to_byte_stream(g, gbs, num_rows);
+                    group_bs[{RF_CHARS[ri], LS_CHARS[li]}] = std::move(gbs);
+                }
+            }
+        }
+        else if (auto* cb_ship = dynamic_cast<bm_index::IndexedDDC*>(idx_use)) {
             auto* cb_ls_x = dynamic_cast<bm_index::IndexedDDC*>(idx_ls);
             auto* cb_rf_x = dynamic_cast<bm_index::IndexedDDC*>(idx_rf);
             if (!cb_ls_x || !cb_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
@@ -375,7 +469,7 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
             auto* cb_ship_bpe = dynamic_cast<bm_index::IndexedDDCBPE*>(
                 static_cast<bm_index::IBitmapIndex*>(context.client.bitmap_shipdate_BPE));
             DDC shipdate_gt;
-            if (cb_ship_bpe) {  // BPE prefix diff + boundary
+            if (cb_ship_bpe) {
                 int B    = cb_ship_bpe->bucket_of(Q1_SHIPDATE_CUTOFF);
                 int LAST = static_cast<int>(cb_ship_bpe->num_keys()) - 1;
                 shipdate_gt = *cb_ship_bpe->prefix_at_bucket(LAST);
@@ -394,37 +488,30 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
                 });
                 shipdate_gt = cb_ship->or_many(gt_keys);
             }
-            q1_to_byte_stream(shipdate_gt, shipdate_filter_bs, num_rows);
-            q1_byte_stream_not(shipdate_filter_bs, num_rows);
             auto t_a1 = clk::now();
             phaseA = q1_ms(t_a0, t_a1);
 
-            std::map<char, std::vector<uint8_t>> ls_bs, rf_bs;
+            DDC ship_le = ~shipdate_gt;
+            DDC ls_bm[LS_COUNT], rf_bm[RF_COUNT];
             for (int li = 0; li < LS_COUNT; li++) {
-                DDC b = DDC::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
-                cb_ls_x->apply_or_to(b, static_cast<int64_t>(LS_CHARS[li]));
-                std::vector<uint8_t> tmp;
-                q1_to_byte_stream(b, tmp, num_rows);
-                ls_bs[LS_CHARS[li]] = std::move(tmp);
+                ls_bm[li] = DDC::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
+                cb_ls_x->apply_or_to(ls_bm[li], static_cast<int64_t>(LS_CHARS[li]));
             }
             for (int ri = 0; ri < RF_COUNT; ri++) {
-                DDC b = DDC::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
-                cb_rf_x->apply_or_to(b, static_cast<int64_t>(RF_CHARS[ri]));
-                std::vector<uint8_t> tmp;
-                q1_to_byte_stream(b, tmp, num_rows);
-                rf_bs[RF_CHARS[ri]] = std::move(tmp);
+                rf_bm[ri] = DDC::from_sparse_positions({}, num_rows, cb_ship->segment_bits());
+                cb_rf_x->apply_or_to(rf_bm[ri], static_cast<int64_t>(RF_CHARS[ri]));
             }
             for (int ri = 0; ri < RF_COUNT; ri++) {
                 for (int li = 0; li < LS_COUNT; li++) {
-                    char rf = RF_CHARS[ri], ls = LS_CHARS[li];
-                    std::vector<uint8_t> bs = ls_bs[ls];
-                    q1_byte_stream_and(bs, rf_bs[rf]);
-                    q1_byte_stream_and(bs, shipdate_filter_bs);
-                    group_bs[{rf, ls}] = std::move(bs);
+                    DDC g = (rf_bm[ri] & ls_bm[li]) & ship_le;
+                    if (g.popcount() == 0) continue;
+                    std::vector<uint8_t> gbs;
+                    q1_to_byte_stream(g, gbs, num_rows);
+                    group_bs[{RF_CHARS[ri], LS_CHARS[li]}] = std::move(gbs);
                 }
             }
         }
-        else if (auto* cr_ship = dynamic_cast<bm_index::IndexedCRoaring*>(idx_use)) {  // CRoaring
+        else if (auto* cr_ship = dynamic_cast<bm_index::IndexedCRoaring*>(idx_use)) {
             auto* cr_ls_x = dynamic_cast<bm_index::IndexedCRoaring*>(idx_ls);
             auto* cr_rf_x = dynamic_cast<bm_index::IndexedCRoaring*>(idx_rf);
             if (!cr_ls_x || !cr_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
@@ -456,37 +543,68 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
                     shipdate_gt = cr_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
                 }
             }
-            q1_to_byte_stream(shipdate_gt, shipdate_filter_bs, num_rows);
-            q1_byte_stream_not(shipdate_filter_bs, num_rows);
             auto t_a1 = clk::now();
             phaseA = q1_ms(t_a0, t_a1);
 
-            std::map<char, std::vector<uint8_t>> ls_bs, rf_bs;
+            roaring::Roaring ls_bm[LS_COUNT], rf_bm[RF_COUNT];
             for (int li = 0; li < LS_COUNT; li++) {
-                roaring::Roaring b;
-                cr_ls_x->apply_or_to(b, static_cast<int64_t>(LS_CHARS[li]));
-                std::vector<uint8_t> tmp;
-                q1_to_byte_stream(b, tmp, num_rows);
-                ls_bs[LS_CHARS[li]] = std::move(tmp);
+
+                cr_ls_x->apply_or_to(ls_bm[li], static_cast<int64_t>(LS_CHARS[li]));
             }
             for (int ri = 0; ri < RF_COUNT; ri++) {
-                roaring::Roaring b;
-                cr_rf_x->apply_or_to(b, static_cast<int64_t>(RF_CHARS[ri]));
-                std::vector<uint8_t> tmp;
-                q1_to_byte_stream(b, tmp, num_rows);
-                rf_bs[RF_CHARS[ri]] = std::move(tmp);
+
+                cr_rf_x->apply_or_to(rf_bm[ri], static_cast<int64_t>(RF_CHARS[ri]));
             }
             for (int ri = 0; ri < RF_COUNT; ri++) {
                 for (int li = 0; li < LS_COUNT; li++) {
-                    char rf = RF_CHARS[ri], ls = LS_CHARS[li];
-                    std::vector<uint8_t> bs = ls_bs[ls];
-                    q1_byte_stream_and(bs, rf_bs[rf]);
-                    q1_byte_stream_and(bs, shipdate_filter_bs);
-                    group_bs[{rf, ls}] = std::move(bs);
+                    roaring::Roaring g = rf_bm[ri] & ls_bm[li];
+                    g -= shipdate_gt;
+                    if (g.cardinality() == 0) continue;
+                    std::vector<uint8_t> gbs;
+                    q1_to_byte_stream(g, gbs, num_rows);
+                    group_bs[{RF_CHARS[ri], LS_CHARS[li]}] = std::move(gbs);
                 }
             }
         }
-        else if (auto* wah_ship = dynamic_cast<bm_index::IndexedWAH*>(idx_use)) {  // WAH
+        else if (auto* bs_ship = dynamic_cast<bm_index::IndexedBitsetAVX512*>(idx_use)) {
+            auto* bs_ls_x = dynamic_cast<bm_index::IndexedBitsetAVX512*>(idx_ls);
+            auto* bs_rf_x = dynamic_cast<bm_index::IndexedBitsetAVX512*>(idx_rf);
+            if (!bs_ls_x || !bs_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
+
+            auto t_a0 = clk::now();
+            ::bitset::BitsetVector shipdate_gt = bs_ship->make_empty();
+            if (use_month_ge) {
+                std::vector<int64_t> month_keys(Q1_GE_AFTER_MONTHS, Q1_GE_AFTER_MONTHS + 4);
+                shipdate_gt = bs_ship->or_many(month_keys);
+            } else {
+                bs_ship->apply_or_range_to(shipdate_gt, Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
+            }
+            auto t_a1 = clk::now();
+            phaseA = q1_ms(t_a0, t_a1);
+
+            const bool simd = bs_ship->use_simd();
+            ::bitset::BitsetVector ls_bm[LS_COUNT], rf_bm[RF_COUNT];
+            for (int li = 0; li < LS_COUNT; li++) {
+                ls_bm[li] = bs_ls_x->make_empty();
+                bs_ls_x->apply_or_to(ls_bm[li], static_cast<int64_t>(LS_CHARS[li]));
+            }
+            for (int ri = 0; ri < RF_COUNT; ri++) {
+                rf_bm[ri] = bs_rf_x->make_empty();
+                bs_rf_x->apply_or_to(rf_bm[ri], static_cast<int64_t>(RF_CHARS[ri]));
+            }
+            for (int ri = 0; ri < RF_COUNT; ri++) {
+                for (int li = 0; li < LS_COUNT; li++) {
+                    ::bitset::BitsetVector g =
+                        ::bitset::BitsetVector::word_and(rf_bm[ri], ls_bm[li], simd);
+                    g = ::bitset::BitsetVector::word_andnot(g, shipdate_gt, simd);
+                    if (g.popcount(simd) == 0) continue;
+                    std::vector<uint8_t> gbs;
+                    q1_to_byte_stream(g, gbs, num_rows);
+                    group_bs[{RF_CHARS[ri], LS_CHARS[li]}] = std::move(gbs);
+                }
+            }
+        }
+        else if (auto* wah_ship = dynamic_cast<bm_index::IndexedWAH*>(idx_use)) {
             auto* wah_ls_x = dynamic_cast<bm_index::IndexedWAH*>(idx_ls);
             auto* wah_rf_x = dynamic_cast<bm_index::IndexedWAH*>(idx_rf);
             if (!wah_ls_x || !wah_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
@@ -500,37 +618,35 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
 
                 shipdate_gt = wah_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
             }
-            q1_to_byte_stream(shipdate_gt, shipdate_filter_bs, num_rows);
-            q1_byte_stream_not(shipdate_filter_bs, num_rows);
             auto t_a1 = clk::now();
             phaseA = q1_ms(t_a0, t_a1);
 
-            std::map<char, std::vector<uint8_t>> ls_bs, rf_bs;
+            shipdate_gt.decompress();
+            ibis::bitvector ls_bm[LS_COUNT], rf_bm[RF_COUNT];
             for (int li = 0; li < LS_COUNT; li++) {
-                ibis::bitvector b;
-                wah_ls_x->apply_or_to(b, static_cast<int64_t>(LS_CHARS[li]));
-                std::vector<uint8_t> tmp;
-                q1_to_byte_stream(b, tmp, num_rows);
-                ls_bs[LS_CHARS[li]] = std::move(tmp);
+
+                wah_ls_x->apply_or_to(ls_bm[li], static_cast<int64_t>(LS_CHARS[li]));
+                ls_bm[li].decompress();
             }
             for (int ri = 0; ri < RF_COUNT; ri++) {
-                ibis::bitvector b;
-                wah_rf_x->apply_or_to(b, static_cast<int64_t>(RF_CHARS[ri]));
-                std::vector<uint8_t> tmp;
-                q1_to_byte_stream(b, tmp, num_rows);
-                rf_bs[RF_CHARS[ri]] = std::move(tmp);
+
+                wah_rf_x->apply_or_to(rf_bm[ri], static_cast<int64_t>(RF_CHARS[ri]));
+                rf_bm[ri].decompress();
             }
             for (int ri = 0; ri < RF_COUNT; ri++) {
                 for (int li = 0; li < LS_COUNT; li++) {
-                    char rf = RF_CHARS[ri], ls = LS_CHARS[li];
-                    std::vector<uint8_t> bs = ls_bs[ls];
-                    q1_byte_stream_and(bs, rf_bs[rf]);
-                    q1_byte_stream_and(bs, shipdate_filter_bs);
-                    group_bs[{rf, ls}] = std::move(bs);
+                    ibis::bitvector g;
+                    g.copy(rf_bm[ri]);
+                    g &= ls_bm[li];
+                    g -= shipdate_gt;
+                    if (g.cnt() == 0) continue;
+                    std::vector<uint8_t> gbs;
+                    q1_to_byte_stream(g, gbs, num_rows);
+                    group_bs[{RF_CHARS[ri], LS_CHARS[li]}] = std::move(gbs);
                 }
             }
         }
-        else if (auto* ew_ship = dynamic_cast<bm_index::IndexedEWAH*>(idx_use)) {  // EWAH
+        else if (auto* ew_ship = dynamic_cast<bm_index::IndexedEWAH*>(idx_use)) {
             auto* ew_ls_x = dynamic_cast<bm_index::IndexedEWAH*>(idx_ls);
             auto* ew_rf_x = dynamic_cast<bm_index::IndexedEWAH*>(idx_rf);
             if (!ew_ls_x || !ew_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
@@ -543,37 +659,31 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
             } else {
                 shipdate_gt = ew_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
             }
-            q1_to_byte_stream(shipdate_gt, shipdate_filter_bs, num_rows);
-            q1_byte_stream_not(shipdate_filter_bs, num_rows);
             auto t_a1 = clk::now();
             phaseA = q1_ms(t_a0, t_a1);
 
-            std::map<char, std::vector<uint8_t>> ls_bs, rf_bs;
+            ewah::EWAHBoolArray<uint64_t> ls_bm[LS_COUNT], rf_bm[RF_COUNT];
             for (int li = 0; li < LS_COUNT; li++) {
-                ewah::EWAHBoolArray<uint64_t> b;
-                ew_ls_x->apply_or_to(b, static_cast<int64_t>(LS_CHARS[li]));
-                std::vector<uint8_t> tmp;
-                q1_to_byte_stream(b, tmp, num_rows);
-                ls_bs[LS_CHARS[li]] = std::move(tmp);
+
+                ew_ls_x->apply_or_to(ls_bm[li], static_cast<int64_t>(LS_CHARS[li]));
             }
             for (int ri = 0; ri < RF_COUNT; ri++) {
-                ewah::EWAHBoolArray<uint64_t> b;
-                ew_rf_x->apply_or_to(b, static_cast<int64_t>(RF_CHARS[ri]));
-                std::vector<uint8_t> tmp;
-                q1_to_byte_stream(b, tmp, num_rows);
-                rf_bs[RF_CHARS[ri]] = std::move(tmp);
+
+                ew_rf_x->apply_or_to(rf_bm[ri], static_cast<int64_t>(RF_CHARS[ri]));
             }
             for (int ri = 0; ri < RF_COUNT; ri++) {
                 for (int li = 0; li < LS_COUNT; li++) {
-                    char rf = RF_CHARS[ri], ls = LS_CHARS[li];
-                    std::vector<uint8_t> bs = ls_bs[ls];
-                    q1_byte_stream_and(bs, rf_bs[rf]);
-                    q1_byte_stream_and(bs, shipdate_filter_bs);
-                    group_bs[{rf, ls}] = std::move(bs);
+                    ewah::EWAHBoolArray<uint64_t> t1, g;
+                    rf_bm[ri].logicaland(ls_bm[li], t1);
+                    t1.logicalandnot(shipdate_gt, g);
+                    if (g.numberOfOnes() == 0) continue;
+                    std::vector<uint8_t> gbs;
+                    q1_to_byte_stream(g, gbs, num_rows);
+                    group_bs[{RF_CHARS[ri], LS_CHARS[li]}] = std::move(gbs);
                 }
             }
         }
-        else if (auto* con_ship = dynamic_cast<bm_index::IndexedConcise*>(idx_use)) {  // Concise
+        else if (auto* con_ship = dynamic_cast<bm_index::IndexedConcise*>(idx_use)) {
             auto* con_ls_x = dynamic_cast<bm_index::IndexedConcise*>(idx_ls);
             auto* con_rf_x = dynamic_cast<bm_index::IndexedConcise*>(idx_rf);
             if (!con_ls_x || !con_rf_x) { std::cerr << "[Q1] type mismatch.\n"; return; }
@@ -586,33 +696,26 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
             } else {
                 shipdate_gt = con_ship->or_range(Q1_SHIPDATE_CUTOFF + 1, INT64_MAX);
             }
-            q1_to_byte_stream(shipdate_gt, shipdate_filter_bs, num_rows);
-            q1_byte_stream_not(shipdate_filter_bs, num_rows);
             auto t_a1 = clk::now();
             phaseA = q1_ms(t_a0, t_a1);
 
-            std::map<char, std::vector<uint8_t>> ls_bs, rf_bs;
+            ConciseSet<false> ls_bm[LS_COUNT], rf_bm[RF_COUNT];
             for (int li = 0; li < LS_COUNT; li++) {
-                ConciseSet<false> b;
-                con_ls_x->apply_or_to(b, static_cast<int64_t>(LS_CHARS[li]));
-                std::vector<uint8_t> tmp;
-                q1_to_byte_stream(b, tmp, num_rows);
-                ls_bs[LS_CHARS[li]] = std::move(tmp);
+
+                con_ls_x->apply_or_to(ls_bm[li], static_cast<int64_t>(LS_CHARS[li]));
             }
             for (int ri = 0; ri < RF_COUNT; ri++) {
-                ConciseSet<false> b;
-                con_rf_x->apply_or_to(b, static_cast<int64_t>(RF_CHARS[ri]));
-                std::vector<uint8_t> tmp;
-                q1_to_byte_stream(b, tmp, num_rows);
-                rf_bs[RF_CHARS[ri]] = std::move(tmp);
+
+                con_rf_x->apply_or_to(rf_bm[ri], static_cast<int64_t>(RF_CHARS[ri]));
             }
             for (int ri = 0; ri < RF_COUNT; ri++) {
                 for (int li = 0; li < LS_COUNT; li++) {
-                    char rf = RF_CHARS[ri], ls = LS_CHARS[li];
-                    std::vector<uint8_t> bs = ls_bs[ls];
-                    q1_byte_stream_and(bs, rf_bs[rf]);
-                    q1_byte_stream_and(bs, shipdate_filter_bs);
-                    group_bs[{rf, ls}] = std::move(bs);
+                    ConciseSet<false> g =
+                        rf_bm[ri].logicaland(ls_bm[li]).logicalandnot(shipdate_gt);
+                    if (g.size() == 0) continue;
+                    std::vector<uint8_t> gbs;
+                    q1_to_byte_stream(g, gbs, num_rows);
+                    group_bs[{RF_CHARS[ri], LS_CHARS[li]}] = std::move(gbs);
                 }
             }
         }
@@ -625,7 +728,7 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
 
         double phaseB = q1_ms(t0, t_b1) - phaseA;
 
-        q1_run_aggregate(context.client, lineitem_table, lineitem_tx, group_bs, ans);  // phase C
+        q1_run_aggregate(context.client, lineitem_table, lineitem_tx, group_bs, ans);
         auto t_c1 = clk::now();
         double phaseC = q1_ms(t_b1, t_c1);
         double tot    = q1_ms(t0, t_c1);
@@ -642,7 +745,7 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
         last_ans = ans;
     }
 
-    // SQL ground truth
+    // SQL validation
     bool gt_ok = false;
     std::map<std::pair<char,char>, std::vector<double>> gt;
     {
@@ -773,7 +876,8 @@ void BMTableScan::BMTPCH_Q1(ExecutionContext &context, const PhysicalTableScan &
             cell(bn == "CRoaring" ? s : z);
             cell(bn == "CRoaringRun" ? s : z);
             cell(bn == "EWAH" ? s : z);
-            cell(z); cell(z);
+            cell(bn == "Bitset" ? s : z);
+            cell(bn == "Bitset+AVX512" ? s : z);
             cell(bn == "Concise" ? s : z);
             csv << "0,0,0,0,0,0,0\n";
         };

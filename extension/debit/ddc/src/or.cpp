@@ -1,6 +1,6 @@
 #include "ddc.h"
+#include <cstdlib>
 
-// OR kernel
 DDCBtv
 DDCBtv::operator|(const DDCBtv& other) const {
     assert(bit_count_ == other.bit_count_);
@@ -56,7 +56,6 @@ DDCBtv::operator|(const DDCBtv& other) const {
     const bool a_struct_zero = a_zero_when_l3_zero && !A.l3_fill_ones;
     const bool b_struct_zero = b_zero_when_l3_zero && !B.l3_fill_ones;
 
-    // SIMD batch loop
     const size_t batch_count = (avx_regions + 63) / 64;
     for (size_t batch = 0; batch < batch_count; batch++) {
         const size_t batch_start = batch * 64;
@@ -72,7 +71,6 @@ DDCBtv::operator|(const DDCBtv& other) const {
             b_l4_mask &= valid;
         }
 
-        // bypass empty batch
         if (a_struct_zero && b_struct_zero
             && a_l4_mask == 0 && b_l4_mask == 0) {
             if (!compress) {
@@ -83,7 +81,6 @@ DDCBtv::operator|(const DDCBtv& other) const {
             continue;
         }
 
-        // expand L3
         __m512i l3a_chunk = _mm512_mask_expandloadu_epi8(A.l3_fill_vec,
             static_cast<__mmask64>(a_l4_mask), A.l3_lits + A.l3_lit_off);
         __m512i l3b_chunk = _mm512_mask_expandloadu_epi8(B.l3_fill_vec,
@@ -95,7 +92,6 @@ DDCBtv::operator|(const DDCBtv& other) const {
         _mm512_store_si512(reinterpret_cast<__m512i*>(l3a_buf), l3a_chunk);
         _mm512_store_si512(reinterpret_cast<__m512i*>(l3b_buf), l3b_chunk);
 
-        // per-region OR
         for (size_t r = 0; r < batch_size; r++) {
             const size_t region = batch_start + r;
             const uint8_t l3a = l3a_buf[r];
@@ -125,7 +121,6 @@ DDCBtv::operator|(const DDCBtv& other) const {
 
             __m512i vr = _mm512_or_si512(va, vb);
             if (compress) {
-                // compress-store result
                 __mmask64 lit_mask = _mm512_test_epi8_mask(vr, vr);
                 uint64_t mask_val = static_cast<uint64_t>(lit_mask);
                 std::memcpy(result_l2 + region * 8, &mask_val, 8);
@@ -138,7 +133,6 @@ DDCBtv::operator|(const DDCBtv& other) const {
         }
     }
 
-    // scalar tail
     if (avx_regions * words_per_reg < total_words) {
         const uint8_t a_l3_fill = A.l3_fill_ones ? 0xFF : 0x00;
         const uint8_t b_l3_fill = B.l3_fill_ones ? 0xFF : 0x00;
@@ -180,7 +174,6 @@ DDCBtv::operator|(const DDCBtv& other) const {
     auto t1 = clock::now();
 #endif
 
-    // scalar fallback
     {
         size_t a_l1_off = 0, b_l1_off = 0;
         auto l2_a = expand_l2();
@@ -241,7 +234,6 @@ DDCBtv::operator|(const DDCBtv& other) const {
     return result;
 }
 
-// per-segment OR
 DDC
 DDC::operator|(const DDC& other) const {
     assert(bit_count_ == other.bit_count_);
@@ -255,7 +247,6 @@ DDC::operator|(const DDC& other) const {
         const auto& sa = segments_[i];
         const auto& sb = other.segments_[i];
 
-        // trivial-fill shortcuts
         if (sb.is_all_zero()) { result.segments_.push_back(sa); continue; }
         if (sa.is_all_zero()) { result.segments_.push_back(sb); continue; }
         if (sa.is_all_ones()) { result.segments_.push_back(sa); continue; }
@@ -281,7 +272,6 @@ DDC::operator|(const DDC& other) const {
     return result;
 }
 
-// in-place OR
 DDCBtv&
 DDCBtv::operator|=(const DDCBtv& other) {
     assert(bit_count_ == other.bit_count_);
@@ -294,10 +284,42 @@ DDCBtv::operator|=(const DDCBtv& other) {
     uint8_t* r_l1 = l1_literals_.data();
     const uint8_t* b_l1 = other.l1_literals_.data();
 
+    // Sparse fastpath
+    {
+        static const bool sparse_or_disabled =
+            std::getenv("DDC_DISABLE_SPARSE_OR") != nullptr;
+        if (!sparse_or_disabled && other.state_ == State::Compressed &&
+            !other.l1_fill_ones_ && !other.l2_fill_ones_ && !other.l3_fill_ones_ &&
+            !other.l4_bits_.empty() && other.l1_literal_count_ <= 64) {
+            const uint8_t* l3l = other.l3_literals_.data();
+            const uint8_t* l2l = other.l2_literals_.data();
+            size_t o3 = 0, o2 = 0, o1 = 0;
+            const size_t n4 = other.l4_bits_.size();
+            for (size_t j4 = 0; j4 < n4; j4++) {
+                uint8_t b4 = other.l4_bits_[j4];
+                while (b4) {
+                    size_t l3_idx = j4 * 8 + static_cast<size_t>(__builtin_ctz(b4));
+                    b4 &= b4 - 1;
+                    uint8_t b3 = l3l[o3++];
+                    while (b3) {
+                        size_t l2_idx = l3_idx * 8 + static_cast<size_t>(__builtin_ctz(b3));
+                        b3 &= b3 - 1;
+                        uint8_t b2 = l2l[o2++];
+                        while (b2) {
+                            size_t w = l2_idx * 8 + static_cast<size_t>(__builtin_ctz(b2));
+                            b2 &= b2 - 1;
+                            r_l1[w] |= b_l1[o1++];
+                        }
+                    }
+                }
+            }
+            return *this;
+        }
+    }
+
 #ifdef __AVX512VBMI2__
     const size_t avx_regions = total_words / words_per_reg;
 
-    // dense fast path
     if (other.state_ == State::Decompressed) {
         for (size_t region = 0; region < avx_regions; region++) {
             __m512i va = _mm512_loadu_si512(r_l1 + region * 64);
@@ -318,7 +340,6 @@ DDCBtv::operator|=(const DDCBtv& other) {
     const bool b_l4_skipable = b_zero_when_l3_zero && !B.l3_fill_ones;
     const uint8_t b_l3_fill = B.l3_fill_ones ? 0xFF : 0x00;
 
-    // sparse: skip zero runs
     for (size_t region = 0; region < avx_regions; region++) {
         if (b_l4_skipable && (region & 63) == 0
             && region + 64 <= avx_regions) {
@@ -385,7 +406,6 @@ DDCBtv::operator|=(const DDCBtv& other) {
     return *this;
 }
 
-// in-place per-segment OR
 DDC&
 DDC::operator|=(const DDC& other) {
     assert(bit_count_ == other.bit_count_);
@@ -425,7 +445,6 @@ DDC::operator|=(const DDC& other) {
     return *this;
 }
 
-// fast multi-way union
 DDC
 DDC::OR_many(size_t number, const DDC** Btvs) {
     assert(number > 0);
@@ -444,7 +463,6 @@ DDC::OR_many(size_t number, const DDC** Btvs) {
             total_slots += seg.l2_count();
         }
     }
-    // pick scatter vs pairwise
     const bool use_scatter = (total_nz * 20 < total_slots);
 
     DDC result;
@@ -470,7 +488,6 @@ DDC::OR_many(size_t number, const DDC** Btvs) {
             result.segments_.push_back(std::move(seg));
         }
 
-        // scatter literals into dst
         for (size_t i = 0; i < number; i++) {
             size_t cur_seg   = 0;
             size_t seg_start = 0;
@@ -490,7 +507,6 @@ DDC::OR_many(size_t number, const DDC** Btvs) {
                 });
         }
     } else {
-        // pairwise accumulate
         for (size_t s = 0; s < num_segs; s++) {
             result.segments_.push_back(
                 Btvs[0]->segment(s) | Btvs[1]->segment(s));

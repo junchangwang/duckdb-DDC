@@ -17,6 +17,8 @@
 #include "Concise/concise.h"
 
 #include "execution/tpch/bm_baseline_loaders.hpp"
+#include <fstream>
+#include <iomanip>
 #include "execution/tpch/bm_bench_common.hpp"
 #include "execution/tpch/indexed_bitmap.hpp"
 
@@ -29,15 +31,24 @@
 
 namespace duckdb {
 
+using clk = std::chrono::high_resolution_clock;
+
 static std::mutex     q19_build_mutex;
 static std::atomic<bool> q19_built{false};
+static double q19_fetch_ms = 0.0;
+static double q19_or_ms = 0.0;
+static double q19_or_sd = 0.0;
+static int    q19_or_n  = 0;
+static std::string q19_backend_name;
+
+static const int Q19_ITERATIONS = bm_bench::iter_count(5);
+static const int Q19_WARMUP     = bm_bench::warmup_count(1);
 
 template <typename Btv>
 static void q19_get_rowids(const Btv& b, std::vector<row_t>* out);
 template <>
 void q19_get_rowids<DDC>(const DDC& b, std::vector<row_t>* out) {
     out->clear();
-    // expand literals via LUT
     b.for_each_literal([&](uint32_t word_pos, uint8_t val) {
         size_t rbase = static_cast<size_t>(word_pos) * 8;
         const auto& e = bm_bench::byte_lut[val];
@@ -67,8 +78,24 @@ void q19_get_rowids<ConciseSet<false>>(const ConciseSet<false>& b, std::vector<r
     out->clear();
     for (auto it = b.begin(); it != b.end(); ++it) out->push_back(static_cast<row_t>(*it));
 }
+template <>
+void q19_get_rowids<::bitset::BitsetVector>(const ::bitset::BitsetVector& b, std::vector<row_t>* out) {
+    out->clear();
+    const uint64_t* w = b.words();
+    const uint64_t nb = b.num_bits();
+    for (size_t i = 0; i < b.words_cnt(); ++i) {
+        uint64_t x = w[i];
+        const uint64_t base = static_cast<uint64_t>(i) * 64;
+        while (x) {
+            const uint64_t pos = base + __builtin_ctzll(x);
+            if (pos >= nb) return;
+            out->push_back(static_cast<row_t>(pos));
+            x &= x - 1;
+        }
+    }
+}
 
-// build row-id list once
+
 void BMTableScan::TPCH_Q19_Lineitem_GetRowIds(ExecutionContext &context,
                                               vector<row_t> *row_ids)
 {
@@ -86,16 +113,18 @@ void BMTableScan::TPCH_Q19_Lineitem_GetRowIds(ExecutionContext &context,
     size_t num_rows = idx_sm->num_rows();
     row_ids->clear();
 
-    // DDC backend
+    std::vector<double> tot_t;
+    const char* q19_backend = idx_sm->backend_name();
+    auto q19_run_once = [&]() {
+    row_ids->clear();
     if (auto* cb_sm = dynamic_cast<bm_index::IndexedDDC*>(idx_sm)) {
         auto* cb_si = dynamic_cast<bm_index::IndexedDDC*>(idx_si);
         if (!cb_si) { std::cerr << "[Q19] CB type mismatch.\n"; return; }
-        // empty seed
         DDC bm_sm = DDC::from_sparse_positions({}, num_rows, cb_sm->segment_bits());
         DDC bm_si = DDC::from_sparse_positions({}, num_rows, cb_si->segment_bits());
         cb_sm->apply_or_to(bm_sm, 'A');
         cb_si->apply_or_to(bm_si, 'D');
-        bm_sm &= bm_si;   // AND
+        bm_sm &= bm_si;
         q19_get_rowids(bm_sm, row_ids);
     } else if (auto* cr_sm = dynamic_cast<bm_index::IndexedCRoaring*>(idx_sm)) {
         auto* cr_si = dynamic_cast<bm_index::IndexedCRoaring*>(idx_si);
@@ -104,6 +133,15 @@ void BMTableScan::TPCH_Q19_Lineitem_GetRowIds(ExecutionContext &context,
         cr_sm->apply_or_to(bm_sm, 'A');
         cr_si->apply_or_to(bm_si, 'D');
         bm_sm &= bm_si;
+        q19_get_rowids(bm_sm, row_ids);
+    } else if (auto* bs_sm = dynamic_cast<bm_index::IndexedBitsetAVX512*>(idx_sm)) {
+        auto* bs_si = dynamic_cast<bm_index::IndexedBitsetAVX512*>(idx_si);
+        if (!bs_si) { std::cerr << "[Q19] BS type mismatch.\n"; return; }
+        ::bitset::BitsetVector bm_sm = bs_sm->make_empty();
+        ::bitset::BitsetVector bm_si = bs_si->make_empty();
+        bs_sm->apply_or_to(bm_sm, 'A');
+        bs_si->apply_or_to(bm_si, 'D');
+        ::bitset::BitsetVector::word_and_inplace(bm_sm, bm_si, bs_sm->use_simd());
         q19_get_rowids(bm_sm, row_ids);
     } else if (auto* wah_sm = dynamic_cast<bm_index::IndexedWAH*>(idx_sm)) {
         auto* wah_si = dynamic_cast<bm_index::IndexedWAH*>(idx_si);
@@ -120,7 +158,7 @@ void BMTableScan::TPCH_Q19_Lineitem_GetRowIds(ExecutionContext &context,
         ew_sm->apply_or_to(bm_sm, 'A');
         ew_si->apply_or_to(bm_si, 'D');
         ewah::EWAHBoolArray<uint64_t> tmp;
-        bm_sm.logicaland(bm_si, tmp);   // AND
+        bm_sm.logicaland(bm_si, tmp);
         q19_get_rowids(tmp, row_ids);
     } else if (auto* con_sm = dynamic_cast<bm_index::IndexedConcise*>(idx_sm)) {
         auto* con_si = dynamic_cast<bm_index::IndexedConcise*>(idx_si);
@@ -133,11 +171,27 @@ void BMTableScan::TPCH_Q19_Lineitem_GetRowIds(ExecutionContext &context,
     } else {
         std::cerr << "[Q19] ERROR: unrecognised IBitmapIndex backend.\n";
     }
+    };
+
+    for (int it = 0; it < Q19_ITERATIONS; it++) {
+        auto t0 = clk::now();
+        q19_run_once();
+        auto t1 = clk::now();
+        if (it >= Q19_WARMUP)
+            tot_t.push_back(
+                std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.0);
+    }
+
+    auto sT = bm_bench::compute_stats(tot_t);
+    q19_or_ms = sT.median;
+    q19_or_sd = sT.stddev;
+    q19_or_n  = (int)tot_t.size();
+    q19_backend_name = q19_backend;
+    q19_fetch_ms = 0.0;
 
     q19_built.store(true);
 }
 
-// scan source: fetch by row-id
 SourceResultType BMTableScan::BMTPCH_Q19(ExecutionContext &context,
                                           DataChunk &chunk,
                                           const TableScanBindData &bind_data)
@@ -167,18 +221,68 @@ SourceResultType BMTableScan::BMTPCH_Q19(ExecutionContext &context,
 
         data_ptr_t row_ids_data = (data_ptr_t)&((*row_ids)[*cursor]);
         Vector row_ids_vec(LogicalType::ROW_TYPE, row_ids_data);
-        idx_t fetch_count = 2048;   // chunk batch
+        idx_t fetch_count = 2048;
         if (*cursor + fetch_count > row_ids->size())
             fetch_count = row_ids->size() - *cursor;
 
+        auto _f0 = clk::now();
         table_bind_data.table.GetStorage().Fetch(transaction, chunk,
                                                  storage_column_ids, row_ids_vec,
                                                  fetch_count, column_fetch_state);
+        q19_fetch_ms +=
+            std::chrono::duration_cast<std::chrono::microseconds>(clk::now() - _f0).count() / 1000.0;
         *cursor += fetch_count;
         return SourceResultType::HAVE_MORE_OUTPUT;
     }
 
-    // reset state
+    {
+        const double tot = q19_or_ms + q19_fetch_ms;
+        const std::string sf = bm_bench::sf_label();
+        std::cout << "\n================================================================\n"
+                  << "  Q19 RESULTS \u2014 " << q19_backend_name << " (bitmap phase: "
+                  << q19_or_n << " measured iter, median +/- stddev; fetch: single pass)\n"
+                  << "================================================================\n"
+                  << "  PhaseA_ship (bitmap OR+AND+rowids) : " << q19_or_ms << " +/- " << q19_or_sd << " ms\n"
+                  << "  PhaseB_fetch (Fetch lineitem)   : " << q19_fetch_ms << " +/- 0 ms\n"
+                  << "  TOTAL                                : " << tot << " +/- " << q19_or_sd << " ms\n"
+                  << "================================================================\n\n";
+
+        std::ofstream csv("q19_results_" + sf + ".csv");
+        if (csv) {
+            csv << std::fixed << std::setprecision(4);
+            csv << "sf,operation,"
+                << "wah_median_ms,wah_stddev_ms,wah_min_ms,wah_max_ms,"
+                << "ddc_median_ms,ddc_stddev_ms,ddc_min_ms,ddc_max_ms,"
+                << "croaring_median_ms,croaring_stddev_ms,croaring_min_ms,croaring_max_ms,"
+                << "croaring_run_median_ms,croaring_run_stddev_ms,croaring_run_min_ms,croaring_run_max_ms,"
+                << "ewah_median_ms,ewah_stddev_ms,ewah_min_ms,ewah_max_ms,"
+                << "bs_median_ms,bs_stddev_ms,bs_min_ms,bs_max_ms,"
+                << "bsa_median_ms,bsa_stddev_ms,bsa_min_ms,bsa_max_ms,"
+                << "concise_median_ms,concise_stddev_ms,concise_min_ms,concise_max_ms\n";
+            bm_bench::Stats z{0, 0, 0, 0};
+            const std::string bn = q19_backend_name;
+            auto put = [&](const char* op, bm_bench::Stats v) {
+                csv << sf << "," << op << ",";
+                auto cell = [&](bm_bench::Stats x) {
+                    csv << x.median << "," << x.stddev << "," << x.min_val << "," << x.max_val << ",";
+                };
+                cell(bn == "WAH" ? v : z);
+                cell(bn.rfind("DDC", 0) == 0 ? v : z);
+                cell(bn == "CRoaring" ? v : z);
+                cell(bn == "CRoaringRun" ? v : z);
+                cell(bn == "EWAH" ? v : z);
+                cell(bn == "Bitset" ? v : z);
+                cell(bn == "Bitset+AVX512" ? v : z);
+                cell(bn == "Concise" ? v : z);
+                csv << "\n";
+            };
+            put("PhaseA_ship", bm_bench::Stats{q19_or_ms, q19_or_sd, q19_or_ms, q19_or_ms});
+            put("PhaseB_fetch", bm_bench::Stats{q19_fetch_ms, 0, q19_fetch_ms, q19_fetch_ms});
+            put("TOTAL", bm_bench::Stats{tot, q19_or_sd, tot, tot});
+            std::cout << "  [CSV] q19_results_" << sf << ".csv\n";
+        }
+    }
+
     row_ids->clear();
     *cursor = 0;
     num_idlist = 0;

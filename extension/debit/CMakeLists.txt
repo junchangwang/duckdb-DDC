@@ -11,6 +11,8 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ddc/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/croaring)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ewah)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/Concise)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/bsr)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/bitset/include)
 
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++17")
@@ -26,6 +28,9 @@ set(FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/ddc/src/xor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ddc/src/not.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/croaring/roaring.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/bsr/intersection_algos.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/bsr/util.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/bitset/src/bitset_vector.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/wah_backend/src/utils/util.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/wah_backend/src/fastbit/bitvector.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/wah_backend/src/fastbit/array_t.cpp
@@ -53,7 +58,6 @@ build_static_extension(debit ${FILES})
 
 build_loadable_extension(debit "" ${FILES})
 
-#target_link_libraries(debit_extension pthread atomic ${Boost_LIBRARIES})
 
 install(
   TARGETS debit_extension

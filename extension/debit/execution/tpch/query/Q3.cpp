@@ -107,6 +107,23 @@ void q3_get_rowids_t<ConciseSet<false>>(const ConciseSet<false>& btv, std::vecto
     out->clear();
     for (auto it = btv.begin(); it != btv.end(); ++it) out->push_back(static_cast<row_t>(*it));
 }
+template <>
+void q3_get_rowids_t<::bitset::BitsetVector>(const ::bitset::BitsetVector& btv, std::vector<row_t>* out) {
+    out->clear();
+    const uint64_t* w = btv.words();
+    const uint64_t nb = btv.num_bits();
+    for (size_t i = 0; i < btv.words_cnt(); ++i) {
+        uint64_t x = w[i];
+        const uint64_t base = static_cast<uint64_t>(i) * 64;
+        while (x) {
+            const uint64_t pos = base + __builtin_ctzll(x);
+            if (pos >= nb) return;
+            out->push_back(static_cast<row_t>(pos));
+            x &= x - 1;
+        }
+    }
+}
+
 
 static void q3_aggregate(
     ClientContext& ctx,
@@ -115,7 +132,7 @@ static void q3_aggregate(
     const std::vector<row_t>& ids,
     std::unordered_map<int64_t, Q3Acc>& l_orderkey_map)
 {
-    // BMFetch + revenue agg
+    // Fetch aggregate
     if (ids.empty()) return;
     vector<StorageIndex> col_ids = {
         StorageIndex(0),
@@ -231,6 +248,7 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         auto* wah_okey= dynamic_cast<bm_index::IndexedWAH*>(idx_okey);
         auto* ew_okey = dynamic_cast<bm_index::IndexedEWAH*>(idx_okey);
         auto* con_okey= dynamic_cast<bm_index::IndexedConcise*>(idx_okey);
+        auto* bs_okey = dynamic_cast<bm_index::IndexedBitsetAVX512*>(idx_okey);
 
         size_t num_rows = idx_okey->num_rows();
         DDC cb_btv_res;
@@ -238,6 +256,7 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         ibis::bitvector wah_btv_res;
         ewah::EWAHBoolArray<uint64_t> ew_btv_res;
         ConciseSet<false> con_btv_res;
+        ::bitset::BitsetVector bs_btv_res;
         if (cb_okey) cb_btv_res = DDC::from_sparse_positions({}, num_rows, cb_okey->segment_bits());
 
         // PhaseB: orders semi-join
@@ -277,6 +296,8 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         } else if (cr_okey) {
 
             cr_btv_res = cr_okey->or_many(matched_okeys);
+        } else if (bs_okey) {
+            bs_btv_res = bs_okey->or_many(matched_okeys);
         } else if (wah_okey) {
             wah_btv_res = wah_okey->or_many(matched_okeys);
         } else if (ew_okey) {
@@ -300,7 +321,7 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
                 // month-GE fast path
                 ship_filter = cbge_ship->or_many(Q3_GE_AFTER_MONTHS());
                 t_c = clk::now();
-                cb_btv_res &= ship_filter;   // AND okey x ship
+                cb_btv_res &= ship_filter;
                 t_d = clk::now();
                 q3_get_rowids_t(cb_btv_res, &ids);
                 auto t_e1 = clk::now();
@@ -420,6 +441,15 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
             cr_btv_res &= ship_filter;
             t_d = clk::now();
             q3_get_rowids_t(cr_btv_res, &ids);
+        } else if (bs_okey) {
+            auto* bs_ship = dynamic_cast<bm_index::IndexedBitsetAVX512*>(idx_ship_use);
+            ::bitset::BitsetVector ship_filter = bs_ship->make_empty();
+            if (use_month_ge_q3) ship_filter = bs_ship->or_many(Q3_GE_AFTER_MONTHS());
+            else bs_ship->apply_or_range_to(ship_filter, Q3_CUTOFF_DATE + 1, INT64_MAX);
+            t_c = clk::now();
+            ::bitset::BitsetVector::word_and_inplace(bs_btv_res, ship_filter, bs_okey->use_simd());
+            t_d = clk::now();
+            q3_get_rowids_t(bs_btv_res, &ids);
         } else if (wah_okey) {
 
             auto* wah_ship = dynamic_cast<bm_index::IndexedWAH*>(idx_ship_use);
@@ -458,7 +488,7 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         }
         auto t_e1 = clk::now();
 
-        // PhaseE: fetch + aggregate
+        // Fetch aggregate
         auto& lineitem_tx = DuckTransaction::Get(context.client, lineitem_table.catalog);
         q3_aggregate(context.client, lineitem_table, lineitem_tx, ids, l_orderkey_map);
         auto t_e2 = clk::now();
@@ -511,7 +541,7 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
         }
     }
 
-    // SQL ground-truth check
+    // SQL validation
     {
         Connection con(*context.client.db);
 
@@ -622,7 +652,8 @@ void BMTableScan::BMTPCH_Q3(ExecutionContext &context, const PhysicalTableScan &
             cell(bn == "CRoaring" ? s : z);
             cell(bn == "CRoaringRun" ? s : z);
             cell(bn == "EWAH" ? s : z);
-            cell(z); cell(z);
+            cell(bn == "Bitset" ? s : z);
+            cell(bn == "Bitset+AVX512" ? s : z);
             cell(bn == "Concise" ? s : z);
             csv << "0,0,0,0,0,0,0\n";
         };

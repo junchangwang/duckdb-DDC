@@ -7,6 +7,7 @@
 #include "roaring.hh"
 #include "ewah.h"
 #include "Concise/concise.h"
+#include "bitset_vector.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -36,16 +37,21 @@ public:
 class InvertedIndex {
 public:
 
-    // build inverted index
+    // Inverted index
     void build_inverted_index(const std::vector<int64_t>& keys, size_t num_rows) {
-        num_rows_ = num_rows;
-
         std::unordered_map<int64_t, std::vector<uint32_t>> by_key;
         by_key.reserve(num_rows / 4);
         for (size_t i = 0; i < num_rows; i++)
             by_key[keys[i]].push_back(static_cast<uint32_t>(i));
+        build_inverted_index_map(std::move(by_key), num_rows);
+    }
 
-        // collect + sort keys
+    // Multi-key rows
+    void build_inverted_index_map(std::unordered_map<int64_t, std::vector<uint32_t>>&& by_key,
+                                  size_t num_rows) {
+        num_rows_ = num_rows;
+
+        // Sort keys
         sorted_keys_.reserve(by_key.size());
         for (auto& [k, _] : by_key) {
 
@@ -58,7 +64,7 @@ public:
             sorted_keys_.push_back(static_cast<uint32_t>(k));
         }
         std::sort(sorted_keys_.begin(), sorted_keys_.end());
-        // pack positions per key
+        // Pack positions
         key_offsets_.resize(sorted_keys_.size() + 1);
         size_t total = 0;
         for (auto& v : by_key) total += v.second.size();
@@ -73,7 +79,7 @@ public:
         key_offsets_.back() = static_cast<uint32_t>(all_positions_.size());
     }
 
-    // lookup positions by key
+    // Key lookup
     std::pair<const uint32_t*, size_t> positions_for(int64_t key) const {
 
         if (key < 0 || key > static_cast<int64_t>(UINT32_MAX)) return {nullptr, 0};
@@ -121,7 +127,7 @@ public:
         for (uint32_t k : sorted_keys_) f(static_cast<int64_t>(k));
     }
 
-    // sorted merge-join: input vs keys
+    // Merge join
     template <typename F>
     void for_each_matched_key(const int64_t* sorted_input, size_t ni, F&& f) const {
         size_t i = 0, j = 0;
@@ -217,7 +223,7 @@ public:
 
     bool has(int64_t key) const { return has_key(key); }
 
-    // OR single key into dst
+    // Single-key OR
     void apply_or_to(DDC& dst, int64_t key) const {
         auto [p, n] = positions_for(key);
         if (n) dst.scatter_or_decompressed(p, n);
@@ -232,7 +238,7 @@ public:
         }
     }
 
-    // OR many keys (galloping search)
+    // Multi-key OR
     template <typename Iterable>
     DDC or_many(const Iterable& keys) const {
         DDC dst = DDC::from_sparse_positions({}, num_rows_, segment_bits_);
@@ -261,7 +267,7 @@ public:
             uint32_t target = in[i];
             if (j >= nj) break;
             if (sk[j] > target) continue;
-            // gallop then binary search
+            // Galloping search
             size_t step = 1;
             while (j + step < nj && sk[j + step] < target) step *= 2;
             size_t lo = j + (step / 2);
@@ -301,7 +307,7 @@ public:
 private:
     size_t segment_bits_ = 4096;
 
-    // per-key 4-level size breakdown
+    // Size breakdown
     std::vector<std::pair<std::string, size_t>> compute_layers() const {
         size_t l1 = 0, l2 = 0, l3 = 0, l4 = 0, header = 0;
         std::vector<uint32_t> tmp;
@@ -323,7 +329,7 @@ private:
     }
 };
 
-// group-encoded (GE) variant
+// Group encoding
 class IndexedDDCGE : public IBitmapIndex, public InvertedIndex {
 public:
     IndexedDDCGE() = default;
@@ -420,7 +426,7 @@ public:
             if (b < num_buckets) per_bucket_pos[b].push_back(static_cast<uint32_t>(i));
         }
 
-        // cumulative prefix bitmaps per bucket
+        // Prefix bitmaps
         bitmaps_pe_.reserve(num_buckets);
         DDC cum = DDC::from_sparse_positions({}, num_rows, segment_bits_);
         for (size_t b = 0; b < num_buckets; b++) {
@@ -518,7 +524,7 @@ public:
     template <typename Iterable>
     roaring::Roaring or_many(const Iterable& keys) const {
         if (run_optimized_) {
-            // fastunion of run-optimized bitmaps
+            // Run union
             std::vector<roaring::Roaring> bms;
             std::vector<const roaring::Roaring*> ptrs;
             or_many_walk(keys, [&](const uint32_t* p, size_t n) {
@@ -700,7 +706,7 @@ public:
 
     bool has(int64_t key) const { return has_key(key); }
 
-    // positions -> WAH bitvector (fill gaps)
+    // WAH builder
     static ibis::bitvector bv_from_positions(const uint32_t* p, size_t n,
                                              size_t num_rows) {
         ibis::bitvector bv;
@@ -746,7 +752,7 @@ public:
         or_many_walk(keys, [&](const uint32_t* p, size_t n) {
             ibis::bitvector bv = bv_from_positions(p, n, num_rows_);
             if (!seeded) {
-                // seed: copy + decompress
+                // Dense seed
                 dst.copy(bv);
                 dst.decompress();
                 seeded = true;
@@ -838,7 +844,7 @@ public:
         std::vector<const EWBA*> ptrs;
         ptrs.reserve(srcs.size());
         for (auto& s : srcs) ptrs.push_back(&s);
-        // multi-way union
+        // Multi-way union
         return ewah::fast_logicalor(ptrs.size(), ptrs.data());
     }
     EWBA or_range(int64_t lo, int64_t hi) const {
@@ -947,6 +953,74 @@ private:
             bytes += c.sizeInBytes();
         });
         return {{"concise", bytes}};
+    }
+};
+
+// Bitset baseline
+class IndexedBitsetAVX512 : public IBitmapIndex, public InvertedIndex {
+public:
+    void build(const std::vector<int64_t>& keys, size_t num_rows, bool use_simd = true) {
+        simd_ = use_simd;
+        build_inverted_index(keys, num_rows);
+    }
+
+    bool has(int64_t key) const { return has_key(key); }
+    bool use_simd() const { return simd_; }
+
+    bitset::BitsetVector make_empty() const {
+        bitset::BitsetVector b;
+        b.allocate((num_rows_ + 63) / 64);
+        b.set_num_bits(num_rows_);
+        return b;
+    }
+
+    void apply_or_to(bitset::BitsetVector& dst, int64_t key) const {
+        auto [p, n] = positions_for(key);
+        scatter(dst, p, n);
+    }
+
+    void apply_or_range_to(bitset::BitsetVector& dst, int64_t lo, int64_t hi) const {
+        size_t i_lo = lower_bound_idx(lo);
+        size_t i_hi = upper_bound_idx(hi);
+        for (size_t i = i_lo; i < i_hi; i++) {
+            auto [p, n] = positions_at(i);
+            scatter(dst, p, n);
+        }
+    }
+
+    template <typename Iterable>
+    bitset::BitsetVector or_many(const Iterable& keys) const {
+        bitset::BitsetVector dst = make_empty();
+        for (auto& k : keys) {
+            auto [p, n] = positions_for(static_cast<int64_t>(k));
+            scatter(dst, p, n);
+        }
+        return dst;
+    }
+
+    template <typename F>
+    void for_each_key(F&& f) const { for_each_key_base(std::forward<F>(f)); }
+
+    size_t num_keys() const override { return num_distinct_keys(); }
+    size_t num_rows() const override { return num_rows_; }
+
+    // Dense footprint
+    size_t storage_bytes() const override {
+        return num_distinct_keys() * ((num_rows_ + 7) / 8);
+    }
+    const char* backend_name() const override {
+        return simd_ ? "Bitset+AVX512" : "Bitset";
+    }
+    std::vector<std::pair<std::string, size_t>> layer_breakdown() const override {
+        return {{"dense_words", storage_bytes()}};
+    }
+
+private:
+    bool simd_ = true;
+
+    static void scatter(bitset::BitsetVector& b, const uint32_t* p, size_t n) {
+        uint64_t* w = b.words_mut();
+        for (size_t i = 0; i < n; i++) w[p[i] >> 6] |= uint64_t(1) << (p[i] & 63);
     }
 };
 

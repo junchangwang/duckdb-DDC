@@ -85,6 +85,23 @@ void q12_get_rowids<ConciseSet<false>>(const ConciseSet<false>& b, std::vector<r
     out->clear();
     for (auto it = b.begin(); it != b.end(); ++it) out->push_back(static_cast<row_t>(*it));
 }
+template <>
+void q12_get_rowids<::bitset::BitsetVector>(const ::bitset::BitsetVector& b, std::vector<row_t>* out) {
+    out->clear();
+    const uint64_t* w = b.words();
+    const uint64_t nb = b.num_bits();
+    for (size_t i = 0; i < b.words_cnt(); ++i) {
+        uint64_t x = w[i];
+        const uint64_t base = static_cast<uint64_t>(i) * 64;
+        while (x) {
+            const uint64_t pos = base + __builtin_ctzll(x);
+            if (pos >= nb) return;
+            out->push_back(static_cast<row_t>(pos));
+            x &= x - 1;
+        }
+    }
+}
+
 
 // orders priority map
 static std::unordered_map<int64_t, bool> q12_load_orderkey_priority(
@@ -198,6 +215,18 @@ void BMTableScan::BMTPCH_Q12(ExecutionContext &context, const PhysicalTableScan 
             sm_filter &= date_filter;
             q12_get_rowids(sm_filter, &ids);
             t_d = clk::now();
+        } else if (auto* bs_sm = dynamic_cast<bm_index::IndexedBitsetAVX512*>(idx_sm)) {
+            auto* bs_rdat = dynamic_cast<bm_index::IndexedBitsetAVX512*>(idx_rdat);
+            if (!bs_rdat) { std::cerr << "[Q12] type mismatch.\n"; return; }
+            ::bitset::BitsetVector sm_filter = bs_sm->or_many(sm_keys);
+            t_b = clk::now();
+            ::bitset::BitsetVector date_filter = bs_rdat->make_empty();
+            if (use_year_ge) date_filter = bs_rdat->or_many(year_keys);
+            else             bs_rdat->apply_or_range_to(date_filter, Q12_DATE_LO, Q12_DATE_HI - 1);
+            t_c = clk::now();
+            ::bitset::BitsetVector::word_and_inplace(sm_filter, date_filter, bs_sm->use_simd());
+            q12_get_rowids(sm_filter, &ids);
+            t_d = clk::now();
         } else if (auto* wah_sm = dynamic_cast<bm_index::IndexedWAH*>(idx_sm)) {
             auto* wah_rdat = dynamic_cast<bm_index::IndexedWAH*>(idx_rdat);
             if (!wah_rdat) { std::cerr << "[Q12] type mismatch.\n"; return; }
@@ -267,7 +296,7 @@ void BMTableScan::BMTPCH_Q12(ExecutionContext &context, const PhysicalTableScan 
                 auto cd   = FlatVector::GetData<int32_t>(chunk.data[2]);
                 auto rd   = FlatVector::GetData<int32_t>(chunk.data[3]);
                 auto sm   = FlatVector::GetData<string_t>(chunk.data[4]);
-                for (idx_t i = 0; i < chunk.size(); i++) {  // residual filter + count
+                for (idx_t i = 0; i < chunk.size(); i++) {
                     if (!(cd[i] < rd[i])) continue;
                     if (!(sd[i] < cd[i])) continue;
                     auto sv = sm[i];
@@ -311,7 +340,7 @@ void BMTableScan::BMTPCH_Q12(ExecutionContext &context, const PhysicalTableScan 
         last_high_ship = high_ship; last_low_ship = low_ship;
     }
 
-    // SQL ground truth check
+    // SQL validation
     {
         Connection con(*context.client.db);
         auto r = con.Query(
@@ -394,7 +423,8 @@ void BMTableScan::BMTPCH_Q12(ExecutionContext &context, const PhysicalTableScan 
             cell(bn == "CRoaring" ? s : z);
             cell(bn == "CRoaringRun" ? s : z);
             cell(bn == "EWAH" ? s : z);
-            cell(z); cell(z);
+            cell(bn == "Bitset" ? s : z);
+            cell(bn == "Bitset+AVX512" ? s : z);
             cell(bn == "Concise" ? s : z);
             csv << "0,0,0,0,0,0,0\n";
         };

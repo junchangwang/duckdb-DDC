@@ -23,6 +23,7 @@
 #include "execution/tpch/bm_baseline_loaders.hpp"
 #include "execution/tpch/bm_bench_common.hpp"
 #include "execution/tpch/indexed_bitmap.hpp"
+#include "execution/tpch/bsr_index.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -56,10 +57,9 @@ static const int Q5_WARMUP     = bm_bench::warmup_count(1);
 
 static std::once_flag q5_once_flag;
 
-// DDC -> rowids
 static void get_rowids(const DDC& btv, std::vector<row_t>& out) {
     out.clear();
-    btv.for_each_literal([&](uint32_t word_pos, uint8_t val) {  // decode literals
+    btv.for_each_literal([&](uint32_t word_pos, uint8_t val) {
         size_t rbase = static_cast<size_t>(word_pos) * 8;
         const auto& e = bm_bench::byte_lut[val];
         for (int k = 0; k < e.count; k++)
@@ -80,6 +80,22 @@ static void get_rowids(const ibis::bitvector& btv, std::vector<row_t>& out) {
     while (*pit != 0xFFFFFFFFU) {
         out.push_back(static_cast<row_t>(*pit));
         pit.next();
+    }
+}
+
+static void get_rowids(const ::bitset::BitsetVector& btv, std::vector<row_t>& out) {
+    out.clear();
+    const uint64_t* w = btv.words();
+    const uint64_t nb = btv.num_bits();
+    for (size_t i = 0; i < btv.words_cnt(); ++i) {
+        uint64_t x = w[i];
+        const uint64_t base = static_cast<uint64_t>(i) * 64;
+        while (x) {
+            const uint64_t pos = base + __builtin_ctzll(x);
+            if (pos >= nb) return;
+            out.push_back(static_cast<row_t>(pos));
+            x &= x - 1;
+        }
     }
 }
 
@@ -106,7 +122,6 @@ static void run_q5_aggregate(
     std::map<std::string, int64_t>& ans,
     size_t& matched_rows)
 {
-    // PhaseC: fetch + aggregate
     matched_rows = 0;
     if (ids.empty()) return;
 
@@ -135,7 +150,7 @@ static void run_q5_aggregate(
         if (cursor + fetch_count > ids.size())
             fetch_count = ids.size() - cursor;
 
-        lineitem_table.GetStorage().BMFetch(  // batched fetch
+        lineitem_table.GetStorage().BMFetch(
             tx, result, col_ids, row_ids_vec, fetch_count,
             column_fetch_state, num_idlist);
         cursor += fetch_count;
@@ -152,13 +167,12 @@ static void run_q5_aggregate(
                 on_it->second != sn_it->second) continue;
             auto nm = n_name_map.find(on_it->second);
             if (nm == n_name_map.end()) continue;
-            ans[nm->second] += pr[i] * (100 - dc[i]);  // revenue group-by
+            ans[nm->second] += pr[i] * (100 - dc[i]);
             matched_rows++;
         }
     }
 }
 
-// Q5 entry
 void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &op)
 {
     std::call_once(q5_once_flag, [&]() {
@@ -198,9 +212,8 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
 
         auto t_total_start = clk::now();
 
-        // PhaseA: region -> nation -> customer -> orders/supplier joins
         std::unordered_set<int32_t> r_regionkey_set;
-        {  // region = ASIA
+        {
             auto& tx = DuckTransaction::Get(context.client, region_table.catalog);
             TableScanState ss;
             vector<StorageIndex> col_ids = {StorageIndex(0), StorageIndex(1)};
@@ -292,7 +305,7 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
                 auto ckey  = FlatVector::GetData<int64_t>(chunk.data[1]);
                 auto odate = FlatVector::GetData<int32_t>(chunk.data[2]);
                 for (idx_t i = 0; i < chunk.size(); i++) {
-                    if (odate[i] < Q5_DATE_LO || odate[i] >= Q5_DATE_HI) continue;  // date filter
+                    if (odate[i] < Q5_DATE_LO || odate[i] >= Q5_DATE_HI) continue;
                     auto it = customer_nation_map.find(ckey[i]);
                     if (it != customer_nation_map.end())
                         order_nation_map[okey[i]] = it->second;
@@ -342,13 +355,20 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
         for (auto& [k, _] : order_nation_map) okeys.push_back(k);
         for (auto& [k, _] : supp_nation_map ) skeys.push_back(k);
 
-        // PhaseB: OR keys per side, then AND
-        if (auto* cb_okey = dynamic_cast<bm_index::IndexedDDC*>(idx_okey_base)) {
+        if (auto* bs_okey = dynamic_cast<bm_index::IndexedBSR*>(idx_okey_base)) {
+            auto* bs_skey = dynamic_cast<bm_index::IndexedBSR*>(idx_skey_base);
+            if (!bs_skey) { std::cerr << "[Q5] ERROR: orderkey is BSR, suppkey isn't.\n"; return; }
+            bm_index::BsrSet btv_or   = bs_okey->or_many(okeys);
+            bm_index::BsrSet btv_supp = bs_skey->or_many(skeys);
+            bm_index::BsrSet r = bm_index::bsr_and(btv_or, btv_supp);
+            r.get_rowids(&ids);
+        }
+        else if (auto* cb_okey = dynamic_cast<bm_index::IndexedDDC*>(idx_okey_base)) {
             auto* cb_skey = dynamic_cast<bm_index::IndexedDDC*>(idx_skey_base);
             if (!cb_skey) { std::cerr << "[Q5] ERROR: orderkey is DDC, suppkey isn't.\n"; return; }
             DDC btv_or   = cb_okey->or_many(okeys);
             DDC btv_supp = cb_skey->or_many(skeys);
-            btv_or &= btv_supp;  // AND kernel
+            btv_or &= btv_supp;
             get_rowids(btv_or, ids);
         }
 
@@ -363,6 +383,14 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
             get_rowids(btv_or, ids);
         }
 
+        else if (auto* bs_okey = dynamic_cast<bm_index::IndexedBitsetAVX512*>(idx_okey_base)) {
+            auto* bs_skey = dynamic_cast<bm_index::IndexedBitsetAVX512*>(idx_skey_base);
+            if (!bs_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
+            ::bitset::BitsetVector btv_or   = bs_okey->or_many(okeys);
+            ::bitset::BitsetVector btv_supp = bs_skey->or_many(skeys);
+            ::bitset::BitsetVector::word_and_inplace(btv_or, btv_supp, bs_okey->use_simd());
+            get_rowids(btv_or, ids);
+        }
         else if (auto* wah_okey = dynamic_cast<bm_index::IndexedWAH*>(idx_okey_base)) {
             auto* wah_skey = dynamic_cast<bm_index::IndexedWAH*>(idx_skey_base);
             if (!wah_skey) { std::cerr << "[Q5] suppkey type mismatch.\n"; return; }
@@ -397,7 +425,7 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
 
         auto t_phaseB_end = clk::now();
 
-        run_q5_aggregate(context.client, lineitem_table, lineitem_tx, ids,  // PhaseC
+        run_q5_aggregate(context.client, lineitem_table, lineitem_tx, ids,
                          order_nation_map, supp_nation_map, n_name_map,
                          ans, matched);
 
@@ -419,7 +447,7 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
         }
     }
 
-    // SQL ground-truth check
+    // SQL validation
     bool gt_ok = false;
     std::map<std::string, double> gt_revenue;
     {
@@ -489,7 +517,6 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
     std::cout << "  rows: " << last_rows << "\n";
     std::cout << "================================================================\n\n";
 
-    // CSV emit
     std::string sf = q5_get_sf_label();
     std::ofstream csv("q5_results_" + sf + ".csv");
     if (csv) {
@@ -518,7 +545,8 @@ void BMTableScan::BMTPCH_Q5(ExecutionContext &context, const PhysicalTableScan &
             cell(bn == "CRoaring" ? s : z);
             cell(bn == "CRoaringRun" ? s : z);
             cell(bn == "EWAH" ? s : z);
-            cell(z); cell(z);
+            cell(bn == "Bitset" ? s : z);
+            cell(bn == "Bitset+AVX512" ? s : z);
             cell(bn == "Concise" ? s : z);
             csv << "0,0,0,0,0,0,0\n";
         };
